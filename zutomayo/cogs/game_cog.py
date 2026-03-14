@@ -313,7 +313,7 @@ class GameCog(commands.Cog):
 
         all_cards = load_cards()
         drawn = draw_gacha(pack, all_cards)
-        image = create_deck_grid_image(drawn, columns=5, filename='gacha.jpg')
+        image = create_deck_grid_image(drawn, columns=5, filename='gacha.png')
         if image:
             await interaction.response.send_message(file=image)
         else:
@@ -340,8 +340,8 @@ class GameCog(commands.Cog):
         all_cards = load_cards()
         drawn = draw_gachabox(pack, all_cards)
         half = len(drawn) // 2
-        image1 = create_deck_grid_image(drawn[:half], columns=5, filename='gachabox_1.jpg')
-        image2 = create_deck_grid_image(drawn[half:], columns=5, filename='gachabox_2.jpg')
+        image1 = create_deck_grid_image(drawn[:half], columns=5, filename='gachabox_1.png')
+        image2 = create_deck_grid_image(drawn[half:], columns=5, filename='gachabox_2.png')
         files = [f for f in (image1, image2) if f]
         if files:
             await interaction.followup.send(files=files)
