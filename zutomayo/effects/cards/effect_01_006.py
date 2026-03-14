@@ -20,6 +20,7 @@ async def effect_01_006(engine: EffectEngine, game_state: GameState, player_inde
     abyss_enchants = [
         ci for ci in player.abyss
         if ci.card.card_type == CardType.ENCHANT and ci.card.effect
+        and ci.card.effect != card_instance.card.effect
     ]
 
     log.debug('[%s] %s: searching abyss for enchant cards (abyss size=%d)', card_instance.card.effect, engine.player_label(player_index), len(player.abyss))
