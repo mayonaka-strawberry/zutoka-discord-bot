@@ -1,10 +1,10 @@
 from __future__ import annotations
-import io
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 import discord
 from PIL import Image
+from zutomayo.ui.image_utils import save_image_for_discord
 from zutomayo.enums.chronos import Chronos
 from zutomayo.models.card_instance import CardInstance
 from zutomayo.models.game_state import GameState
@@ -16,7 +16,6 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 BOARD_NATIVE = 1500
 BOARD_RENDER = 4500
 SCALE = BOARD_RENDER // BOARD_NATIVE  # 3
-
 
 # ---------------------------------------------------------------------------
 # Zone coordinates at NATIVE 1500x1500 scale.
@@ -176,14 +175,10 @@ def render_board_image(
         if night_player:
             _render_player_zones(board, night_player, NIGHT_ZONES)
 
-    # Convert RGBA to RGB for JPEG
     rgb_board = Image.new('RGB', board.size, (0, 0, 0))
     rgb_board.paste(board, mask=board.split()[3])
 
-    buf = io.BytesIO()
-    rgb_board.save(buf, format='JPEG', quality=88)
-    buf.seek(0)
-    return discord.File(buf, filename='board.jpg')
+    return save_image_for_discord(rgb_board, 'board.jpg')
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +201,7 @@ def render_zone_strip(
 
     grid_w = columns * card_w + (columns - 1) * padding
     grid_h = rows * card_h + (rows - 1) * padding
-    grid = Image.new('RGB', (grid_w, grid_h), (0, 0, 0))
+    grid = Image.new('RGBA', (grid_w, grid_h), (0, 0, 0, 0))
 
     for idx, card_instance in enumerate(cards):
         col = idx % columns
@@ -228,12 +223,8 @@ def render_zone_strip(
                 back = back.resize((card_w, card_h))
                 grid.paste(back, (x, y))
 
-    buf = io.BytesIO()
-    grid.save(buf, format='JPEG', quality=85)
-    buf.seek(0)
-
     safe_label = label.replace(' ', '_').lower()
-    return discord.File(buf, filename=f'{safe_label}.jpg')
+    return save_image_for_discord(grid, f'{safe_label}.webp')
 
 
 # ---------------------------------------------------------------------------
