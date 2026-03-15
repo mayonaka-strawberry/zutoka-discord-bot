@@ -3,7 +3,7 @@ from typing import Any, Optional
 from uuid import uuid4
 from zutomayo.data.card_loader import load_cards
 from zutomayo.effects.effect_engine import EffectEngine
-from zutomayo.engine.deck_builder import build_deck_from_cards, build_random_deck
+from zutomayo.engine.deck_builder import build_deck_from_cards
 from zutomayo.engine.game_controller import GameController
 from zutomayo.engine.turn_manager import TurnManager
 from zutomayo.models.card import Card
@@ -40,6 +40,9 @@ class GameSession:
         self.is_tcg: bool = False
         self.best_of: int = 0
 
+        # Solo mode (player vs bot)
+        self.is_solo: bool = False
+
     def add_player(self, discord_id: int) -> int:
         player_index = 1
         self.player_discord_ids[discord_id] = player_index
@@ -50,7 +53,11 @@ class GameSession:
         deck_1_cards: list[Card] | None = None,
         deck_2_cards: list[Card] | None = None,
     ) -> GameState:
+        from zutomayo.data.deck_validator import build_card_index
+        from zutomayo.engine.bot_agent import load_random_saved_deck
+
         all_cards = load_cards()
+        card_index = build_card_index(all_cards)
 
         discord_ids = list(self.player_discord_ids.keys())
         name_1 = str(discord_ids[0])
@@ -59,12 +66,16 @@ class GameSession:
         if deck_1_cards is not None:
             deck_1 = build_deck_from_cards(deck_1_cards, name_1)
         else:
-            deck_1 = build_random_deck(all_cards, name_1)
+            deck_1 = build_deck_from_cards(
+                load_random_saved_deck(card_index), name_1,
+            )
 
         if deck_2_cards is not None:
             deck_2 = build_deck_from_cards(deck_2_cards, name_2)
         else:
-            deck_2 = build_random_deck(all_cards, name_2)
+            deck_2 = build_deck_from_cards(
+                load_random_saved_deck(card_index), name_2,
+            )
 
         controller = GameController(
             name_1=name_1,
@@ -134,12 +145,32 @@ class GameSessionManager:
         self.active_games: dict[str, GameSession] = {}
         self.player_to_game: dict[int, str] = {}  # discord user ID -> game_id
 
+    # Sentinel Discord ID used for the bot player in solo mode.
+    BOT_DISCORD_ID = 0
+
     def create_game(self, channel_id: int, creator_id: int) -> GameSession:
         if creator_id in self.player_to_game:
             raise ValueError('You are already in a game.')
 
         game_id = str(uuid4())[:8]
         session = GameSession(game_id, channel_id, creator_id)
+        self.active_games[game_id] = session
+        self.player_to_game[creator_id] = game_id
+        return session
+
+    def create_solo_game(self, channel_id: int, creator_id: int) -> GameSession:
+        """
+        Create a solo game where the creator plays against the bot.
+
+        The bot is added as player 1 with a sentinel Discord ID (0).
+        """
+        if creator_id in self.player_to_game:
+            raise ValueError('You are already in a game.')
+
+        game_id = str(uuid4())[:8]
+        session = GameSession(game_id, channel_id, creator_id)
+        session.is_solo = True
+        session.add_player(self.BOT_DISCORD_ID)
         self.active_games[game_id] = session
         self.player_to_game[creator_id] = game_id
         return session
