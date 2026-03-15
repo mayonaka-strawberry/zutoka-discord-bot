@@ -63,6 +63,28 @@ class GameCog(commands.Cog):
             view=view,
         )
 
+    @group.command(name='playuniguri', description='Play a solo game against BOT うにぐり')
+    @app_commands.dm_only()
+    async def play_uniguri(self, interaction: discord.Interaction):
+        channel_id = 0
+        try:
+            session = session_manager.create_solo_game(channel_id, interaction.user.id)
+        except ValueError as e:
+            await interaction.response.send_message(str(e), ephemeral=True)
+            return
+
+        await interaction.response.send_message(
+            f'**BOT うにぐり** has accepted **{interaction.user.display_name}**\'s challenge!\n'
+            f'Game ID: `{session.game_id}`\n'
+            f'Starting solo game...'
+        )
+
+        from zutomayo.engine.solo_game_flow import SoloGameFlow
+        solo_flow = SoloGameFlow(self.bot)
+        session.game_task = self.bot.loop.create_task(
+            solo_flow.run_solo_game(session)
+        )
+
     @group.command(name='join', description='Join an existing ZUTOMAYO CARD game')
     @app_commands.guild_only()
     @app_commands.describe(game_id='The game ID to join')
