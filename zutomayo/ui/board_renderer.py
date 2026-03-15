@@ -1,10 +1,10 @@
 from __future__ import annotations
-import io
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 import discord
 from PIL import Image
+from zutomayo.ui.image_utils import save_image_for_discord
 from zutomayo.enums.chronos import Chronos
 from zutomayo.models.card_instance import CardInstance
 from zutomayo.models.game_state import GameState
@@ -178,10 +178,7 @@ def render_board_image(
     rgb_board = Image.new('RGB', board.size, (0, 0, 0))
     rgb_board.paste(board, mask=board.split()[3])
 
-    buf = io.BytesIO()
-    rgb_board.save(buf, format='JPEG', quality=88)
-    buf.seek(0)
-    return discord.File(buf, filename='board.jpg')
+    return save_image_for_discord(rgb_board, 'board.jpg')
 
 
 # ---------------------------------------------------------------------------
@@ -226,12 +223,8 @@ def render_zone_strip(
                 back = back.resize((card_w, card_h))
                 grid.paste(back, (x, y))
 
-    buf = io.BytesIO()
-    grid.save(buf, format='PNG')
-    buf.seek(0)
-
     safe_label = label.replace(' ', '_').lower()
-    return discord.File(buf, filename=f'{safe_label}.png')
+    return save_image_for_discord(grid, f'{safe_label}.webp')
 
 
 # ---------------------------------------------------------------------------

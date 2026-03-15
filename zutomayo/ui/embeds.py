@@ -1,7 +1,7 @@
-import io
 from pathlib import Path
 import discord
 from PIL import Image
+from zutomayo.ui.image_utils import save_image_for_discord
 from constants import CHRONOS_SIZE, NIGHT_END
 from zutomayo.enums.card_type import CardType
 from zutomayo.enums.chronos import Chronos
@@ -47,7 +47,6 @@ PACK_NAME = {
     4: 'FANTASY IS REALITY',
 }
 
-IMG_OUTPUT_MAX_SIZE = 2000
 
 def card_short_description(card_instance: CardInstance) -> str:
     card = card_instance.card
@@ -343,7 +342,7 @@ def create_deck_grid_image(
     cards: list,
     columns: int = 5,
     padding: int = 10,
-    filename: str = 'deck.png',
+    filename: str = 'deck.webp',
 ) -> discord.File | None:
     """
     Combine card images into a single grid image.
@@ -385,15 +384,7 @@ def create_deck_grid_image(
             card_img = card_img.resize((card_w, card_h))
             grid.paste(card_img, (x, y))
     
-    # scale down png for uploading to discord
-    if grid.width > IMG_OUTPUT_MAX_SIZE or grid.height > IMG_OUTPUT_MAX_SIZE:
-        scale = IMG_OUTPUT_MAX_SIZE / max(grid.width, grid.height)
-        grid = grid.resize((int(grid.width * scale), int(grid.height * scale)), Image.LANCZOS)
-
-    buf = io.BytesIO()
-    grid.save(buf, format='PNG', optimize=True)
-    buf.seek(0)
-    return discord.File(buf, filename=filename)
+    return save_image_for_discord(grid, filename)
 
 
 def create_hand_image(hand: list[CardInstance]) -> discord.File | None:

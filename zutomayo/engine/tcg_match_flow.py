@@ -144,8 +144,8 @@ class TcgMatchFlow:
         self, session: GameSession, player_index: int, deck: list[Card], side: list[Card],
     ) -> None:
         """DM a player images of their main deck and side deck."""
-        main_img = create_deck_grid_image(deck, columns=5, filename='main_deck.png')
-        side_img = create_deck_grid_image(side, columns=4, filename='side_deck.png')
+        main_img = create_deck_grid_image(deck, columns=5, filename='main_deck.webp')
+        side_img = create_deck_grid_image(side, columns=4, filename='side_deck.webp')
         if main_img:
             await self._send_to_player(session, player_index, content='**Main Deck (20):**', file=main_img)
         if side_img:
