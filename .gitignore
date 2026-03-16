@@ -209,6 +209,7 @@ __marimo__/
 .claude/
 
 train_uniguri.py
+best_decks_uniguri.py
 zutomayo/engine/headless_game_env.py
 zutomayo/engine/rl_model.py
 
