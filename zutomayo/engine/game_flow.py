@@ -220,8 +220,9 @@ class GameFlow:
                 content=(
                     '**Deck Building [デッキ構築]**\n'
                     'Choose how to build your deck:\n'
-                    '**Build a Deck** - Enter cards manually or get a random deck\n'
-                    '**Select a Deck** - Use one of your saved decks'
+                    '**Build a Deck** - Enter cards manually\n'
+                    '**Select a Deck** - Use one of your saved decks\n'
+                    '**Select a Default Deck** - Use a pre-built deck'
                 ),
                 view=view,
             )
