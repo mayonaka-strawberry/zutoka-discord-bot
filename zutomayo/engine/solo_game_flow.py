@@ -1,5 +1,5 @@
 """
-Single-player game flow for playing against BOT うにぐり.
+Single-player game flow for playing against メカうにぐり.
 
 Subclasses GameFlow to handle the bot player automatically while
 the human player uses normal Discord UI interactions.

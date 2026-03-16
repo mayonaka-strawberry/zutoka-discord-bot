@@ -63,7 +63,7 @@ class GameCog(commands.Cog):
             view=view,
         )
 
-    @group.command(name='playuniguri', description='Play a solo game against BOT うにぐり')
+    @group.command(name='playuniguri', description='Play a solo game against メカうにぐり')
     @app_commands.dm_only()
     async def play_uniguri(self, interaction: discord.Interaction):
         channel_id = 0
@@ -74,7 +74,7 @@ class GameCog(commands.Cog):
             return
 
         await interaction.response.send_message(
-            f'**BOT うにぐり** has accepted **{interaction.user.display_name}**\'s challenge!\n'
+            f'**メカうにぐり** has accepted **{interaction.user.display_name}**\'s challenge!\n'
             f'Game ID: `{session.game_id}`\n'
             f'Starting solo game...'
         )

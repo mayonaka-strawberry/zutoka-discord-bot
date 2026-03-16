@@ -1,5 +1,5 @@
 """
-Bot agent for BOT うにぐり — makes gameplay decisions.
+Bot agent for メカうにぐり — makes gameplay decisions.
 
 In random mode (default), all decisions are made randomly from valid options.
 When a trained PyTorch model is loaded, decisions use the neural network policy.
@@ -24,7 +24,7 @@ DECKS_DIR = Path(__file__).resolve().parent.parent / 'decks'
 BOT_DECKS_FILE = Path(__file__).resolve().parent.parent / 'bot_decks.json'
 BEST_DECKS_FILE = Path(__file__).resolve().parent.parent / 'best_decks.json'
 
-BOT_NAME = 'BOT うにぐり'
+BOT_NAME = 'メカうにぐり'
 
 
 class BotAgent:
@@ -124,6 +124,14 @@ class ModelBotAgent(BotAgent):
         """Clear the trajectory buffer for a new game."""
         self.trajectory_buffer.clear()
 
+    @property
+    def _is_night(self) -> bool:
+        """Whether the current game state is night."""
+        if self.current_game_state is None:
+            return False
+        from zutomayo.enums.chronos import Chronos
+        return self.current_game_state.day_night == Chronos.NIGHT
+
     def _build_observation_tensor(self):
         """Build an observation tensor from the current game state."""
         import torch
@@ -208,6 +216,7 @@ class ModelBotAgent(BotAgent):
             self.current_decision_context = build_decision_context(
                 decision_type=DECISION_REDRAW,
                 candidates=remaining_hand,
+                is_night=self._is_night,
             )
             observation, observation_tensor = self._build_observation_tensor()
 
@@ -249,6 +258,7 @@ class ModelBotAgent(BotAgent):
             self.current_decision_context = build_decision_context(
                 decision_type=DECISION_CARD_SELECTION,
                 candidates=hand,
+                is_night=self._is_night,
             )
 
         observation, observation_tensor = self._build_observation_tensor()
@@ -295,6 +305,7 @@ class ModelBotAgent(BotAgent):
                 self.current_decision_context = build_decision_context(
                     decision_type=DECISION_CARD_SELECTION,
                     candidates=remaining_hand,
+                    is_night=self._is_night,
                 )
 
             observation, observation_tensor = self._build_observation_tensor()
@@ -342,6 +353,7 @@ class ModelBotAgent(BotAgent):
             self.current_decision_context = build_decision_context(
                 decision_type=DECISION_EFFECT_ORDER,
                 candidates=remaining,
+                is_night=self._is_night,
             )
             observation, observation_tensor = self._build_observation_tensor()
             valid_mask, mask_tensor = self._build_valid_action_mask(len(remaining))
@@ -387,6 +399,7 @@ class ModelBotAgent(BotAgent):
         self.current_decision_context = build_decision_context(
             decision_type=DECISION_EFFECT_CARD,
             candidates=selectable_cards,
+            is_night=self._is_night,
         )
         observation, observation_tensor = self._build_observation_tensor()
         valid_mask, mask_tensor = self._build_valid_action_mask(len(selectable_cards))
@@ -423,6 +436,7 @@ class ModelBotAgent(BotAgent):
             decision_type=DECISION_EFFECT_NUMBER,
             number_min=min_value,
             number_max=max_value,
+            is_night=self._is_night,
         )
         observation, observation_tensor = self._build_observation_tensor()
         valid_mask, mask_tensor = self._build_valid_action_mask(clamped_range_size)
