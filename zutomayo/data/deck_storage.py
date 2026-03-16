@@ -11,6 +11,16 @@ from zutomayo.models.card import Card
 
 
 DECKS_DIR = Path(__file__).resolve().parent.parent / 'decks'
+DEFAULT_DECKS_FILE = Path(__file__).resolve().parent.parent / 'default_decks.json'
+
+
+def load_default_decks() -> list[dict]:
+    """Load all default (pre-built) decks from default_decks.json. Returns [] if file missing."""
+    if not DEFAULT_DECKS_FILE.exists():
+        return []
+    with open(DEFAULT_DECKS_FILE, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    return data.get('decks', [])
 
 
 def _user_file(user_id: int) -> Path:

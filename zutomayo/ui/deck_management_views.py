@@ -9,6 +9,7 @@ from zutomayo.data.deck_storage import (
     delete_deck,
     get_deck_by_name,
     get_deck_names,
+    load_default_decks,
     resolve_deck_cards,
     update_deck,
 )
@@ -396,7 +397,7 @@ class DeckSourceView(discord.ui.View):
         self.card_index = card_index
         self.opponent_name = opponent_name
 
-    @discord.ui.button(label='Build a Deck', style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label='Build a Deck', style=discord.ButtonStyle.secondary, row=0)
     async def build_deck(self, interaction: discord.Interaction, button: discord.ui.Button):
         from zutomayo.ui.deck_builder_view import DeckBuilderView
 
@@ -407,7 +408,7 @@ class DeckSourceView(discord.ui.View):
                 'Build your 20-card deck!\n'
                 'Click **Enter Deck** to type your deck list as space-separated '
                 'card IDs in `XX-YYY` format (e.g. `01-001 01-002 02-050 ...`).\n'
-                'Max 2 copies of any card. Click **Random Deck** for a quick start.'
+                'Max 2 copies of any card.'
             ),
             view=view,
         )
@@ -435,6 +436,32 @@ class DeckSourceView(discord.ui.View):
         )
         await interaction.response.edit_message(
             content='Select a saved deck:',
+            view=view,
+        )
+        self.stop()
+
+    @discord.ui.button(label='Select a Default Deck', style=discord.ButtonStyle.secondary, row=0)
+    async def select_default_deck(self, interaction: discord.Interaction, button: discord.ui.Button):
+        default_decks = load_default_decks()
+        if not default_decks:
+            await interaction.response.send_message(
+                'No default decks are available.',
+                ephemeral=True,
+            )
+            return
+
+        deck_names = [deck['name'] for deck in default_decks]
+        view = DefaultDeckSelectView(
+            session=self.session,
+            player_index=self.player_index,
+            deck_names=deck_names,
+            default_decks=default_decks,
+            card_index=self.card_index,
+            all_cards=self.all_cards,
+            opponent_name=self.opponent_name,
+        )
+        await interaction.response.edit_message(
+            content='Select a default deck:',
             view=view,
         )
         self.stop()
@@ -564,8 +591,9 @@ class SavedDeckSelectView(discord.ui.View):
             content=(
                 '**Deck Building [デッキ構築]**\n'
                 'Choose how to build your deck:\n'
-                '**Build a Deck** - Enter cards manually or get a random deck\n'
-                '**Select a Deck** - Use one of your saved decks'
+                '**Build a Deck** - Enter cards manually\n'
+                '**Select a Deck** - Use one of your saved decks\n'
+                '**Select a Default Deck** - Use a pre-built deck'
             ),
             view=view,
         )
@@ -625,6 +653,159 @@ class SavedDeckConfirmView(discord.ui.View):
         )
         await interaction.response.edit_message(
             content='Select a saved deck:',
+            embed=None,
+            view=view,
+        )
+        self.stop()
+
+    async def on_timeout(self) -> None:
+        if self.player_index not in self.session.pending_actions:
+            self.session.submit_action(self.player_index, _random_deck(self.all_cards))
+
+
+class DefaultDeckSelectView(discord.ui.View):
+    """Dropdown of default (pre-built) decks during game start."""
+
+    def __init__(
+        self,
+        session: GameSession,
+        player_index: int,
+        deck_names: list[str],
+        default_decks: list[dict],
+        card_index: dict[tuple[int, int], Card],
+        all_cards: list[Card],
+        opponent_name: str = 'opponent',
+    ):
+        super().__init__(timeout=600)
+        self.session = session
+        self.player_index = player_index
+        self.all_deck_names = deck_names
+        self.default_decks = default_decks
+        self.card_index = card_index
+        self.all_cards = all_cards
+        self.opponent_name = opponent_name
+        self._build_page()
+
+    def _build_page(self) -> None:
+        options = [
+            discord.SelectOption(label=name[:100], value=name[:100])
+            for name in self.all_deck_names
+        ]
+        select = discord.ui.Select(placeholder='Select a default deck...', options=options)
+        select.callback = self._deck_selected
+        self.add_item(select)
+
+        back_button = discord.ui.Button(label='Go Back', style=discord.ButtonStyle.grey, row=1)
+        back_button.callback = self._go_back
+        self.add_item(back_button)
+
+    async def _deck_selected(self, interaction: discord.Interaction):
+        deck_name = interaction.data['values'][0]
+        deck_data = None
+        for deck in self.default_decks:
+            if deck['name'] == deck_name:
+                deck_data = deck
+                break
+
+        if deck_data is None:
+            await interaction.response.send_message('Deck not found.', ephemeral=True)
+            return
+
+        cards = resolve_deck_cards(deck_data, self.card_index)
+        embed = build_deck_list_embed(f'Default Deck: {deck_name}', cards)
+
+        view = DefaultDeckConfirmView(
+            session=self.session,
+            player_index=self.player_index,
+            deck_name=deck_name,
+            cards=cards,
+            card_index=self.card_index,
+            all_cards=self.all_cards,
+            default_decks=self.default_decks,
+            all_deck_names=self.all_deck_names,
+            opponent_name=self.opponent_name,
+        )
+        await interaction.response.edit_message(
+            content=f'You selected **{deck_name}**:',
+            embed=embed,
+            view=view,
+        )
+        self.stop()
+        grid = create_deck_grid_image(cards)
+        if grid:
+            await interaction.followup.send(file=grid, ephemeral=True)
+
+    async def _go_back(self, interaction: discord.Interaction):
+        view = DeckSourceView(
+            self.session, self.player_index, self.all_cards,
+            self.card_index, self.opponent_name,
+        )
+        await interaction.response.edit_message(
+            content=(
+                '**Deck Building [デッキ構築]**\n'
+                'Choose how to build your deck:\n'
+                '**Build a Deck** - Enter cards manually\n'
+                '**Select a Deck** - Use one of your saved decks\n'
+                '**Select a Default Deck** - Use a pre-built deck'
+            ),
+            view=view,
+        )
+        self.stop()
+
+    async def on_timeout(self) -> None:
+        if self.player_index not in self.session.pending_actions:
+            self.session.submit_action(self.player_index, _random_deck(self.all_cards))
+
+
+class DefaultDeckConfirmView(discord.ui.View):
+    """Confirm or Go Back after viewing a default deck during game start."""
+
+    def __init__(
+        self,
+        session: GameSession,
+        player_index: int,
+        deck_name: str,
+        cards: list[Card],
+        card_index: dict[tuple[int, int], Card],
+        all_cards: list[Card],
+        default_decks: list[dict],
+        all_deck_names: list[str],
+        opponent_name: str = 'opponent',
+    ):
+        super().__init__(timeout=600)
+        self.session = session
+        self.player_index = player_index
+        self.deck_name = deck_name
+        self.cards = cards
+        self.card_index = card_index
+        self.all_cards = all_cards
+        self.default_decks = default_decks
+        self.all_deck_names = all_deck_names
+        self.opponent_name = opponent_name
+
+    @discord.ui.button(label='Confirm', style=discord.ButtonStyle.green)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.session.submit_action(self.player_index, self.cards)
+        await interaction.response.edit_message(
+            content=f'Deck **{self.deck_name}** confirmed! Waiting for {self.opponent_name}...',
+            embed=None,
+            view=None,
+        )
+        self.stop()
+
+    @discord.ui.button(label='Go Back', style=discord.ButtonStyle.grey)
+    async def go_back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        view = DefaultDeckSelectView(
+            session=self.session,
+            player_index=self.player_index,
+            deck_names=self.all_deck_names,
+            default_decks=self.default_decks,
+            card_index=self.card_index,
+            all_cards=self.all_cards,
+            opponent_name=self.opponent_name,
+        )
+        await interaction.response.edit_message(
+            content='Select a default deck:',
             embed=None,
             view=view,
         )

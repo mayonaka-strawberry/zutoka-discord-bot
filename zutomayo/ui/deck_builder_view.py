@@ -85,23 +85,25 @@ class DeckBuilderView(discord.ui.View):
         )
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label='Random Deck', style=discord.ButtonStyle.secondary, row=0)
-    async def random_deck_button(
+    @discord.ui.button(label='Go Back', style=discord.ButtonStyle.secondary, row=0)
+    async def go_back_button(
         self, interaction: discord.Interaction, button: discord.ui.Button,
     ):
-        pool = self.all_cards * 2
-        random.shuffle(pool)
-        deck: list[Card] = []
-        counts: dict[tuple[int, int], int] = {}
-        for card in pool:
-            key = (card.pack, card.id)
-            if counts.get(key, 0) < 2 and len(deck) < 20:
-                deck.append(card)
-                counts[key] = counts.get(key, 0) + 1
-        self.session.submit_action(self.player_index, deck)
+        from zutomayo.ui.deck_management_views import DeckSourceView
+
+        view = DeckSourceView(
+            self.session, self.player_index, self.all_cards,
+            self.card_index, self.opponent_name,
+        )
         await interaction.response.edit_message(
-            content=f'Waiting for {self.opponent_name}...',
-            view=None,
+            content=(
+                '**Deck Building [デッキ構築]**\n'
+                'Choose how to build your deck:\n'
+                '**Build a Deck** - Enter cards manually\n'
+                '**Select a Deck** - Use one of your saved decks\n'
+                '**Select a Default Deck** - Use a pre-built deck'
+            ),
+            view=view,
         )
         self.stop()
 
