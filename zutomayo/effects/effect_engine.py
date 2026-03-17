@@ -752,13 +752,19 @@ class EffectEngine:
 # Handler registry
 # ======================================================================
 
-
 _EFFECT_HANDLERS: dict[str, EffectHandler] = {}
 import zutomayo.effects.cards as cards_pkg
+
+# no-op effects that originally weren't imported
+_EXCLUDED_EFFECT_MODULES = {'effect_02_005', 'effect_02_007', 'effect_02_062'}
+
 for module_info in pkgutil.iter_modules(cards_pkg.__path__):
     name = module_info.name
 
     if name.startswith("effect_"):
+        if name in _EXCLUDED_EFFECT_MODULES:
+            continue
+
         module = importlib.import_module(f"zutomayo.effects.cards.{name}")
         handler = getattr(module, name) # assumes the handler has the same name as the module
         
