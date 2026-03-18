@@ -1,4 +1,5 @@
 import asyncio
+import copy
 from typing import Any, Optional
 from uuid import uuid4
 from zutomayo.data.card_loader import load_cards
@@ -16,6 +17,7 @@ class GameSession:
         self.channel_id = channel_id
         self.player_discord_ids: dict[int, int] = {}  # discord user ID -> player index
         self.game_state: Optional[GameState] = None
+        self.prev_game_state: Optional[GameState] = None # used for animation rendering
         self.turn_manager: Optional[TurnManager] = None
         self.effect_engine = EffectEngine()
 
@@ -86,8 +88,11 @@ class GameSession:
         )
 
         self.game_state = controller.game_state
+        self.prev_game_state = copy.deepcopy(self.game_state)
         self.game_state.game_id = self.game_id
         self.turn_manager = TurnManager(self.game_state, self.effect_engine)
+        
+
         return self.game_state
 
     def get_player_index(self, discord_id: int) -> Optional[int]:

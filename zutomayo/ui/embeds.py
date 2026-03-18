@@ -364,8 +364,7 @@ def create_deck_grid_image(
 
     if not image_paths:
         return None
-
-    # Open first image to get card dimensions
+    
     sample = Image.open(image_paths[0])
     card_w, card_h = sample.size
     sample.close()
@@ -385,6 +384,165 @@ def create_deck_grid_image(
             grid.paste(card_img, (x, y))
     
     return save_image_for_discord(grid, filename)
+
+
+def create_gacha_grid_image(
+    cards: list,
+    filename: str = 'gacha.webp',
+) -> discord.File | None:
+    """Animated gacha reveal — single card slides up into view."""
+    from zutomayo.ui.animation import Keyframe, Scene
+
+    image_paths: list[Path] = []
+    for item in cards:
+        card = item.card if isinstance(item, CardInstance) else item
+        if not card.image:
+            continue
+        image_path = _PROJECT_ROOT / card.image
+        if image_path.is_file():
+            image_paths.append(image_path)
+
+    if not image_paths:
+        return None
+
+    first_card = cards[0].card if isinstance(cards[0], CardInstance) else cards[0]
+    pack_path = _PROJECT_ROOT / f'zutomayo/images/pack-{first_card.pack}.png'
+
+    card_images: list[Image.Image] = []
+    for path in image_paths:
+        with Image.open(path) as img:
+            card_images.append(img.copy())
+
+    card_w, card_h = card_images[0].size
+    num_cards = len(card_images)
+    
+    pack_img = Image.open(pack_path).convert('RGBA')
+    pack_aspect = pack_img.width / pack_img.height
+    pack_w = round(card_h * pack_aspect)
+
+    row_padding = 20
+    row_width = num_cards * card_w + (num_cards - 1) * row_padding
+
+    scene_w = row_width + 50
+    scene_h = max(card_w, card_h) + 200
+
+    cx = scene_w // 2
+    cy = scene_h // 2
+
+    # Timeline:
+    #   0-15%:  Phase 0 — pack slides up into view
+    #   15-25%: Phase 0 — pack slides back down, revealing card stack behind it
+    #   25-75%: Phase 1 — cards peel off the stack one by one
+    #   75-100%: Phase 2 — cards slide up in a row one by one
+    pack_up_end = 15
+    pack_down_end = 25
+    peel_duration = 10
+    peel_start_pct = pack_down_end
+    peel_end_pct = peel_start_pct + num_cards * peel_duration
+    reveal_duration = (100 - peel_end_pct) / num_cards
+
+    scene = Scene(
+        width=scene_w, height=scene_h,
+        fps=12, duration=5.0,
+        background=(0x1d, 0x1d, 0x22, 255),
+        render_scale=0.5,
+    )
+
+    # Pack image
+    pack_obj = scene.add(pack_img, z_index=100)
+    pack_obj.animate([
+        Keyframe(
+            pct=0,
+            x=cx, y=cy + scene_h,
+            width=pack_w, height=card_h,
+            visible=True,
+        ),
+        Keyframe(
+            pack_up_end,
+            x=cx, y=cy,
+            width=round(pack_w * 2.5), height=round(card_h * 2.5),
+            easing='ease_out',
+        ),
+        Keyframe(
+            pack_down_end,
+            x=cx, y=cy + scene_h,
+            visible=False,
+            easing='ease_in',
+        ),
+    ])
+
+    # Peel off cards
+    for i, img in enumerate(card_images):
+        peel_order = num_cards - 1 - i 
+        card_peel_start = peel_start_pct + peel_order * peel_duration
+        card_peel_end = card_peel_start + peel_duration
+
+        obj = scene.add(img, z_index=i)
+        obj.animate([
+            Keyframe(
+                pct=0, 
+                x=cx, 
+                y=cy, 
+                rotate_z=0, 
+                visible=False
+            ),
+            Keyframe(
+                pct=pack_up_end, 
+                x=cx, 
+                y=cy, 
+                rotate_z=0, 
+                visible=True
+            ),
+            Keyframe(
+                pct=card_peel_start, 
+                x=cx, 
+                y=cy, 
+                rotate_z=0
+            ),
+            Keyframe(
+                pct=card_peel_end,
+                x=cx + scene_w, y=cy + scene_h // 2,
+                rotate_z=45, easing='ease_in',
+            ),
+            Keyframe(
+                pct=peel_end_pct,
+                x=cx + scene_w, y=cy + scene_h,
+                visible=False,
+            ),
+        ])
+
+    # Reveal cards in a row
+    row_left = (scene_w - row_width) // 2
+
+    for i, img in enumerate(card_images):
+        target_x = row_left + i * (card_w + row_padding) + card_w // 2
+        target_y = cy
+
+        reveal_start = peel_end_pct + i * reveal_duration
+        reveal_end = min(reveal_start + reveal_duration, 99.9)
+
+        obj = scene.add(img, z_index=num_cards + i)
+        obj.animate([
+            Keyframe(
+                pct=reveal_start,
+                visible=False,
+                x=target_x, y=target_y + scene_h,
+                opacity=0.2,
+            ),
+            Keyframe(
+                pct=reveal_start + 0.1,
+                visible=True,
+                x=target_x, y=target_y + scene_h,
+                opacity=1,
+            ),
+            Keyframe(
+                reveal_end,
+                x=target_x, y=target_y,
+                easing='ease_out',
+            ),
+        ])
+
+    return scene.render_to_file(filename='gacha.gif')
 
 
 def create_hand_image(hand: list[CardInstance]) -> discord.File | None:

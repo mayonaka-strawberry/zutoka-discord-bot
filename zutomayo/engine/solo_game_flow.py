@@ -7,6 +7,7 @@ the human player uses normal Discord UI interactions.
 
 from __future__ import annotations
 import asyncio
+import copy
 import logging
 import random
 from typing import TYPE_CHECKING
@@ -131,12 +132,14 @@ class SoloGameFlow(GameFlow):
 
         content = f'**{phase_description}**'
 
+        prev = session.prev_game_state
+
         # Channel: zone messages then DAY perspective board
         if changed_indices is None or changed_indices:
             await self._send_zone_messages(
                 session, names, to_channel=True, changed_indices=changed_indices,
             )
-        board_file = render_board_image(game_state, Chronos.DAY)
+        board_file = render_board_image(game_state, Chronos.DAY, prev_game_state=prev)
         await self._send_to_channel(session, content=content, embeds=embeds, files=[board_file])
 
         # Human player DM only
@@ -146,11 +149,13 @@ class SoloGameFlow(GameFlow):
                 session, names, player_index=HUMAN_PLAYER_INDEX,
                 changed_indices=changed_indices,
             )
-        board_file = render_board_image(game_state, human_player.side)
+        board_file = render_board_image(game_state, human_player.side, prev_game_state=prev)
         await self._send_to_player(
             session, HUMAN_PLAYER_INDEX,
             content=content, embeds=embeds, files=[board_file],
         )
+
+        session.prev_game_state = copy.deepcopy(game_state)
 
         if delay > 0:
             await asyncio.sleep(delay)
@@ -566,8 +571,10 @@ class SoloGameFlow(GameFlow):
         field_embed = build_field_embed(game_state, names)
         start_content = f'**ゲームスタート: {names[HUMAN_PLAYER_INDEX]} vs. {names[BOT_PLAYER_INDEX]}**'
 
+        prev = session.prev_game_state
+
         await self._send_zone_messages(session, names, to_channel=True)
-        board_file = render_board_image(game_state, Chronos.DAY)
+        board_file = render_board_image(game_state, Chronos.DAY, prev_game_state=prev)
         await self._send_to_channel(
             session, content=start_content, embed=field_embed, files=[board_file],
         )
@@ -576,11 +583,13 @@ class SoloGameFlow(GameFlow):
         await self._send_zone_messages(
             session, names, player_index=HUMAN_PLAYER_INDEX,
         )
-        board_file = render_board_image(game_state, human_player.side)
+        board_file = render_board_image(game_state, human_player.side, prev_game_state=prev)
         await self._send_to_player(
             session, HUMAN_PLAYER_INDEX,
             content=start_content, embed=field_embed, files=[board_file],
         )
+
+        session.prev_game_state = copy.deepcopy(game_state)
 
         log.info(
             'Solo game %s started: %s vs %s',

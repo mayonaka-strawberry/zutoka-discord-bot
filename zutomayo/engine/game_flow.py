@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import copy
 import logging
 from typing import TYPE_CHECKING
 import discord
@@ -172,10 +173,12 @@ class GameFlow:
 
         content = f'**{phase_description}**'
 
+        prev = session.prev_game_state
+
         # Channel: zone messages (only changed) then DAY perspective board
         if changed_indices is None or changed_indices:
             await self._send_zone_messages(session, names, to_channel=True, changed_indices=changed_indices)
-        board_file = render_board_image(game_state, Chronos.DAY)
+        board_file = render_board_image(game_state, Chronos.DAY, prev_game_state=prev)
         await self._send_to_channel(session, content=content, embeds=embeds, files=[board_file])
 
         # Each player DM: zone messages (only changed) then their perspective board (no button)
@@ -183,10 +186,12 @@ class GameFlow:
             player = game_state.players[index]
             if changed_indices is None or changed_indices:
                 await self._send_zone_messages(session, names, player_index=index, changed_indices=changed_indices)
-            board_file = render_board_image(game_state, player.side)
+            board_file = render_board_image(game_state, player.side, prev_game_state=prev)
             await self._send_to_player(
                 session, index, content=content, embeds=embeds, files=[board_file],
             )
+
+        session.prev_game_state = copy.deepcopy(game_state)
 
         if delay > 0:
             await asyncio.sleep(delay)
@@ -306,14 +311,18 @@ class GameFlow:
         field_embed = build_field_embed(game_state, names)
         start_content = f'**ゲームスタート: {names[0]} vs. {names[1]}**'
 
+        prev = session.prev_game_state
+
         await self._send_zone_messages(session, names, to_channel=True)
-        board_file = render_board_image(game_state, Chronos.DAY)
+        board_file = render_board_image(game_state, Chronos.DAY, prev_game_state=prev)
         await self._send_to_channel(session, content=start_content, embed=field_embed, files=[board_file])
         for index in range(2):
             player = game_state.players[index]
             await self._send_zone_messages(session, names, player_index=index)
-            board_file = render_board_image(game_state, player.side)
+            board_file = render_board_image(game_state, player.side, prev_game_state=prev)
             await self._send_to_player(session, index, content=start_content, embed=field_embed, files=[board_file])
+
+        session.prev_game_state = copy.deepcopy(game_state)
 
         log.info('Game %s started: %s vs %s', session.game_id, names[0], names[1])
 

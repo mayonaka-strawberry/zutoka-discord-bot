@@ -331,17 +331,18 @@ class GameCog(commands.Cog):
 
         from zutomayo.data.card_loader import load_cards
         from zutomayo.data.gacha import draw_gacha
-        from zutomayo.ui.embeds import create_deck_grid_image
+        from zutomayo.ui.embeds import create_gacha_grid_image
 
         all_cards = load_cards()
         drawn = draw_gacha(pack, all_cards)
-        image = create_deck_grid_image(drawn, columns=5, filename='gacha.webp')
+
+        await interaction.response.defer()
+        image = create_gacha_grid_image(drawn)
         if image:
-            await interaction.response.send_message(file=image)
+            await interaction.followup.send(file=image)
         else:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 'Something went wrong generating the gacha image.',
-                ephemeral=True,
             )
 
     @group.command(name='gachabox', description='Open a gacha box: 10 packs of 5 cards')
