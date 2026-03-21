@@ -112,7 +112,6 @@ class ModelBotAgent(BotAgent):
         self.trajectory_buffer: list = []
         self.current_game_state = None
         self.current_decision_context: Optional[list[float]] = None
-        self.original_deck_cards: Optional[dict[int, list]] = None
 
         # Check if the model supports the extended observation/action space
         from zutomayo.engine.headless_game_env import OBSERVATION_SIZE, MAX_ACTION_SIZE
@@ -142,7 +141,6 @@ class ModelBotAgent(BotAgent):
             self.current_game_state,
             self.player_index,
             decision_context=self.current_decision_context,
-            original_deck_cards=self.original_deck_cards,
         )
         observation_tensor = torch.tensor(
             observation, dtype=torch.float32, device=self.device,
