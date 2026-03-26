@@ -62,6 +62,12 @@ class TurnManager:
             cards.append(player.set_zone_b)
         if player.battle_zone and player.battle_zone.played_this_turn:
             cards.append(player.battle_zone)
+        for card_instance in player.power_charger:
+            if card_instance.played_this_turn:
+                cards.append(card_instance)
+        for card_instance in player.abyss:
+            if card_instance.played_this_turn:
+                cards.append(card_instance)
         return cards
 
     def get_attack_power(self, player: Player) -> int:
@@ -330,4 +336,10 @@ class TurnManager:
                 player.set_zone_b.power_cost_reduction = 0
             if player.set_zone_c:
                 player.set_zone_c.played_this_turn = False
+            for card_instance in player.power_charger:
+                card_instance.played_this_turn = False
+                card_instance.power_cost_reduction = 0
+            for card_instance in player.abyss:
+                card_instance.played_this_turn = False
+                card_instance.power_cost_reduction = 0
         self.effect_engine.reset_turn_state()
