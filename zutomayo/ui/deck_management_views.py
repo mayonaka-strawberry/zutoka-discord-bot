@@ -210,10 +210,20 @@ class ManageDecksView(discord.ui.View):
         back_btn.callback = self._go_back
         self.add_item(back_btn)
 
+        deck_data = get_deck_by_name(self.user_id, self.selected_deck_name)
+        cards = resolve_deck_cards(deck_data, self.card_index)
+        embed = build_deck_list_embed(self.selected_deck_name, cards)
+        ids_line = ' '.join(f'{c.pack:02d}-{c.id:03d}' for c in cards)
+        embed.description += f'\n\n{ids_line}'
+
         await interaction.response.edit_message(
-            content=f'Selected deck: **{self.selected_deck_name}**\nChoose an action:',
+            content='Choose an action:',
+            embed=embed,
             view=self,
         )
+        grid = create_deck_grid_image(cards)
+        if grid:
+            await interaction.followup.send(file=grid, ephemeral=True)
 
     async def _edit_deck(self, interaction: discord.Interaction):
         modal = EditDeckModal(self.selected_deck_name, self.user_id, self.card_index)
@@ -246,6 +256,7 @@ class ManageDecksView(discord.ui.View):
         if not self.all_deck_names:
             await interaction.response.edit_message(
                 content=f'Deck **{self.selected_deck_name}** deleted. You have no more saved decks.',
+                embed=None,
                 view=None,
             )
             self.stop()
@@ -258,6 +269,7 @@ class ManageDecksView(discord.ui.View):
         self._build_page()
         await interaction.response.edit_message(
             content=f'Deck **{self.selected_deck_name}** deleted. Select another deck to manage:',
+            embed=None,
             view=self,
         )
 
@@ -267,6 +279,7 @@ class ManageDecksView(discord.ui.View):
         self._build_page()
         await interaction.response.edit_message(
             content='Select a deck to manage:',
+            embed=None,
             view=self,
         )
 
@@ -276,6 +289,7 @@ class ManageDecksView(discord.ui.View):
         self._build_page()
         await interaction.response.edit_message(
             content=f'Select a deck to manage (Page {self.page + 1}/{self.total_pages}):',
+            embed=None,
             view=self,
         )
 
@@ -285,6 +299,7 @@ class ManageDecksView(discord.ui.View):
         self._build_page()
         await interaction.response.edit_message(
             content=f'Select a deck to manage (Page {self.page + 1}/{self.total_pages}):',
+            embed=None,
             view=self,
         )
 
