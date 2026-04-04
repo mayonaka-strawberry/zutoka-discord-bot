@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 async def effect_01_103(
     engine: EffectEngine, game_state: GameState, player_index: int, card_instance: CardInstance,
 ) -> None:
-    """Select one of your opponent's Abyss cards and have it returned to the deck."""
+    """Select one of your opponent's Abyss cards and have it returned to the bottom of their deck."""
     opponent = game_state.players[1 - player_index]
 
     log.debug('[%s] %s: checking opponent abyss size=%d', card_instance.card.effect, engine.player_label(player_index), len(opponent.abyss))

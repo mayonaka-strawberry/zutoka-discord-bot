@@ -16,7 +16,7 @@ async def effect_04_088(
     engine: EffectEngine, game_state: GameState, player_index: int, card_instance: CardInstance,
 ) -> None:
     """
-    Select a card from the Abyss. Shuffle them face down and place them at the bottom of your deck.
+    Select a card from the Abyss and place it at the bottom of your deck.
     Otherwise, you lose the game.
     Look at the top 3 cards of your opponent's deck, rearrange them in any order you like, and return them to the deck.
     """
@@ -63,7 +63,7 @@ async def effect_04_088(
         log.debug('[%s] %s: early return, skipping effect', card_instance.card.effect, engine.player_label(player_index))
         return
 
-    # Move selected card from abyss to deck bottom face down
+    # Move selected card from abyss to deck bottom (face down)
     player.abyss.remove(selected_card)
     selected_card.zone = Zone.DECK
     selected_card.face_up = False

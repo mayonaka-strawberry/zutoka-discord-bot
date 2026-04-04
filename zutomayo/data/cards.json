@@ -1953,8 +1953,8 @@
       "power_cost": 0,
       "send_to_power": 1,
       "effect": "01-103",
-      "effect_text": "Select one of your opponent's Abyss cards and have it returned to the deck.",
-      "effect_text_jp": "相手のアビスのカードを1枚選んでデッキに戻させる",
+      "effect_text": "Select one of your opponent's Abyss cards and have it returned to the bottom of their deck.",
+      "effect_text_jp": "相手のアビスのカードを1枚選んでデッキの底に戻させる",
       "rarity": "N"
     },
     {
@@ -3309,13 +3309,13 @@
     {
       "pack": 2,
       "id": 69,
-      "name": "GEKI・UNIGURI-KUN (MILABO)",
+      "name": "GEKI・UNIGURI-KUN (Haze Haseru Haterumade)",
       "name_jp": "劇・うにぐり（ハゼ馳せる果てるまで）",
       "image": "zutomayo/images/2/zutomayocard_2nd_69.png",
       "clock": 2,
       "card_type": "CHARACTER",
       "attribute": "FLAME",
-      "song": "MILABO",
+      "song": "HAZE_HASERU_HATERUMADE",
       "attack_day": 20,
       "attack_night": 10,
       "power_cost": 0,
@@ -4176,8 +4176,8 @@
       "power_cost": 4,
       "send_to_power": 0,
       "effect": "03-008",
-      "effect_text": "Attack +100 if there are cards of 4 different attributes in the Abyss.",
-      "effect_text_jp": "アビスに4属性すべてのカードがあるなら攻撃力+100",
+      "effect_text": "Attack +100 if there are cards of all 4 attributes (Darkness, Flame, Electricity, Wind) in the Abyss.",
+      "effect_text_jp": "アビスに闇・炎・電気・風の4属性のカードがあるなら攻撃力+100",
       "rarity": "UR"
     },
     {
@@ -4442,8 +4442,8 @@
       "power_cost": 3,
       "send_to_power": 0,
       "effect": "03-022",
-      "effect_text": "Attack +40 if there are cards of 4 different attributes in the Abyss.",
-      "effect_text_jp": "アビスに4属性すべてのカードがあるなら攻撃力+40",
+      "effect_text": "Attack +40 if there are cards of all 4 attributes (Darkness, Flame, Electricity, Wind) in the Abyss.",
+      "effect_text_jp": "アビスに闇・炎・電気・風の4属性のカードがあるなら攻撃力+40",
       "rarity": "SR"
     },
     {
@@ -7470,8 +7470,8 @@
     {
       "pack": 4,
       "id": 76,
-      "name": "GREINU (Pain Give Form)",
-      "name_jp": "グレイヌ（形）",
+      "name": "GUREKUMA-KUN (Pain Give Form)",
+      "name_jp": "グレくまくん (形)",
       "image": "zutomayo/images/4/zutomayocard_4th_076.png",
       "clock": 1,
       "card_type": "CHARACTER",
@@ -7710,8 +7710,8 @@
       "power_cost": 0,
       "send_to_power": 0,
       "effect": "04-088",
-      "effect_text": "Select a card from the Abyss. Shuffle them face down and place them at the bottom of your deck. Otherwise, you lose the game. Look at the top 3 cards of your opponent's deck, rearrange them in any order you like, and return them to the deck.",
-      "effect_text_jp": "アビスのカードを1枚選び、裏向きにして混ぜ、デッキの底に置く。そうしない場合、ゲームに敗北する。 相手のデッキの上から3枚を見て、好きな順番に入れ替えて戻す",
+      "effect_text": "Select a card from the Abyss and place it at the bottom of your deck. Otherwise, you lose the game. Look at the top 3 cards of your opponent's deck, rearrange them in any order you like, and return them to the deck.",
+      "effect_text_jp": "アビスのカードを1枚選び、デッキの底に置く。そうしない場合、ゲームに敗北する。相手のデッキの上から3枚を見て、好きな順番に入れ替えて戻す",
       "rarity": "N"
     },
     {
