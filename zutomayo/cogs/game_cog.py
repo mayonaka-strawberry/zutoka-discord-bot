@@ -4,6 +4,14 @@ from discord import app_commands
 from discord.ext import commands
 from zutomayo.engine.game_session import session_manager
 from zutomayo.ui.views import GameLobbyView
+from zutomayo.ui.rank_songs_view import (
+    CheckpointChoiceView,
+    DEFAULT_NUMBER_OF_ROUNDS,
+    MAX_NUMBER_OF_ROUNDS,
+    RankSongsView,
+    get_checkpoint_path,
+    get_full_checkpoint_path,
+)
 
 
 log = logging.getLogger(__name__)
@@ -85,12 +93,33 @@ class GameCog(commands.Cog):
             solo_flow.run_solo_game(session)
         )
 
-    @group.command(name='ranksongs', description='Rank your favourite ZUTOMAYO songs')
+    @group.command(name='ranksongs', description='Rank your favourite ZUTOMAYO songs (15 rounds)')
     @app_commands.dm_only()
     async def rank_songs(self, interaction: discord.Interaction):
-        from zutomayo.ui.rank_songs_view import RankSongsView
-        view = RankSongsView()
-        await interaction.response.send_message(content=view._build_matchup_content(), view=view)
+        if interaction.guild is not None:
+            await interaction.response.send_message('This command can only be used in DMs.', ephemeral=True)
+            return
+        checkpoint_path = get_checkpoint_path(interaction.user.id)
+        if checkpoint_path.exists():
+            view = CheckpointChoiceView(user_id=interaction.user.id, number_of_rounds=DEFAULT_NUMBER_OF_ROUNDS)
+            await interaction.response.send_message('A saved checkpoint was found. Choose to resume or start from scratch.', view=view)
+        else:
+            view = RankSongsView(number_of_rounds=DEFAULT_NUMBER_OF_ROUNDS, user_id=interaction.user.id)
+            await interaction.response.send_message(content=view._build_matchup_content(), view=view)
+
+    @group.command(name='ranksongsfull', description='Rank your favourite ZUTOMAYO songs across all possible matchups')
+    @app_commands.dm_only()
+    async def rank_songs_full(self, interaction: discord.Interaction):
+        if interaction.guild is not None:
+            await interaction.response.send_message('This command can only be used in DMs.', ephemeral=True)
+            return
+        checkpoint_path = get_full_checkpoint_path(interaction.user.id)
+        if checkpoint_path.exists():
+            view = CheckpointChoiceView(user_id=interaction.user.id, number_of_rounds=MAX_NUMBER_OF_ROUNDS, checkpoint_prefix='full_checkpoint')
+            await interaction.response.send_message('A saved checkpoint was found. Choose to resume or start from scratch.', view=view)
+        else:
+            view = RankSongsView(number_of_rounds=MAX_NUMBER_OF_ROUNDS, user_id=interaction.user.id, checkpoint_prefix='full_checkpoint')
+            await interaction.response.send_message(content=view._build_matchup_content(), view=view)
 
     @group.command(name='join', description='Join an existing ZUTOMAYO CARD game')
     @app_commands.guild_only()
