@@ -170,6 +170,9 @@ class RankSongsView(discord.ui.View):
         self._update_elo_ratings(song_index_a, song_index_b, score_for_a)
         self._current_matchup_index += 1
 
+        if self._current_matchup_index % 50 == 0:
+            self._save_checkpoint()
+
         if self._tiebreaker_challenger_queue:
             challenger = self._tiebreaker_challenger_queue.pop(0)
             if score_for_a < 0.5:  # challenger (song B) beat the champion (song A)
