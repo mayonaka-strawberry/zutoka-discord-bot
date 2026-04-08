@@ -16,7 +16,7 @@ def get_checkpoint_path(user_id: int) -> Path:
 def get_full_checkpoint_path(user_id: int) -> Path:
     return CHECKPOINT_DIRECTORY / f'full_checkpoint_{user_id}.json'
 
-INITIAL_RATING = 1000
+INITIAL_RATING = 2000
 K_FACTOR = 32
 DEFAULT_NUMBER_OF_ROUNDS = 1
 MAX_NUMBER_OF_ROUNDS = len(STUDIO_RECORDINGS)
