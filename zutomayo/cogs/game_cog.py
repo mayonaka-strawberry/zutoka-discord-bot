@@ -85,6 +85,13 @@ class GameCog(commands.Cog):
             solo_flow.run_solo_game(session)
         )
 
+    @group.command(name='ranksongs', description='Rank your favourite ZUTOMAYO songs')
+    @app_commands.dm_only()
+    async def rank_songs(self, interaction: discord.Interaction):
+        from zutomayo.ui.rank_songs_view import RankSongsView
+        view = RankSongsView()
+        await interaction.response.send_message(content=view._build_matchup_content(), view=view)
+
     @group.command(name='join', description='Join an existing ZUTOMAYO CARD game')
     @app_commands.guild_only()
     @app_commands.describe(game_id='The game ID to join')
