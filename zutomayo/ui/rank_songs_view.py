@@ -12,15 +12,16 @@ from zutomayo.data.rank_songs_data import STUDIO_RECORDINGS
 
 log = logging.getLogger(__name__)
 
-
 CHECKPOINT_DIRECTORY = Path('zutomayo/progress')
+
 
 def get_checkpoint_path(user_id: int) -> Path:
     return CHECKPOINT_DIRECTORY / f'checkpoint_{user_id}.json'
 
+
 INITIAL_RATING = 2000
 K_FACTOR = 32
-DEFAULT_NUMBER_OF_ROUNDS = 1 # math.ceil(math.sqrt(len(STUDIO_RECORDINGS))) + 7
+DEFAULT_NUMBER_OF_ROUNDS = math.ceil(math.sqrt(len(STUDIO_RECORDINGS))) + 7
 SONGS_PER_PAGE = 15
 MAX_ITERATIONS = 100
 CONVERGENCE_THRESHOLD = 0.01
