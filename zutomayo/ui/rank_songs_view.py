@@ -198,7 +198,7 @@ class RankSongsView(discord.ui.View):
         self._recorded_votes.append((song_index_a, song_index_b, score_for_a))
         self._current_matchup_index += 1
 
-        if self._current_matchup_index % 50 == 0:
+        if self._current_matchup_index % (len(STUDIO_RECORDINGS) // 2) == 0:
             self._save_checkpoint()
 
         if self._current_matchup_index < len(self._matchup_list):
