@@ -23,8 +23,9 @@ INITIAL_RATING = 2000
 K_FACTOR = 32
 DEFAULT_NUMBER_OF_ROUNDS = math.ceil(math.sqrt(len(STUDIO_RECORDINGS))) + 7
 SONGS_PER_PAGE = 15
-MAX_ITERATIONS = 100
+MAX_ITERATIONS = 500
 CONVERGENCE_THRESHOLD = 0.01
+PSEUDOCOUNT = 0.5
 
 SCORE_PREFER_A = 1.0
 SCORE_SLIGHTLY_PREFER_A = 0.75
@@ -32,43 +33,50 @@ SCORE_SLIGHTLY_PREFER_B = 0.25
 SCORE_PREFER_B = 0.0
 
 
-def _generate_matchup_list(number_of_rounds: int) -> list[tuple[int, int]]:
-    """
-    Return a shuffled list of (song_index_a, song_index_b) pairs.
-
-    For partial mode, the first number_of_rounds * (len(STUDIO_RECORDINGS) // 2)
-    pairs are returned, giving each song approximately number_of_rounds
-    appearances. Works correctly for any N (even or odd).
-    """
-    n = len(STUDIO_RECORDINGS)
-    all_pairs: list[tuple[int, int]] = [
-        (i, j) for i in range(n) for j in range(i + 1, n)
-    ]
-    random.shuffle(all_pairs)
-    return all_pairs[:number_of_rounds * (n // 2)]
-
-
 class RankSongsView(discord.ui.View):
     def __init__(self, number_of_rounds: int = DEFAULT_NUMBER_OF_ROUNDS, user_id: int = 0) -> None:
         super().__init__(timeout=None)
         self._user_id: int = user_id
         self._number_of_rounds: int = number_of_rounds
-        self._matchup_list: list[tuple[int, int]] = _generate_matchup_list(number_of_rounds)
+        n = len(STUDIO_RECORDINGS)
+        self._total_matchups: int = number_of_rounds * (n // 2)
+
+        # All N*(N-1)/2 pairs, shuffled, form the adaptive candidate pool.
+        all_pairs: list[tuple[int, int]] = [
+            (i, j) for i in range(n) for j in range(i + 1, n)
+        ]
+        random.shuffle(all_pairs)
+        self._candidate_pairs: list[tuple[int, int]] = all_pairs
+
+        # Running ratings used only for adaptive pair selection, not for the final output.
+        self._running_ratings: list[float] = [float(INITIAL_RATING)] * n
+
         self._recorded_votes: list[tuple[int, int, float]] = []
-        self._current_matchup_index: int = 0
         self._ranking_pages: list[list[str]] = []
         self._current_ranking_page: int = 0
         self._vote_history: list[dict] = []
+
+        self._current_matchup: tuple[int, int] = self._pick_next_matchup()
 
     def _get_checkpoint_path(self) -> Path:
         return get_checkpoint_path(self._user_id)
 
     @classmethod
     def from_checkpoint(cls, data: dict) -> RankSongsView:
-        instance = cls(number_of_rounds=data['number_of_rounds'], user_id=data['discord_user_id'])
-        instance._matchup_list = [tuple(pair) for pair in data['matchup_list']]
-        instance._current_matchup_index = data['current_matchup_index']
+        # KeyError on any missing key propagates to CheckpointChoiceView.resume_ranking,
+        # which treats it as an incompatible checkpoint and starts fresh.
+        instance = cls.__new__(cls)
+        discord.ui.View.__init__(instance, timeout=None)
+        instance._user_id = data['discord_user_id']
+        instance._number_of_rounds = data['number_of_rounds']
+        instance._total_matchups = data['total_matchups']
+        instance._candidate_pairs = [tuple(pair) for pair in data['candidate_pairs']]
+        instance._running_ratings = list(data['running_ratings'])
+        instance._current_matchup = tuple(data['current_matchup'])
         instance._recorded_votes = [tuple(vote) for vote in data['recorded_votes']]
+        instance._ranking_pages = []
+        instance._current_ranking_page = 0
+        instance._vote_history = []
         return instance
 
     def _save_checkpoint(self) -> None:
@@ -76,8 +84,10 @@ class RankSongsView(discord.ui.View):
         data = {
             'discord_user_id': self._user_id,
             'number_of_rounds': self._number_of_rounds,
-            'matchup_list': [list(pair) for pair in self._matchup_list],
-            'current_matchup_index': self._current_matchup_index,
+            'total_matchups': self._total_matchups,
+            'candidate_pairs': [list(pair) for pair in self._candidate_pairs],
+            'running_ratings': list(self._running_ratings),
+            'current_matchup': list(self._current_matchup),
             'recorded_votes': [list(vote) for vote in self._recorded_votes],
         }
         self._get_checkpoint_path().write_text(json.dumps(data), encoding='utf-8')
@@ -122,7 +132,9 @@ class RankSongsView(discord.ui.View):
         snapshot = self._vote_history.pop()
 
         self._recorded_votes = snapshot['recorded_votes']
-        self._current_matchup_index = snapshot['current_matchup_index']
+        self._running_ratings = snapshot['running_ratings']
+        self._current_matchup = snapshot['current_matchup']
+        self._candidate_pairs = snapshot['candidate_pairs']
 
         self.go_back.disabled = len(self._vote_history) == 0
 
@@ -149,10 +161,37 @@ class RankSongsView(discord.ui.View):
 
     # --- Private helpers ---
 
+    def _pick_next_matchup(self) -> tuple[int, int]:
+        """Remove and return the candidate pair whose two songs have the closest running ratings."""
+        best_index = min(
+            range(len(self._candidate_pairs)),
+            key=lambda k: abs(
+                self._running_ratings[self._candidate_pairs[k][0]]
+                - self._running_ratings[self._candidate_pairs[k][1]]
+            ),
+        )
+        pair = self._candidate_pairs[best_index]
+        # Swap-and-pop for O(1) removal; pool order doesn't matter since we always re-scan.
+        self._candidate_pairs[best_index] = self._candidate_pairs[-1]
+        self._candidate_pairs.pop()
+        return pair
+
+    def _update_running_ratings(
+        self, song_index_a: int, song_index_b: int, score_for_a: float
+    ) -> None:
+        """Apply a single online ELO update to the running ratings used for adaptive selection."""
+        expected_a = 1.0 / (
+            1.0 + 10.0 ** ((self._running_ratings[song_index_b] - self._running_ratings[song_index_a]) / 400.0)
+        )
+        self._running_ratings[song_index_a] += K_FACTOR * (score_for_a - expected_a)
+        self._running_ratings[song_index_b] += K_FACTOR * ((1.0 - score_for_a) - (1.0 - expected_a))
+
     def _snapshot_state(self) -> dict:
         return {
             'recorded_votes': list(self._recorded_votes),
-            'current_matchup_index': self._current_matchup_index,
+            'running_ratings': list(self._running_ratings),
+            'current_matchup': self._current_matchup,
+            'candidate_pairs': list(self._candidate_pairs),
         }
 
     def _rebuild_normal_voting_buttons(self) -> None:
@@ -166,27 +205,66 @@ class RankSongsView(discord.ui.View):
         self.add_item(self.quit_session)
 
     def _build_matchup_content(self) -> str:
-        song_index_a, song_index_b = self._matchup_list[self._current_matchup_index]
-        total_matchups = len(self._matchup_list)
-        current_number = self._current_matchup_index + 1
-        percentage = round(self._current_matchup_index / total_matchups * 100)
+        song_index_a, song_index_b = self._current_matchup
+        votes_done = len(self._recorded_votes)
+        current_number = votes_done + 1
+        percentage = round(votes_done / self._total_matchups * 100)
         song_name_a = STUDIO_RECORDINGS[song_index_a]
         song_name_b = STUDIO_RECORDINGS[song_index_b]
-        return f'Progress: {percentage}% ({current_number}/{total_matchups})\n\nA: {song_name_a}\nB: {song_name_b}'
+        return (
+            f'Progress: {percentage}% ({current_number}/{self._total_matchups})\n\n'
+            f'A: {song_name_a}\nB: {song_name_b}'
+        )
 
-    def _compute_iterated_elo_ratings(self) -> list[float]:
-        ratings = [float(INITIAL_RATING)] * len(STUDIO_RECORDINGS)
+    def _compute_bradley_terry_ratings(self) -> list[float]:
+        """
+        Compute final ratings using the Bradley-Terry MM algorithm with pseudocounts.
+
+        The MM update per song i:
+            gamma_i_new = (W_i + PSEUDOCOUNT)
+                          / (PSEUDOCOUNT * 2 / (gamma_i + 1)
+                             + sum_{j facing i} n_ij / (gamma_i + gamma_j))
+
+        Ratings are then: INITIAL_RATING + 400 * log10(gamma_i).
+        """
+        n = len(STUDIO_RECORDINGS)
+
+        wins: list[float] = [0.0] * n
+        comparisons: dict[tuple[int, int], int] = {}
+
+        for song_index_a, song_index_b, score_for_a in self._recorded_votes:
+            wins[song_index_a] += score_for_a
+            wins[song_index_b] += 1.0 - score_for_a
+            key = (min(song_index_a, song_index_b), max(song_index_a, song_index_b))
+            comparisons[key] = comparisons.get(key, 0) + 1
+
+        opponents: list[list[tuple[int, int]]] = [[] for _ in range(n)]
+        for (i, j), n_ij in comparisons.items():
+            opponents[i].append((j, n_ij))
+            opponents[j].append((i, n_ij))
+
+        gammas: list[float] = [1.0] * n
+
         for _ in range(MAX_ITERATIONS):
-            new_ratings = [float(INITIAL_RATING)] * len(STUDIO_RECORDINGS)
-            for song_index_a, song_index_b, score_for_a in self._recorded_votes:
-                expected_a = 1.0 / (1.0 + 10.0 ** ((ratings[song_index_b] - ratings[song_index_a]) / 400.0))
-                new_ratings[song_index_a] += K_FACTOR * (score_for_a - expected_a)
-                new_ratings[song_index_b] += K_FACTOR * ((1.0 - score_for_a) - (1.0 - expected_a))
-            if max(abs(new_ratings[i] - ratings[i]) for i in range(len(ratings))) < CONVERGENCE_THRESHOLD:
-                ratings = new_ratings
+            new_gammas: list[float] = []
+            for i in range(n):
+                numerator = wins[i] + PSEUDOCOUNT
+                denominator = PSEUDOCOUNT * 2.0 / (gammas[i] + 1.0) + sum(
+                    n_ij / (gammas[i] + gammas[j]) for j, n_ij in opponents[i]
+                )
+                new_gammas.append(numerator / denominator if denominator > 0.0 else gammas[i])
+
+            # Normalise by geometric mean to keep gammas well-scaled across iterations.
+            log_mean = sum(math.log(g) for g in new_gammas) / n
+            scale = math.exp(log_mean)
+            new_gammas = [g / scale for g in new_gammas]
+
+            if max(abs(new_gammas[i] - gammas[i]) for i in range(n)) < CONVERGENCE_THRESHOLD:
+                gammas = new_gammas
                 break
-            ratings = new_ratings
-        return ratings
+            gammas = new_gammas
+
+        return [INITIAL_RATING + 400.0 * math.log10(g) for g in gammas]
 
     async def _process_vote_and_advance(
         self, interaction: discord.Interaction, score_for_a: float
@@ -194,14 +272,15 @@ class RankSongsView(discord.ui.View):
         self._vote_history.append(self._snapshot_state())
         self.go_back.disabled = False
 
-        song_index_a, song_index_b = self._matchup_list[self._current_matchup_index]
+        song_index_a, song_index_b = self._current_matchup
         self._recorded_votes.append((song_index_a, song_index_b, score_for_a))
-        self._current_matchup_index += 1
+        self._update_running_ratings(song_index_a, song_index_b, score_for_a)
 
-        if self._current_matchup_index % (len(STUDIO_RECORDINGS) // 2) == 0:
+        if len(self._recorded_votes) % (len(STUDIO_RECORDINGS) // 2) == 0:
             self._save_checkpoint()
 
-        if self._current_matchup_index < len(self._matchup_list):
+        if len(self._recorded_votes) < self._total_matchups:
+            self._current_matchup = self._pick_next_matchup()
             await interaction.response.edit_message(
                 content=self._build_matchup_content(), view=self
             )
@@ -281,7 +360,7 @@ class RankSongsView(discord.ui.View):
     async def _show_final_ranking(self, interaction: discord.Interaction) -> None:
         log.info('User %s completed their song ranking', self._user_id)
         self._delete_checkpoint()
-        ratings = self._compute_iterated_elo_ratings()
+        ratings = self._compute_bradley_terry_ratings()
         self._ranking_pages = self._build_ranking_pages(ratings)
         self._current_ranking_page = 0
         self._rebuild_pagination_buttons()
