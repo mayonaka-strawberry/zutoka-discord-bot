@@ -100,10 +100,10 @@ class GameCog(commands.Cog):
             progress_info = ''
             try:
                 data = json.loads(checkpoint_path.read_text(encoding='utf-8'))
-                current_index = data['current_matchup_index']
-                total = len(data['matchup_list'])
-                percentage = round(current_index / total * 100)
-                progress_info = f' You are {percentage}% complete ({current_index}/{total} matchups done).'
+                votes_done = len(data['recorded_votes'])
+                total = data['total_matchups']
+                percentage = round(votes_done / total * 100)
+                progress_info = f' You are {percentage}% complete ({votes_done}/{total} matchups done).'
             except (KeyError, json.JSONDecodeError):
                 pass
             view = CheckpointChoiceView(user_id=interaction.user.id, number_of_rounds=DEFAULT_NUMBER_OF_ROUNDS)
