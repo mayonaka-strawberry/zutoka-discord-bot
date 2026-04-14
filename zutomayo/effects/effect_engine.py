@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Coroutine, Optional
 from constants import CHRONOS_SIZE, MIDNIGHT, NIGHT_END
 from zutomayo.enums.card_type import CardType
+from zutomayo.utils.discord_utils import send_with_retry
 from zutomayo.enums.chronos import Chronos
 from zutomayo.models.card_instance import CardInstance
 
@@ -633,9 +634,9 @@ class EffectEngine:
             return None
         user = self.bot.get_user(discord_id)
         if user is None:
-            user = await self.bot.fetch_user(discord_id)
-        dm_channel = await user.create_dm()
-        return await dm_channel.send(**kwargs)
+            user = await send_with_retry(lambda: self.bot.fetch_user(discord_id), label='fetch_user')
+        dm_channel = await send_with_retry(lambda: user.create_dm(), label='create_dm')
+        return await send_with_retry(lambda: dm_channel.send(**kwargs), label='DM send')
 
     async def _send_to_channel(self, **kwargs: Any) -> Optional[discord.Message]:
         if self.session is None or self.bot is None:
@@ -643,7 +644,7 @@ class EffectEngine:
         channel = self.bot.get_channel(self.session.channel_id)
         if channel is None:
             return None
-        return await channel.send(**kwargs)
+        return await send_with_retry(lambda: channel.send(**kwargs), label='channel send')
 
     async def notify_draw(self, game_state: GameState, player_index: int, count: int) -> None:
         """Broadcast a draw notification to the channel and both player DMs."""
