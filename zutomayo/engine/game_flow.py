@@ -19,6 +19,7 @@ from zutomayo.ui.embeds import (
 from zutomayo.ui.board_renderer import generate_zone_messages, render_board_image
 from zutomayo.ui.deck_management_views import DeckSourceView
 from zutomayo.ui.views import CardSelectView, RedrawView, TwoStepCardSelectView
+from zutomayo.utils.discord_utils import send_with_retry
 
 if TYPE_CHECKING:
     from zutomayo.effects.effect_engine import EffectResolutionResult
@@ -43,13 +44,13 @@ class GameFlow:
     async def _get_dm_channel(self, discord_id: int) -> discord.DMChannel:
         user = self.bot.get_user(discord_id)
         if user is None:
-            user = await self.bot.fetch_user(discord_id)
-        return await user.create_dm()
+            user = await send_with_retry(lambda: self.bot.fetch_user(discord_id), label='fetch_user')
+        return await send_with_retry(lambda: user.create_dm(), label='create_dm')
 
     async def _send_to_player(self, session: GameSession, player_index: int, **kwargs) -> discord.Message:
         discord_id = session.get_discord_id(player_index)
         dm_channel = await self._get_dm_channel(discord_id)
-        return await dm_channel.send(**kwargs)
+        return await send_with_retry(lambda: dm_channel.send(**kwargs), label='DM send')
 
     async def _send_to_both(self, session: GameSession, **kwargs) -> None:
         for index in range(2):
@@ -58,7 +59,7 @@ class GameFlow:
     async def _send_to_channel(self, session: GameSession, **kwargs) -> None:
         channel = self.bot.get_channel(session.channel_id)
         if channel:
-            await channel.send(**kwargs)
+            await send_with_retry(lambda: channel.send(**kwargs), label='channel send')
 
     @staticmethod
     def _take_zone_snapshots(game_state: GameState) -> dict[str, frozenset[str]]:
