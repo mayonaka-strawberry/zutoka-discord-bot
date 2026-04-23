@@ -20,9 +20,21 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# Decision type constants — same values in headless_game_env (v1) and uniguri_env_v2 (v2).
+# Defined here so choose_* methods don't need to import from either module.
+_DECISION_CARD_SELECTION = 0
+_DECISION_REDRAW = 1
+_DECISION_EFFECT_CARD = 2
+_DECISION_EFFECT_NUMBER = 3
+_DECISION_EFFECT_ORDER = 4
+_MAX_CANDIDATES = 10
+_MAX_ACTION_SIZE = 20
+_MODEL_INFERENCE_MAX_ATTEMPTS = 3
+
 DECKS_DIR = Path(__file__).resolve().parent.parent / 'decks'
 BOT_DECKS_FILE = Path(__file__).resolve().parent.parent / 'bot_decks.json'
 BEST_DECKS_FILE = Path(__file__).resolve().parent.parent / 'best_decks.json'
+BEST_DECKS_V2_FILE = Path(__file__).resolve().parent.parent / 'best_decks_v2.json'
 
 BOT_NAME = 'メカうにぐり'
 
@@ -169,6 +181,27 @@ class ModelBotAgent(BotAgent):
         ).unsqueeze(0)
         return mask_values, mask_tensor
 
+    def _make_decision_context(
+        self,
+        decision_type: int,
+        candidates: Optional[list] = None,
+        number_min: Optional[int] = None,
+        number_max: Optional[int] = None,
+    ) -> list[float]:
+        """Build a decision context vector for the current decision.
+
+        Subclasses override this to swap in the v2 context builder.
+        """
+        from zutomayo.engine.headless_game_env import build_decision_context
+
+        return build_decision_context(
+            decision_type=decision_type,
+            candidates=candidates,
+            number_min=number_min,
+            number_max=number_max,
+            is_night=self._is_night,
+        )
+
     def _record_trajectory_step(
         self,
         observation: list[float],
@@ -189,6 +222,27 @@ class ModelBotAgent(BotAgent):
         )
         self.trajectory_buffer.append(step)
 
+    def _call_model_with_retry(
+        self,
+        observation_tensor,
+        mask_tensor,
+        valid_count: int,
+    ) -> tuple[int, float, float, float]:
+        """Call model.select_action() with retries, falling back to a random valid action on total failure."""
+        for attempt in range(_MODEL_INFERENCE_MAX_ATTEMPTS):
+            try:
+                return self.model.select_action(observation_tensor, mask_tensor)
+            except Exception as error:
+                log.warning(
+                    'Model inference failed (attempt %d/%d): %s',
+                    attempt + 1, _MODEL_INFERENCE_MAX_ATTEMPTS, error,
+                )
+        log.warning(
+            'All %d model inference attempts failed; using random fallback action',
+            _MODEL_INFERENCE_MAX_ATTEMPTS,
+        )
+        return random.randrange(valid_count), 0.0, 0.0, 0.0
+
     def choose_redraw(self, hand: list['CardInstance']) -> list['CardInstance']:
         """
         Choose which cards to redraw using the neural network policy.
@@ -200,11 +254,6 @@ class ModelBotAgent(BotAgent):
         if not self.supports_extended_decisions or self.current_game_state is None or not hand:
             return super().choose_redraw(hand)
 
-        from zutomayo.engine.headless_game_env import (
-            DECISION_REDRAW,
-            build_decision_context,
-        )
-
         selected_cards: list['CardInstance'] = []
         remaining_hand = list(hand)
         max_redraws = min(3, len(remaining_hand))
@@ -213,10 +262,8 @@ class ModelBotAgent(BotAgent):
             if not remaining_hand:
                 break
 
-            self.current_decision_context = build_decision_context(
-                decision_type=DECISION_REDRAW,
-                candidates=remaining_hand,
-                is_night=self._is_night,
+            self.current_decision_context = self._make_decision_context(
+                _DECISION_REDRAW, candidates=remaining_hand,
             )
             observation, observation_tensor = self._build_observation_tensor()
 
@@ -226,7 +273,7 @@ class ModelBotAgent(BotAgent):
             valid_mask, mask_tensor = self._build_valid_action_mask(stop_index + 1)
 
             action_index, action_log_probability, value_estimate, _ = (
-                self.model.select_action(observation_tensor, mask_tensor)
+                self._call_model_with_retry(observation_tensor, mask_tensor, stop_index + 1)
             )
 
             action_index = min(action_index, stop_index)
@@ -251,21 +298,15 @@ class ModelBotAgent(BotAgent):
             return super().choose_initial_battle_card(hand)
 
         if self.supports_extended_decisions:
-            from zutomayo.engine.headless_game_env import (
-                DECISION_CARD_SELECTION,
-                build_decision_context,
-            )
-            self.current_decision_context = build_decision_context(
-                decision_type=DECISION_CARD_SELECTION,
-                candidates=hand,
-                is_night=self._is_night,
+            self.current_decision_context = self._make_decision_context(
+                _DECISION_CARD_SELECTION, candidates=hand,
             )
 
         observation, observation_tensor = self._build_observation_tensor()
         valid_mask, mask_tensor = self._build_valid_action_mask(len(hand))
 
         action_index, action_log_probability, value_estimate, _ = (
-            self.model.select_action(observation_tensor, mask_tensor)
+            self._call_model_with_retry(observation_tensor, mask_tensor, len(hand))
         )
 
         action_index = min(action_index, len(hand) - 1)
@@ -298,14 +339,8 @@ class ModelBotAgent(BotAgent):
                 break
 
             if self.supports_extended_decisions:
-                from zutomayo.engine.headless_game_env import (
-                    DECISION_CARD_SELECTION,
-                    build_decision_context,
-                )
-                self.current_decision_context = build_decision_context(
-                    decision_type=DECISION_CARD_SELECTION,
-                    candidates=remaining_hand,
-                    is_night=self._is_night,
+                self.current_decision_context = self._make_decision_context(
+                    _DECISION_CARD_SELECTION, candidates=remaining_hand,
                 )
 
             observation, observation_tensor = self._build_observation_tensor()
@@ -314,7 +349,7 @@ class ModelBotAgent(BotAgent):
             )
 
             action_index, action_log_probability, value_estimate, _ = (
-                self.model.select_action(observation_tensor, mask_tensor)
+                self._call_model_with_retry(observation_tensor, mask_tensor, len(remaining_hand))
             )
 
             action_index = min(action_index, len(remaining_hand) - 1)
@@ -341,25 +376,18 @@ class ModelBotAgent(BotAgent):
         if not self.supports_extended_decisions or self.current_game_state is None:
             return super().choose_effect_order(eligible)
 
-        from zutomayo.engine.headless_game_env import (
-            DECISION_EFFECT_ORDER,
-            build_decision_context,
-        )
-
         ordered: list['CardInstance'] = []
         remaining = list(eligible)
 
         while len(remaining) > 1:
-            self.current_decision_context = build_decision_context(
-                decision_type=DECISION_EFFECT_ORDER,
-                candidates=remaining,
-                is_night=self._is_night,
+            self.current_decision_context = self._make_decision_context(
+                _DECISION_EFFECT_ORDER, candidates=remaining,
             )
             observation, observation_tensor = self._build_observation_tensor()
             valid_mask, mask_tensor = self._build_valid_action_mask(len(remaining))
 
             action_index, action_log_probability, value_estimate, _ = (
-                self.model.select_action(observation_tensor, mask_tensor)
+                self._call_model_with_retry(observation_tensor, mask_tensor, len(remaining))
             )
 
             action_index = min(action_index, len(remaining) - 1)
@@ -387,25 +415,16 @@ class ModelBotAgent(BotAgent):
         if not self.supports_extended_decisions or self.current_game_state is None:
             return super().choose_effect_card(cards)
 
-        from zutomayo.engine.headless_game_env import (
-            DECISION_EFFECT_CARD,
-            MAX_CANDIDATES,
-            build_decision_context,
-        )
+        selectable_cards = cards[:_MAX_CANDIDATES]
 
-        # Truncate to MAX_CANDIDATES if needed
-        selectable_cards = cards[:MAX_CANDIDATES]
-
-        self.current_decision_context = build_decision_context(
-            decision_type=DECISION_EFFECT_CARD,
-            candidates=selectable_cards,
-            is_night=self._is_night,
+        self.current_decision_context = self._make_decision_context(
+            _DECISION_EFFECT_CARD, candidates=selectable_cards,
         )
         observation, observation_tensor = self._build_observation_tensor()
         valid_mask, mask_tensor = self._build_valid_action_mask(len(selectable_cards))
 
         action_index, action_log_probability, value_estimate, _ = (
-            self.model.select_action(observation_tensor, mask_tensor)
+            self._call_model_with_retry(observation_tensor, mask_tensor, len(selectable_cards))
         )
 
         action_index = min(action_index, len(selectable_cards) - 1)
@@ -423,26 +442,19 @@ class ModelBotAgent(BotAgent):
         if not self.supports_extended_decisions or self.current_game_state is None:
             return super().choose_effect_number(min_value, max_value)
 
-        from zutomayo.engine.headless_game_env import (
-            DECISION_EFFECT_NUMBER,
-            MAX_ACTION_SIZE,
-            build_decision_context,
-        )
-
         range_size = max_value - min_value + 1
-        clamped_range_size = min(range_size, MAX_ACTION_SIZE)
+        clamped_range_size = min(range_size, _MAX_ACTION_SIZE)
 
-        self.current_decision_context = build_decision_context(
-            decision_type=DECISION_EFFECT_NUMBER,
+        self.current_decision_context = self._make_decision_context(
+            _DECISION_EFFECT_NUMBER,
             number_min=min_value,
             number_max=max_value,
-            is_night=self._is_night,
         )
         observation, observation_tensor = self._build_observation_tensor()
         valid_mask, mask_tensor = self._build_valid_action_mask(clamped_range_size)
 
         action_index, action_log_probability, value_estimate, _ = (
-            self.model.select_action(observation_tensor, mask_tensor)
+            self._call_model_with_retry(observation_tensor, mask_tensor, clamped_range_size)
         )
 
         action_index = min(action_index, clamped_range_size - 1)
@@ -456,6 +468,87 @@ class ModelBotAgent(BotAgent):
         return min_value + action_index
 
 
+class ModelBotAgentV2(ModelBotAgent):
+    """V2 model agent — uses omniscient v2 observation and v2 decision context.
+
+    Inherits all choose_* logic from ModelBotAgent. Only the observation
+    builder, decision context builder, and trajectory recording differ.
+    """
+
+    def __init__(self, model, device, player_index: int) -> None:
+        # Bypass ModelBotAgent.__init__ which checks v1 OBSERVATION_SIZE
+        BotAgent.__init__(self)
+        self.model = model
+        self.device = device
+        self.player_index = player_index
+        self.trajectory_buffer: list = []
+        self.current_game_state = None
+        self.current_decision_context: Optional[list[float]] = None
+        self.original_deck_cards = None
+        self.supports_extended_decisions = True  # always True for v2
+
+    def _make_decision_context(
+        self,
+        decision_type: int,
+        candidates: Optional[list] = None,
+        number_min: Optional[int] = None,
+        number_max: Optional[int] = None,
+    ) -> list[float]:
+        from zutomayo.engine.uniguri_env_v2 import build_decision_context_v2
+
+        return build_decision_context_v2(
+            decision_type=decision_type,
+            candidates=candidates,
+            number_min=number_min,
+            number_max=number_max,
+            is_night=self._is_night,
+        )
+
+    def _build_observation_tensor(self):
+        import torch
+        from zutomayo.engine.uniguri_env_v2 import build_observation_v2
+
+        observation = build_observation_v2(
+            self.current_game_state,
+            self.player_index,
+            decision_context=self.current_decision_context,
+            original_deck_cards=self.original_deck_cards,
+        )
+        observation_tensor = torch.tensor(
+            observation, dtype=torch.float32, device=self.device,
+        ).unsqueeze(0)
+        return observation, observation_tensor
+
+    def _build_valid_action_mask(self, valid_count: int):
+        import torch
+        from zutomayo.engine.uniguri_env_v2 import MAX_ACTION_SIZE
+
+        mask_values = [index < valid_count for index in range(MAX_ACTION_SIZE)]
+        mask_tensor = torch.tensor(
+            mask_values, dtype=torch.bool, device=self.device,
+        ).unsqueeze(0)
+        return mask_values, mask_tensor
+
+    def _record_trajectory_step(
+        self,
+        observation: list[float],
+        action_index: int,
+        action_log_probability: float,
+        value_estimate: float,
+        valid_mask: list[bool],
+    ) -> None:
+        from zutomayo.engine.rl_model_v2 import TrajectoryStepV2
+
+        step = TrajectoryStepV2(
+            observation=observation,
+            action_index=action_index,
+            action_log_probability=action_log_probability,
+            value_estimate=value_estimate,
+            valid_action_mask=valid_mask,
+        )
+        self.trajectory_buffer.append(step)
+
+
 BOT_PLAYER_INDEX = 1
 
 
@@ -463,11 +556,46 @@ def create_bot_agent() -> BotAgent:
     """
     Create the best available bot agent for live gameplay.
 
-    Attempts to load the latest trained checkpoint from models_trained/.
-    If a checkpoint is found and PyTorch is available, returns a
-    ModelBotAgent using the trained policy on CPU. Otherwise falls
-    back to a random BotAgent.
+    Checks models_trained_v2/ first (v2 omniscient model), then falls back to
+    models_trained/ (v1), then falls back to a random BotAgent.
     """
+    try:
+        import torch
+    except ImportError:
+        log.info('PyTorch not installed — UNIGURI will use random decisions.')
+        return BotAgent()
+
+    # --- Try v2 model first ---
+    try:
+        from zutomayo.engine.rl_model_v2 import (
+            MODELS_DIR_V2,
+            create_policy_network_v2,
+            load_checkpoint_v2,
+        )
+
+        checkpoints_v2 = sorted(MODELS_DIR_V2.glob('checkpoint_*.pt'))
+        if checkpoints_v2:
+            device = torch.device('cpu')
+            latest_v2 = str(checkpoints_v2[-1])
+            checkpoint_data = torch.load(latest_v2, weights_only=False, map_location=device)
+            observation_size = checkpoint_data['observation_size']
+            action_size = checkpoint_data['action_size']
+
+            model = create_policy_network_v2(observation_size, action_size, device=device)
+            load_checkpoint_v2(model, checkpoint_path=latest_v2, device=device)
+            model.eval()
+
+            agent = ModelBotAgentV2(model, device, player_index=BOT_PLAYER_INDEX)
+            log.info(
+                'UNIGURI loaded v2 model from %s (episode %d)',
+                latest_v2,
+                checkpoint_data.get('episode', 0),
+            )
+            return agent
+    except Exception as error:
+        log.debug('No v2 model available (%s), trying v1...', error)
+
+    # --- Fall back to v1 model ---
     try:
         from zutomayo.engine.rl_model import (
             MODELS_DIR,
@@ -487,27 +615,22 @@ def create_bot_agent() -> BotAgent:
         return BotAgent()
 
     try:
-        import torch
-
         device = torch.device('cpu')
         latest_checkpoint_path = str(checkpoints[-1])
 
-        # Load checkpoint to get model dimensions
         checkpoint_data = torch.load(
             latest_checkpoint_path, weights_only=False, map_location=device,
         )
         observation_size = checkpoint_data['observation_size']
         action_size = checkpoint_data['action_size']
 
-        model = create_policy_network(
-            observation_size, action_size, device=device,
-        )
+        model = create_policy_network(observation_size, action_size, device=device)
         load_checkpoint(model, checkpoint_path=latest_checkpoint_path, device=device)
         model.eval()
 
         agent = ModelBotAgent(model, device, player_index=BOT_PLAYER_INDEX)
         log.info(
-            'UNIGURI loaded trained model from %s (episode %d)',
+            'UNIGURI loaded v1 model from %s (episode %d)',
             latest_checkpoint_path,
             checkpoint_data.get('episode', 0),
         )
@@ -527,13 +650,20 @@ def collect_and_save_bot_decks() -> int:
 
     Reads every deck from zutomayo/decks/*.json, deduplicates by card
     composition (ignoring deck name), assigns each unique deck a random
-    GUID, and writes the result to bot_decks.json.
+    GUID, and writes the result to bot_decks.json. Decks containing any
+    CHAOS attribute card are excluded.
 
     Returns the number of unique decks saved.
     """
+    from zutomayo.data.card_loader import load_cards
+    from zutomayo.enums.attribute import Attribute
+
     deck_files = list(DECKS_DIR.glob('*.json'))
     if not deck_files:
         raise ValueError('No saved deck files found in decks folder.')
+
+    card_list = load_cards()
+    card_index = {(card.pack, card.id): card for card in card_list}
 
     all_decks: list[dict] = []
     for deck_file in deck_files:
@@ -549,11 +679,19 @@ def collect_and_save_bot_decks() -> int:
     if not all_decks:
         raise ValueError('No valid decks found in any deck file.')
 
-    # Deduplicate by card composition (sorted tuples of pack/id)
+    # Deduplicate by card composition (sorted tuples of pack/id), excluding CHAOS decks
     seen_signatures: set[tuple[tuple[int, int], ...]] = set()
     unique_decks: list[dict] = []
+    excluded_count = 0
     for deck in all_decks:
         cards = deck.get('cards', [])
+        if any(
+            (card['pack'], card['id']) in card_index
+            and card_index[(card['pack'], card['id'])].attribute == Attribute.CHAOS
+            for card in cards
+        ):
+            excluded_count += 1
+            continue
         signature = tuple(sorted((card['pack'], card['id']) for card in cards))
         if signature not in seen_signatures:
             seen_signatures.add(signature)
@@ -567,10 +705,11 @@ def collect_and_save_bot_decks() -> int:
         json.dump(output, file_handle, indent=2, ensure_ascii=False)
 
     log.info(
-        'Saved %d unique bot decks to %s (from %d total decks).',
+        'Saved %d unique bot decks to %s (from %d total decks, %d excluded for CHAOS cards).',
         len(unique_decks),
         BOT_DECKS_FILE,
         len(all_decks),
+        excluded_count,
     )
     return len(unique_decks)
 
@@ -632,3 +771,30 @@ def load_random_best_deck(
 
     log.info('best_decks.json not available, falling back to bot_decks.json')
     return load_random_saved_deck(card_index)
+
+
+def load_random_best_deck_v2(
+    card_index: dict[tuple[int, int], 'Card'],
+) -> list['Card']:
+    """
+    Load a random deck from best_decks_v2.json, falling back to best_decks.json then bot_decks.json.
+
+    Tries best_decks_v2.json first (produced by best_decks_v2.py evaluation with the v2 model).
+    If it doesn't exist or is empty, falls back to load_random_best_deck().
+    """
+    from zutomayo.data.deck_storage import resolve_deck_cards
+
+    if BEST_DECKS_V2_FILE.exists():
+        with open(BEST_DECKS_V2_FILE, 'r', encoding='utf-8') as file_handle:
+            data = json.load(file_handle)
+        all_decks = data.get('decks', [])
+        if all_decks:
+            chosen_deck = random.choice(all_decks)
+            log.info(
+                'UNIGURI selected best v2 deck: %s',
+                chosen_deck.get('guid', 'unknown'),
+            )
+            return resolve_deck_cards(chosen_deck, card_index)
+
+    log.info('best_decks_v2.json not available, falling back to best_decks.json')
+    return load_random_best_deck(card_index)
