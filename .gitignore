@@ -208,17 +208,17 @@ __marimo__/
 
 .claude/
 
-train_uniguri.py
 train_uniguri_v2.py
-best_decks_uniguri.py
 best_decks_uniguri_v2.py
-zutomayo/engine/headless_game_env.py
-zutomayo/engine/rl_model.py
+best_decks_uniguri_v2_easy.py
+test_headless.py
 
 zutomayo/.DS_Store
 .DS_Store
 
 zutomayo/bot_decks.json
+
+training_hyperparameters.json
 
 zutomayo/progress/*
 !zutomayo/progress/.gitkeep

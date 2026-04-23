@@ -3,7 +3,6 @@ V2 headless game environment and observation builder for RL training.
 
 Standalone - no dependency on headless_game_env.py or the deleted
 effect_features.py. Key differences from v1:
-  - Omniscient observation: bot sees opponent hand and both original decks.
   - GLOBAL_FEATURES_V2 = 79 (adds opponent hand_size_bonus + pending variant).
   - Effect semantic features auto-detected from effect source files at import.
   - Reward: no tempo reward; margin bonus and deck-out penalty on terminal.
@@ -145,8 +144,8 @@ BASE_OBSERVATION_SIZE_V2 = (
     GLOBAL_FEATURES_V2
     + (ZONE_CARDS * CARD_FEATURE_SIZE)
     + (MAX_HAND_SIZE * CARD_FEATURE_SIZE)   # player hand
-    + (MAX_HAND_SIZE * CARD_FEATURE_SIZE)   # opponent hand (omniscient)
-    + 2 * DECK_OBSERVATION_SIZE_V2          # both original decks (omniscient)
+    + (MAX_HAND_SIZE * CARD_FEATURE_SIZE)   # opponent hand
+    + 2 * DECK_OBSERVATION_SIZE_V2          # both original decks
 )
 OBSERVATION_SIZE_V2 = BASE_OBSERVATION_SIZE_V2 + DECISION_CONTEXT_SIZE_V2
 
@@ -291,7 +290,7 @@ def build_observation_v2(
     decision_context: Optional[list[float]] = None,
     original_deck_cards: Optional[dict[int, list[Card]]] = None,
 ) -> list[float]:
-    """Build an omniscient v2 observation from player_index's perspective.
+    """Build a v2 observation from player_index's perspective.
 
     GLOBAL_FEATURES_V2 breakdown (79 total):
       12  original: hp×2, chronos, turn, is_night, side, power×2, deck_size×2, hand_size×2
@@ -373,7 +372,7 @@ def build_observation_v2(
     # Priority flag (1)
     global_features.append(1.0 if game_state.priority_player == player_index else 0.0)
 
-    # Zone cards (10 × CARD_FEATURE_SIZE) — omniscient: all zones visible as-is
+    # Zone cards (10 × CARD_FEATURE_SIZE)
     zone_features = (
         card_instance_to_features_v2(player.battle_zone, is_night=is_night_bool)
         + card_instance_to_features_v2(opponent.battle_zone, is_night=is_night_bool)
@@ -401,7 +400,7 @@ def build_observation_v2(
         else:
             hand_features.extend([0.0] * CARD_FEATURE_SIZE)
 
-    # Opponent hand (10 × CARD_FEATURE_SIZE) — omniscient
+    # Opponent hand (10 × CARD_FEATURE_SIZE)
     opponent_hand_features: list[float] = []
     for i in range(MAX_HAND_SIZE):
         if i < len(opponent.hand):
@@ -411,7 +410,7 @@ def build_observation_v2(
         else:
             opponent_hand_features.extend([0.0] * CARD_FEATURE_SIZE)
 
-    # Original deck cards (20 × CARD_FEATURE_SIZE per player) — omniscient
+    # Original deck cards (20 × CARD_FEATURE_SIZE per player)
     player_deck_features: list[float] = []
     opponent_deck_features: list[float] = []
     if original_deck_cards is not None:

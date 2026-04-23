@@ -16,7 +16,12 @@ from zutomayo.enums.chronos import Chronos
 from zutomayo.enums.phase import Phase
 from zutomayo.enums.result import Result
 from zutomayo.enums.zone import Zone
-from zutomayo.engine.bot_agent import BOT_NAME, ModelBotAgent, ModelBotAgentV2, create_bot_agent, load_random_best_deck, load_random_best_deck_v2, load_random_saved_deck
+from zutomayo.engine.bot_agent import (
+    BOT_NAME, BotAgent, ModelBotAgent, ModelBotAgentV2,
+    create_bot_agent,
+    load_random_best_deck_v2, load_random_best_deck_v2_easy,
+    load_random_saved_deck,
+)
 from zutomayo.engine.bot_effect_engine import BotEffectEngine, BOT_PLAYER_INDEX
 from zutomayo.engine.game_flow import GameFlow
 from zutomayo.ui.embeds import (
@@ -50,9 +55,15 @@ class SoloGameFlow(GameFlow):
     DMs and interactive views are only sent to the human player.
     """
 
-    def __init__(self, bot: discord.Client) -> None:
+    def __init__(
+        self,
+        bot: discord.Client,
+        bot_agent: BotAgent | None = None,
+        use_easy_decks: bool = False,
+    ) -> None:
         super().__init__(bot)
-        self.bot_agent = create_bot_agent()
+        self.bot_agent = bot_agent if bot_agent is not None else create_bot_agent()
+        self.use_easy_decks = use_easy_decks
 
     def _update_bot_game_state(self, session: GameSession) -> None:
         """Set the current game state on the bot agent if it is model-driven."""
@@ -190,9 +201,12 @@ class SoloGameFlow(GameFlow):
         # Bot selects a deck from the best evaluated decks (or falls back to any saved deck)
         try:
             if isinstance(self.bot_agent, ModelBotAgentV2):
-                bot_deck_cards = load_random_best_deck_v2(card_index)
+                if self.use_easy_decks:
+                    bot_deck_cards = load_random_best_deck_v2_easy(card_index)
+                else:
+                    bot_deck_cards = load_random_best_deck_v2(card_index)
             else:
-                bot_deck_cards = load_random_best_deck(card_index)
+                bot_deck_cards = load_random_best_deck_v2(card_index)
         except ValueError:
             log.warning('No saved decks found, using random deck for bot')
             bot_deck_cards = None

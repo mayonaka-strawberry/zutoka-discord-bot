@@ -20,8 +20,8 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# Decision type constants — same values in headless_game_env (v1) and uniguri_env_v2 (v2).
-# Defined here so choose_* methods don't need to import from either module.
+# Decision type constants — same values used in uniguri_env_v2.
+# Defined here so choose_* methods don't need to import from there.
 _DECISION_CARD_SELECTION = 0
 _DECISION_REDRAW = 1
 _DECISION_EFFECT_CARD = 2
@@ -33,8 +33,9 @@ _MODEL_INFERENCE_MAX_ATTEMPTS = 3
 
 DECKS_DIR = Path(__file__).resolve().parent.parent / 'decks'
 BOT_DECKS_FILE = Path(__file__).resolve().parent.parent / 'bot_decks.json'
-BEST_DECKS_FILE = Path(__file__).resolve().parent.parent / 'best_decks.json'
 BEST_DECKS_V2_FILE = Path(__file__).resolve().parent.parent / 'best_decks_v2.json'
+BEST_DECKS_V2_EASY_FILE = Path(__file__).resolve().parent.parent / 'best_decks_v2_easy.json'
+MODELS_DIR_V2_EASY = Path(__file__).resolve().parent.parent / 'models_trained_v2_easy'
 
 BOT_NAME = 'メカうにぐり'
 
@@ -125,12 +126,7 @@ class ModelBotAgent(BotAgent):
         self.current_game_state = None
         self.current_decision_context: Optional[list[float]] = None
 
-        # Check if the model supports the extended observation/action space
-        from zutomayo.engine.headless_game_env import OBSERVATION_SIZE, MAX_ACTION_SIZE
-        self.supports_extended_decisions = (
-            model.observation_size >= OBSERVATION_SIZE
-            and model.action_size >= MAX_ACTION_SIZE
-        )
+        self.supports_extended_decisions = False
 
     def clear_trajectory(self) -> None:
         """Clear the trajectory buffer for a new game."""
@@ -145,41 +141,10 @@ class ModelBotAgent(BotAgent):
         return self.current_game_state.day_night == Chronos.NIGHT
 
     def _build_observation_tensor(self):
-        """Build an observation tensor from the current game state."""
-        import torch
-        from zutomayo.engine.headless_game_env import game_state_to_observation
-
-        observation = game_state_to_observation(
-            self.current_game_state,
-            self.player_index,
-            decision_context=self.current_decision_context,
-        )
-        observation_tensor = torch.tensor(
-            observation, dtype=torch.float32, device=self.device,
-        ).unsqueeze(0)
-        return observation, observation_tensor
+        raise NotImplementedError
 
     def _build_valid_action_mask(self, valid_count: int):
-        """
-        Build a boolean mask for valid action indices.
-
-        Args:
-            valid_count: Number of valid actions (first N indices are valid).
-
-        Returns:
-            Tuple of (mask_values, mask_tensor).
-        """
-        import torch
-        from zutomayo.engine.headless_game_env import MAX_ACTION_SIZE
-
-        mask_size = MAX_ACTION_SIZE if self.supports_extended_decisions else valid_count
-        mask_values = [
-            index < valid_count for index in range(mask_size)
-        ]
-        mask_tensor = torch.tensor(
-            mask_values, dtype=torch.bool, device=self.device,
-        ).unsqueeze(0)
-        return mask_values, mask_tensor
+        raise NotImplementedError
 
     def _make_decision_context(
         self,
@@ -188,19 +153,7 @@ class ModelBotAgent(BotAgent):
         number_min: Optional[int] = None,
         number_max: Optional[int] = None,
     ) -> list[float]:
-        """Build a decision context vector for the current decision.
-
-        Subclasses override this to swap in the v2 context builder.
-        """
-        from zutomayo.engine.headless_game_env import build_decision_context
-
-        return build_decision_context(
-            decision_type=decision_type,
-            candidates=candidates,
-            number_min=number_min,
-            number_max=number_max,
-            is_night=self._is_night,
-        )
+        raise NotImplementedError
 
     def _record_trajectory_step(
         self,
@@ -210,17 +163,7 @@ class ModelBotAgent(BotAgent):
         value_estimate: float,
         valid_mask: list[bool],
     ) -> None:
-        """Record a trajectory step for PPO training."""
-        from zutomayo.engine.rl_model import TrajectoryStep
-
-        step = TrajectoryStep(
-            observation=observation,
-            action_index=action_index,
-            action_log_probability=action_log_probability,
-            value_estimate=value_estimate,
-            valid_action_mask=valid_mask,
-        )
-        self.trajectory_buffer.append(step)
+        raise NotImplementedError
 
     def _call_model_with_retry(
         self,
@@ -469,7 +412,7 @@ class ModelBotAgent(BotAgent):
 
 
 class ModelBotAgentV2(ModelBotAgent):
-    """V2 model agent — uses omniscient v2 observation and v2 decision context.
+    """V2 model agent — uses v2 observation and decision context.
 
     Inherits all choose_* logic from ModelBotAgent. Only the observation
     builder, decision context builder, and trajectory recording differ.
@@ -556,8 +499,8 @@ def create_bot_agent() -> BotAgent:
     """
     Create the best available bot agent for live gameplay.
 
-    Checks models_trained_v2/ first (v2 omniscient model), then falls back to
-    models_trained/ (v1), then falls back to a random BotAgent.
+    Loads the latest checkpoint from models_trained_v2/. Falls back to a
+    random BotAgent if PyTorch is unavailable or no checkpoint exists.
     """
     try:
         import torch
@@ -565,7 +508,6 @@ def create_bot_agent() -> BotAgent:
         log.info('PyTorch not installed — UNIGURI will use random decisions.')
         return BotAgent()
 
-    # --- Try v2 model first ---
     try:
         from zutomayo.engine.rl_model_v2 import (
             MODELS_DIR_V2,
@@ -574,64 +516,27 @@ def create_bot_agent() -> BotAgent:
         )
 
         checkpoints_v2 = sorted(MODELS_DIR_V2.glob('checkpoint_*.pt'))
-        if checkpoints_v2:
-            device = torch.device('cpu')
-            latest_v2 = str(checkpoints_v2[-1])
-            checkpoint_data = torch.load(latest_v2, weights_only=False, map_location=device)
-            observation_size = checkpoint_data['observation_size']
-            action_size = checkpoint_data['action_size']
-
-            model = create_policy_network_v2(observation_size, action_size, device=device)
-            load_checkpoint_v2(model, checkpoint_path=latest_v2, device=device)
-            model.eval()
-
-            agent = ModelBotAgentV2(model, device, player_index=BOT_PLAYER_INDEX)
+        if not checkpoints_v2:
             log.info(
-                'UNIGURI loaded v2 model from %s (episode %d)',
-                latest_v2,
-                checkpoint_data.get('episode', 0),
+                'No trained checkpoints found in %s — UNIGURI will use random decisions.',
+                MODELS_DIR_V2,
             )
-            return agent
-    except Exception as error:
-        log.debug('No v2 model available (%s), trying v1...', error)
+            return BotAgent()
 
-    # --- Fall back to v1 model ---
-    try:
-        from zutomayo.engine.rl_model import (
-            MODELS_DIR,
-            create_policy_network,
-            load_checkpoint,
-        )
-    except ImportError:
-        log.info('PyTorch not installed — UNIGURI will use random decisions.')
-        return BotAgent()
-
-    checkpoints = sorted(MODELS_DIR.glob('checkpoint_*.pt'))
-    if not checkpoints:
-        log.info(
-            'No trained checkpoints found in %s — UNIGURI will use random decisions.',
-            MODELS_DIR,
-        )
-        return BotAgent()
-
-    try:
         device = torch.device('cpu')
-        latest_checkpoint_path = str(checkpoints[-1])
-
-        checkpoint_data = torch.load(
-            latest_checkpoint_path, weights_only=False, map_location=device,
-        )
+        latest_v2 = str(checkpoints_v2[-1])
+        checkpoint_data = torch.load(latest_v2, weights_only=False, map_location=device)
         observation_size = checkpoint_data['observation_size']
         action_size = checkpoint_data['action_size']
 
-        model = create_policy_network(observation_size, action_size, device=device)
-        load_checkpoint(model, checkpoint_path=latest_checkpoint_path, device=device)
+        model = create_policy_network_v2(observation_size, action_size, device=device)
+        load_checkpoint_v2(model, checkpoint_path=latest_v2, device=device)
         model.eval()
 
-        agent = ModelBotAgent(model, device, player_index=BOT_PLAYER_INDEX)
+        agent = ModelBotAgentV2(model, device, player_index=BOT_PLAYER_INDEX)
         log.info(
-            'UNIGURI loaded v1 model from %s (episode %d)',
-            latest_checkpoint_path,
+            'UNIGURI loaded v2 model from %s (episode %d)',
+            latest_v2,
             checkpoint_data.get('episode', 0),
         )
         return agent
@@ -641,6 +546,51 @@ def create_bot_agent() -> BotAgent:
             'Failed to load trained model: %s — falling back to random decisions.',
             error,
         )
+        return BotAgent()
+
+
+def create_bot_agent_easy() -> BotAgent:
+    """
+    Load the easy-difficulty bot agent from models_trained_v2_easy/checkpoint_easy.pt.
+    Falls back to random BotAgent if the checkpoint is missing or loading fails.
+    """
+    try:
+        import torch
+    except ImportError:
+        log.info('PyTorch not installed — UNIGURI easy will use random decisions.')
+        return BotAgent()
+
+    try:
+        from zutomayo.engine.rl_model_v2 import create_policy_network_v2, load_checkpoint_v2
+
+        checkpoint_path = MODELS_DIR_V2_EASY / 'checkpoint_easy.pt'
+        if not checkpoint_path.exists():
+            log.info(
+                'checkpoint_easy.pt not found in %s — UNIGURI easy will use random decisions.',
+                MODELS_DIR_V2_EASY,
+            )
+            return BotAgent()
+
+        device = torch.device('cpu')
+        checkpoint_path_str = str(checkpoint_path)
+        checkpoint_data = torch.load(checkpoint_path_str, weights_only=False, map_location=device)
+        observation_size = checkpoint_data['observation_size']
+        action_size = checkpoint_data['action_size']
+
+        model = create_policy_network_v2(observation_size, action_size, device=device)
+        load_checkpoint_v2(model, checkpoint_path=checkpoint_path_str, device=device)
+        model.eval()
+
+        agent = ModelBotAgentV2(model, device, player_index=BOT_PLAYER_INDEX)
+        log.info(
+            'UNIGURI easy loaded from %s (episode %d)',
+            checkpoint_path_str,
+            checkpoint_data.get('episode', 0),
+        )
+        return agent
+
+    except Exception as error:
+        log.warning('Failed to load easy model: %s — falling back to random decisions.', error)
         return BotAgent()
 
 
@@ -746,41 +696,14 @@ def load_random_saved_deck(
     return resolve_deck_cards(chosen_deck, card_index)
 
 
-def load_random_best_deck(
-    card_index: dict[tuple[int, int], 'Card'],
-) -> list['Card']:
-    """
-    Load a random deck from best_decks.json, falling back to bot_decks.json.
-
-    Tries best_decks.json first (produced by post-training evaluation).
-    If it doesn't exist or is empty, falls back to bot_decks.json.
-    """
-    from zutomayo.data.deck_storage import resolve_deck_cards
-
-    if BEST_DECKS_FILE.exists():
-        with open(BEST_DECKS_FILE, 'r', encoding='utf-8') as file_handle:
-            data = json.load(file_handle)
-        all_decks = data.get('decks', [])
-        if all_decks:
-            chosen_deck = random.choice(all_decks)
-            log.info(
-                'UNIGURI selected best deck: %s',
-                chosen_deck.get('guid', 'unknown'),
-            )
-            return resolve_deck_cards(chosen_deck, card_index)
-
-    log.info('best_decks.json not available, falling back to bot_decks.json')
-    return load_random_saved_deck(card_index)
-
-
 def load_random_best_deck_v2(
     card_index: dict[tuple[int, int], 'Card'],
 ) -> list['Card']:
     """
-    Load a random deck from best_decks_v2.json, falling back to best_decks.json then bot_decks.json.
+    Load a random deck from best_decks_v2.json, falling back to bot_decks.json.
 
     Tries best_decks_v2.json first (produced by best_decks_v2.py evaluation with the v2 model).
-    If it doesn't exist or is empty, falls back to load_random_best_deck().
+    If it doesn't exist or is empty, falls back to load_random_saved_deck().
     """
     from zutomayo.data.deck_storage import resolve_deck_cards
 
@@ -796,5 +719,32 @@ def load_random_best_deck_v2(
             )
             return resolve_deck_cards(chosen_deck, card_index)
 
-    log.info('best_decks_v2.json not available, falling back to best_decks.json')
-    return load_random_best_deck(card_index)
+    log.info('best_decks_v2.json not available, falling back to bot_decks.json')
+    return load_random_saved_deck(card_index)
+
+
+def load_random_best_deck_v2_easy(
+    card_index: dict[tuple[int, int], 'Card'],
+) -> list['Card']:
+    """
+    Load a random deck from best_decks_v2_easy.json, falling back to best_decks_v2.json.
+
+    Tries best_decks_v2_easy.json first (produced by best_decks_uniguri_v2_easy.py).
+    If it doesn't exist or is empty, falls back to load_random_best_deck_v2().
+    """
+    from zutomayo.data.deck_storage import resolve_deck_cards
+
+    if BEST_DECKS_V2_EASY_FILE.exists():
+        with open(BEST_DECKS_V2_EASY_FILE, 'r', encoding='utf-8') as file_handle:
+            data = json.load(file_handle)
+        all_decks = data.get('decks', [])
+        if all_decks:
+            chosen_deck = random.choice(all_decks)
+            log.info(
+                'UNIGURI easy selected best v2 easy deck: %s',
+                chosen_deck.get('guid', 'unknown'),
+            )
+            return resolve_deck_cards(chosen_deck, card_index)
+
+    log.info('best_decks_v2_easy.json not available, falling back to best_decks_v2.json')
+    return load_random_best_deck_v2(card_index)
