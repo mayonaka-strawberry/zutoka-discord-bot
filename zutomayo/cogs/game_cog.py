@@ -92,6 +92,29 @@ class GameCog(commands.Cog):
             solo_flow.run_solo_game(session)
         )
 
+    @group.command(name='playunigurieasy', description='Play a solo game against an easier メカうにぐり')
+    @app_commands.dm_only()
+    async def play_uniguri_easy(self, interaction: discord.Interaction):
+        channel_id = 0
+        try:
+            session = session_manager.create_solo_game(channel_id, interaction.user.id)
+        except ValueError as e:
+            await interaction.response.send_message(str(e), ephemeral=True)
+            return
+
+        await interaction.response.send_message(
+            f'**メカうにぐり** has accepted **{interaction.user.display_name}**\'s challenge!\n'
+            f'Game ID: `{session.game_id}`\n'
+            f'Starting solo game...'
+        )
+
+        from zutomayo.engine.bot_agent import create_bot_agent_easy
+        from zutomayo.engine.solo_game_flow import SoloGameFlow
+        solo_flow = SoloGameFlow(self.bot, bot_agent=create_bot_agent_easy(), use_easy_decks=True)
+        session.game_task = self.bot.loop.create_task(
+            solo_flow.run_solo_game(session)
+        )
+
     @group.command(name='ranksongs', description='Rank your favourite ZUTOMAYO songs')
     @app_commands.dm_only()
     async def rank_songs(self, interaction: discord.Interaction):
