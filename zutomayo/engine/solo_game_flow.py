@@ -16,7 +16,7 @@ from zutomayo.enums.chronos import Chronos
 from zutomayo.enums.phase import Phase
 from zutomayo.enums.result import Result
 from zutomayo.enums.zone import Zone
-from zutomayo.engine.bot_agent import BOT_NAME, ModelBotAgent, create_bot_agent, load_random_best_deck, load_random_saved_deck
+from zutomayo.engine.bot_agent import BOT_NAME, ModelBotAgent, ModelBotAgentV2, create_bot_agent, load_random_best_deck, load_random_best_deck_v2, load_random_saved_deck
 from zutomayo.engine.bot_effect_engine import BotEffectEngine, BOT_PLAYER_INDEX
 from zutomayo.engine.game_flow import GameFlow
 from zutomayo.ui.embeds import (
@@ -189,7 +189,10 @@ class SoloGameFlow(GameFlow):
 
         # Bot selects a deck from the best evaluated decks (or falls back to any saved deck)
         try:
-            bot_deck_cards = load_random_best_deck(card_index)
+            if isinstance(self.bot_agent, ModelBotAgentV2):
+                bot_deck_cards = load_random_best_deck_v2(card_index)
+            else:
+                bot_deck_cards = load_random_best_deck(card_index)
         except ValueError:
             log.warning('No saved decks found, using random deck for bot')
             bot_deck_cards = None
@@ -223,7 +226,10 @@ class SoloGameFlow(GameFlow):
         # Bot decides redraw immediately
         self._update_bot_game_state(session)
         bot_player = game_state.players[BOT_PLAYER_INDEX]
-        bot_redraw = self.bot_agent.choose_redraw(bot_player.hand[:])
+        bot_redraw = await asyncio.wait_for(
+            asyncio.to_thread(self.bot_agent.choose_redraw, bot_player.hand[:]),
+            timeout=30.0,
+        )
         session.submit_action(BOT_PLAYER_INDEX, {'redraw': bot_redraw})
 
         await session.wait_for_both_players()
@@ -281,7 +287,10 @@ class SoloGameFlow(GameFlow):
         # Bot chooses immediately
         self._update_bot_game_state(session)
         bot_player = game_state.players[BOT_PLAYER_INDEX]
-        bot_choice = self.bot_agent.choose_initial_battle_card(bot_player.hand[:])
+        bot_choice = await asyncio.wait_for(
+            asyncio.to_thread(self.bot_agent.choose_initial_battle_card, bot_player.hand[:]),
+            timeout=30.0,
+        )
         session.submit_action(BOT_PLAYER_INDEX, [bot_choice])
 
         await session.wait_for_both_players()
@@ -316,8 +325,11 @@ class SoloGameFlow(GameFlow):
             if index == BOT_PLAYER_INDEX:
                 # Bot chooses cards immediately
                 self._update_bot_game_state(session)
-                bot_selected = self.bot_agent.choose_cards_to_set(
-                    player.hand[:], max_cards,
+                bot_selected = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.bot_agent.choose_cards_to_set, player.hand[:], max_cards,
+                    ),
+                    timeout=30.0,
                 )
                 session.submit_action(BOT_PLAYER_INDEX, bot_selected)
                 continue
@@ -524,6 +536,12 @@ class SoloGameFlow(GameFlow):
         )
         game_state = session.game_state
         turn_manager = session.turn_manager
+
+        if isinstance(self.bot_agent, ModelBotAgent):
+            self.bot_agent.original_deck_cards = {
+                0: [card_instance.card for card_instance in game_state.players[0].deck],
+                1: [card_instance.card for card_instance in game_state.players[1].deck],
+            }
 
         # Bind bot-aware effect engine
         turn_manager.effect_engine = session.effect_engine
