@@ -427,7 +427,6 @@ class ModelBotAgentV2(ModelBotAgent):
         self.trajectory_buffer: list = []
         self.current_game_state = None
         self.current_decision_context: Optional[list[float]] = None
-        self.original_deck_cards = None
         self.supports_extended_decisions = True  # always True for v2
 
     def _make_decision_context(
@@ -455,7 +454,6 @@ class ModelBotAgentV2(ModelBotAgent):
             self.current_game_state,
             self.player_index,
             decision_context=self.current_decision_context,
-            original_deck_cards=self.original_deck_cards,
         )
         observation_tensor = torch.tensor(
             observation, dtype=torch.float32, device=self.device,

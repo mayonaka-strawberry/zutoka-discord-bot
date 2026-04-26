@@ -100,7 +100,7 @@ def _get_policy_network_class():
     )
 
     # Card feature layout
-    NUM_NUMERIC_CARD_FEATURES = 14
+    NUM_NUMERIC_CARD_FEATURES = 15
     NUM_CATEGORICAL_INDICES = 3   # effect_index, attribute_index, song_index
     SEMANTIC_FEATURES_START = NUM_NUMERIC_CARD_FEATURES + NUM_CATEGORICAL_INDICES
 
