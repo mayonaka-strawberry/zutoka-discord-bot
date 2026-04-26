@@ -118,8 +118,8 @@ EFFECT_SEMANTIC_FEATURES: dict[str, list[float]] = _build_effect_semantic_featur
 # Card feature size constants
 # ============================================================
 
-# 14 numeric + 3 categorical indices + 10 semantic = 27
-CARD_FEATURE_SIZE = 17 + EFFECT_SEMANTIC_FEATURE_SIZE
+# 15 numeric + 3 categorical indices + 10 semantic = 28
+CARD_FEATURE_SIZE = 18 + EFFECT_SEMANTIC_FEATURE_SIZE
 
 MAX_HAND_SIZE = 10
 MAX_DECK_SIZE = 20
@@ -145,7 +145,7 @@ BASE_OBSERVATION_SIZE_V2 = (
     + (ZONE_CARDS * CARD_FEATURE_SIZE)
     + (MAX_HAND_SIZE * CARD_FEATURE_SIZE)   # player hand
     + (MAX_HAND_SIZE * CARD_FEATURE_SIZE)   # opponent hand
-    + 2 * DECK_OBSERVATION_SIZE_V2          # both original decks
+    + 2 * DECK_OBSERVATION_SIZE_V2          # both live decks (draw order)
 )
 OBSERVATION_SIZE_V2 = BASE_OBSERVATION_SIZE_V2 + DECISION_CONTEXT_SIZE_V2
 
@@ -179,6 +179,7 @@ def _encode_card_type_counts(cards: list[CardInstance]) -> list[float]:
 def card_instance_to_features_v2(
     card_instance: Optional[CardInstance],
     is_night: bool = False,
+    deck_position: float = 0.0,
 ) -> list[float]:
     """Convert a CardInstance to CARD_FEATURE_SIZE floats (v2 with semantic features)."""
     if card_instance is None:
@@ -209,6 +210,7 @@ def card_instance_to_features_v2(
         1.0 if card_instance.face_up else 0.0,
         effective_attack / 130.0,
         1.0 if card_instance.attribute_override is not None else 0.0,
+        deck_position,
         float(EFFECT_TO_INDEX.get(card.effect, 0)),
         float(ATTRIBUTE_TO_INDEX.get(card_instance.effective_attribute, 0)),
         float(SONG_TO_INDEX.get(card.song, 0)),
@@ -218,6 +220,7 @@ def card_instance_to_features_v2(
 def card_to_features_v2(
     card: Optional[Card],
     is_night: bool = False,
+    deck_position: float = 0.0,
 ) -> list[float]:
     """Convert a bare Card (no instance state) to CARD_FEATURE_SIZE floats."""
     if card is None:
@@ -245,6 +248,7 @@ def card_to_features_v2(
         0.0,            # face_up
         effective_attack / 130.0,
         0.0,            # has_attribute_override
+        deck_position,
         float(EFFECT_TO_INDEX.get(card.effect, 0)),
         float(ATTRIBUTE_TO_INDEX.get(card.attribute, 0)),
         float(SONG_TO_INDEX.get(card.song, 0)),
@@ -288,7 +292,6 @@ def build_observation_v2(
     game_state: GameState,
     player_index: int,
     decision_context: Optional[list[float]] = None,
-    original_deck_cards: Optional[dict[int, list[Card]]] = None,
 ) -> list[float]:
     """Build a v2 observation from player_index's perspective.
 
@@ -410,21 +413,26 @@ def build_observation_v2(
         else:
             opponent_hand_features.extend([0.0] * CARD_FEATURE_SIZE)
 
-    # Original deck cards (20 × CARD_FEATURE_SIZE per player)
+    # Live deck cards in draw order (20 × CARD_FEATURE_SIZE per player)
     player_deck_features: list[float] = []
+    for i in range(MAX_DECK_SIZE):
+        if i < len(player.deck):
+            position = i / max(len(player.deck) - 1, 1)
+            player_deck_features.extend(
+                card_instance_to_features_v2(player.deck[i], is_night=is_night_bool, deck_position=position)
+            )
+        else:
+            player_deck_features.extend([0.0] * CARD_FEATURE_SIZE)
+
     opponent_deck_features: list[float] = []
-    if original_deck_cards is not None:
-        player_originals = original_deck_cards.get(player_index, [])
-        opponent_originals = original_deck_cards.get(1 - player_index, [])
-        for i in range(MAX_DECK_SIZE):
-            card = player_originals[i] if i < len(player_originals) else None
-            player_deck_features.extend(card_to_features_v2(card, is_night=is_night_bool))
-        for i in range(MAX_DECK_SIZE):
-            card = opponent_originals[i] if i < len(opponent_originals) else None
-            opponent_deck_features.extend(card_to_features_v2(card, is_night=is_night_bool))
-    else:
-        player_deck_features = [0.0] * DECK_OBSERVATION_SIZE_V2
-        opponent_deck_features = [0.0] * DECK_OBSERVATION_SIZE_V2
+    for i in range(MAX_DECK_SIZE):
+        if i < len(opponent.deck):
+            position = i / max(len(opponent.deck) - 1, 1)
+            opponent_deck_features.extend(
+                card_instance_to_features_v2(opponent.deck[i], is_night=is_night_bool, deck_position=position)
+            )
+        else:
+            opponent_deck_features.extend([0.0] * CARD_FEATURE_SIZE)
 
     if decision_context is None:
         decision_context = [0.0] * DECISION_CONTEXT_SIZE_V2
@@ -531,8 +539,6 @@ class HeadlessGameEnvV2:
         self.game_state: Optional[GameState] = None
         self.effect_engine: Optional[EffectEngine] = None
         self.turn_manager = None
-        self.original_deck_cards: Optional[dict[int, list[Card]]] = None
-
     def _get_agent(self, player_index: int):
         return self.agent_0 if player_index == 0 else self.agent_1
 
@@ -541,7 +547,6 @@ class HeadlessGameEnvV2:
         for agent in (self.agent_0, self.agent_1):
             if isinstance(agent, ModelBotAgent):
                 agent.current_game_state = self.game_state
-                agent.original_deck_cards = self.original_deck_cards
 
     def _build_deck(self, owner_name: str, deck_cards: Optional[list[Card]] = None):
         from zutomayo.engine.bot_agent import load_random_saved_deck
@@ -648,11 +653,6 @@ class HeadlessGameEnvV2:
         deck_1 = self._build_deck('agent_0', self.deck_cards_for_player_0)
         deck_2 = self._build_deck('agent_1', self.deck_cards_for_player_1)
 
-        self.original_deck_cards = {
-            0: [card_instance.card for card_instance in deck_1],
-            1: [card_instance.card for card_instance in deck_2],
-        }
-
         controller = GameController(
             name_1='agent_0',
             name_2='agent_1',
@@ -698,10 +698,7 @@ class HeadlessGameEnvV2:
         for player in self.game_state.players:
             self.turn_manager.reveal_initial_card(player)
 
-        return build_observation_v2(
-            self.game_state, 0,
-            original_deck_cards=self.original_deck_cards,
-        )
+        return build_observation_v2(self.game_state, 0)
 
     async def play_full_game(self) -> GameResultV2:
         """Play a complete game and return the result with trajectories."""

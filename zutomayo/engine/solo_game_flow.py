@@ -551,12 +551,6 @@ class SoloGameFlow(GameFlow):
         game_state = session.game_state
         turn_manager = session.turn_manager
 
-        if isinstance(self.bot_agent, ModelBotAgent):
-            self.bot_agent.original_deck_cards = {
-                0: [card_instance.card for card_instance in game_state.players[0].deck],
-                1: [card_instance.card for card_instance in game_state.players[1].deck],
-            }
-
         # Bind bot-aware effect engine
         turn_manager.effect_engine = session.effect_engine
         turn_manager.effect_engine.bind(session, self.bot)
