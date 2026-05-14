@@ -24,6 +24,11 @@ EffectHandler = Callable[
     Coroutine[Any, Any, None],
 ]
 
+# Effects whose dispatch sets CardInstance.power_cost_reduction. They must
+# resolve before any other effect, otherwise the cost check for the
+# character/enchant they reduce will see the un-reduced cost and skip.
+_COST_REDUCING_EFFECTS = frozenset({"02-006", "04-065"})
+
 
 @dataclass
 class TurnEffectState:
@@ -276,19 +281,6 @@ class EffectEngine:
                     game_state.players[opponent_index].hp = max(0, game_state.players[opponent_index].hp - reflected_damage)
                     log.debug('[04-100] %s: reflecting %d reduced damage to %s (HP %d -> %d)', self.player_label(player_index), reflected_damage, self.player_label(opponent_index), old_hp, game_state.players[opponent_index].hp)
 
-        # Effect 03-061: move opponent's area enchant to their Power Charger
-        for player in game_state.players:
-            area_enchant = player.set_zone_c
-            if area_enchant is not None and area_enchant.card.effect == '03-061':
-                opponent = game_state.players[1 - player.index]
-                opponent_area_enchant = opponent.set_zone_c
-                if opponent_area_enchant is not None:
-                    log.debug('[03-061] %s: moving opponent %s area enchant %s to Power Charger', self.player_label(player.index), self.player_label(opponent.index), opponent_area_enchant.card.name)
-                    opponent.set_zone_c = None
-                    opponent_area_enchant.zone = Zone.POWER_CHARGER
-                    opponent_area_enchant.face_up = True
-                    opponent_area_enchant.attribute_override = None
-                    opponent.power_charger.append(opponent_area_enchant)
 
     def get_effective_power_cost(self, card_instance: CardInstance, player: Player) -> int:
         cost = card_instance.card.power_cost - card_instance.power_cost_reduction
@@ -377,6 +369,15 @@ class EffectEngine:
                 if end_of_turn:
                     opponent = game_state.players[1 - player.index]
                     if opponent.hp <= 40:
+                        should_remove = True
+
+            elif area_enchant.card.effect == '03-061':
+                # Remove (and send to own Power Charger via send_to_power) when
+                # the opponent has any area enchantment card on the field at
+                # end of turn.
+                if end_of_turn:
+                    opponent = game_state.players[1 - player.index]
+                    if opponent.set_zone_c is not None:
                         should_remove = True
 
             elif area_enchant.card.effect == '03-086':
@@ -549,6 +550,20 @@ class EffectEngine:
         await self._dispatch(game_state, player_index, card_instance)
         return True
 
+    @staticmethod
+    def _partition_forced_first(
+        eligible: list[CardInstance],
+    ) -> tuple[list[CardInstance], list[CardInstance]]:
+        """Split eligible effects into (forced-first, user-selectable).
+
+        Cost-reducing effects must dispatch before any other effect so the
+        cost check for the character/enchant they reduce sees the reduced
+        cost.  Forced-first effects preserve their original collection order.
+        """
+        forced_first = [ci for ci in eligible if ci.card.effect in _COST_REDUCING_EFFECTS]
+        selectable = [ci for ci in eligible if ci.card.effect not in _COST_REDUCING_EFFECTS]
+        return forced_first, selectable
+
     async def _prompt_effect_order(
         self,
         player_index: int,
@@ -560,13 +575,13 @@ class EffectEngine:
         Uses sequential single-card selections.  On timeout at any step,
         remaining cards are appended in their default collection order.
 
-        NOTE: If a future card specifies a forced ordering constraint
-        (e.g. "this effect must resolve first"), that logic should be
-        inserted here before prompting, pre-positioning the constrained
-        card and removing it from the selectable pool.
+        Cost-reducing effects (see ``_COST_REDUCING_EFFECTS``) are
+        pre-positioned at the front of the resolution order and removed
+        from the selectable pool — they must dispatch before any other
+        effect so subsequent cost checks see the reduced cost.
         """
-        ordered: list[CardInstance] = []
-        remaining = list(eligible)
+        forced_first, remaining = self._partition_forced_first(eligible)
+        ordered: list[CardInstance] = list(forced_first)
 
         while len(remaining) > 1:
             card_names = ', '.join(card_instance.card.name for card_instance in remaining)
