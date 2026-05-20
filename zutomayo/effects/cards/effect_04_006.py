@@ -134,16 +134,11 @@ async def effect_04_006(
     # Perform the swap
     old_battle_character = opponent.battle_zone
 
-    # Move old battle zone character to power charger or abyss
+    # Move old battle zone character to power charger (swap, regardless of send_to_power)
     old_battle_character.attribute_override = None
-    if old_battle_character.card.send_to_power > 0:
-        old_battle_character.zone = Zone.POWER_CHARGER
-        old_battle_character.face_up = True
-        opponent.power_charger.append(old_battle_character)
-    else:
-        old_battle_character.zone = Zone.ABYSS
-        old_battle_character.face_up = True
-        opponent.abyss.append(old_battle_character)
+    old_battle_character.zone = Zone.POWER_CHARGER
+    old_battle_character.face_up = True
+    opponent.power_charger.append(old_battle_character)
 
     # Move selected power charger character to battle zone (effects disabled)
     opponent.power_charger.remove(selected_power_character)
