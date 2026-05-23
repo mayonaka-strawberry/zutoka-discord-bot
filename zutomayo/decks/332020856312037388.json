@@ -427,23 +427,23 @@
       ]
     },
     {
-      "name": "aggro+techno",
+      "name": "techno v2 tanks tuan",
       "cards": [
         {
-          "pack": 1,
-          "id": 13
+          "pack": 3,
+          "id": 50
+        },
+        {
+          "pack": 3,
+          "id": 50
         },
         {
           "pack": 1,
-          "id": 13
+          "id": 21
         },
         {
           "pack": 1,
-          "id": 14
-        },
-        {
-          "pack": 1,
-          "id": 14
+          "id": 21
         },
         {
           "pack": 1,
@@ -487,27 +487,27 @@
         },
         {
           "pack": 1,
-          "id": 63
+          "id": 6
         },
         {
           "pack": 1,
-          "id": 63
+          "id": 6
         },
         {
-          "pack": 2,
-          "id": 30
+          "pack": 4,
+          "id": 3
         },
         {
-          "pack": 2,
-          "id": 30
-        },
-        {
-          "pack": 1,
-          "id": 28
+          "pack": 4,
+          "id": 3
         },
         {
           "pack": 1,
-          "id": 28
+          "id": 57
+        },
+        {
+          "pack": 1,
+          "id": 57
         }
       ]
     }
