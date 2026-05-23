@@ -194,7 +194,7 @@ def build_profile_embed(
             lines.append(f'{index:>2}. {name}  —  {games} games   {_format_record(wins, losses)}')
         if lines:
             embed.add_field(
-                name=f'Top Rivals (up to {len(lines)})',
+                name=f'Top {len(lines)} Opponents',
                 value='```\n' + '\n'.join(lines) + '\n```',
                 inline=False,
             )
