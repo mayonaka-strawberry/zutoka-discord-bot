@@ -483,6 +483,7 @@ class DeckSourceView(discord.ui.View):
 
     async def on_timeout(self) -> None:
         if self.player_index not in self.session.pending_actions:
+            self.session.player_deck_names[self.player_index] = '<random>'
             self.session.submit_action(self.player_index, _random_deck(self.all_cards))
 
 
@@ -616,6 +617,7 @@ class SavedDeckSelectView(discord.ui.View):
 
     async def on_timeout(self) -> None:
         if self.player_index not in self.session.pending_actions:
+            self.session.player_deck_names[self.player_index] = '<random>'
             self.session.submit_action(self.player_index, _random_deck(self.all_cards))
 
 
@@ -647,6 +649,7 @@ class SavedDeckConfirmView(discord.ui.View):
 
     @discord.ui.button(label='Confirm', style=discord.ButtonStyle.green)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.session.player_deck_names[self.player_index] = self.deck_name
         self.session.submit_action(self.player_index, self.cards)
         await interaction.response.edit_message(
             content=f'Deck **{self.deck_name}** confirmed! Waiting for {self.opponent_name}...',
@@ -675,6 +678,7 @@ class SavedDeckConfirmView(discord.ui.View):
 
     async def on_timeout(self) -> None:
         if self.player_index not in self.session.pending_actions:
+            self.session.player_deck_names[self.player_index] = '<random>'
             self.session.submit_action(self.player_index, _random_deck(self.all_cards))
 
 
@@ -769,6 +773,7 @@ class DefaultDeckSelectView(discord.ui.View):
 
     async def on_timeout(self) -> None:
         if self.player_index not in self.session.pending_actions:
+            self.session.player_deck_names[self.player_index] = '<random>'
             self.session.submit_action(self.player_index, _random_deck(self.all_cards))
 
 
@@ -800,6 +805,7 @@ class DefaultDeckConfirmView(discord.ui.View):
 
     @discord.ui.button(label='Confirm', style=discord.ButtonStyle.green)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.session.player_deck_names[self.player_index] = f'<default>{self.deck_name}'
         self.session.submit_action(self.player_index, self.cards)
         await interaction.response.edit_message(
             content=f'Deck **{self.deck_name}** confirmed! Waiting for {self.opponent_name}...',
@@ -828,4 +834,5 @@ class DefaultDeckConfirmView(discord.ui.View):
 
     async def on_timeout(self) -> None:
         if self.player_index not in self.session.pending_actions:
+            self.session.player_deck_names[self.player_index] = '<random>'
             self.session.submit_action(self.player_index, _random_deck(self.all_cards))

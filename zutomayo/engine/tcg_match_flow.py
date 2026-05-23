@@ -85,12 +85,28 @@ class TcgMatchFlow:
 
             # Announce series winner
             await self._announce_series_result(session, names, wins)
+            self._record_series_stats(session, wins)
             session_manager.remove_game(session.game_id)
 
         except Exception:
             log.exception('Error in TCG match flow')
             await self._send_to_channel(session, content='An error occurred. TCG series ended.')
             session_manager.remove_game(session.game_id)
+
+    def _record_series_stats(self, session: GameSession, wins: dict[int, int]) -> None:
+        """Persist series-level tcg_series win/loss into both player profiles. Per-match Elo and
+        per-match stats were already written during the series by GameFlow._end_game.
+        """
+        from zutomayo.data.player_storage import record_tcg_series
+
+        try:
+            player_zero_id = session.get_discord_id(0)
+            player_one_id = session.get_discord_id(1)
+            if player_zero_id is None or player_one_id is None:
+                return
+            record_tcg_series(player_zero_id, player_one_id, wins)
+        except Exception:
+            log.exception('Failed to record TCG series stats for game %s', session.game_id)
 
     async def _do_tcg_deck_selection(
         self, session: GameSession,

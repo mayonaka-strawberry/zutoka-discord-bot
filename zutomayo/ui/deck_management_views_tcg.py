@@ -480,6 +480,7 @@ class TcgDeckInputModal(discord.ui.Modal):
             return
 
         main_cards, side_cards = result
+        self.session.player_deck_names[self.player_index] = '<manual>'
         self.session.submit_action(self.player_index, {'deck': main_cards, 'side_deck': side_cards})
         await interaction.response.edit_message(
             content=f'Waiting for {self.parent_view.opponent_name}...',
@@ -519,6 +520,7 @@ class TcgDeckBuilderView(discord.ui.View):
     @discord.ui.button(label='Random Deck', style=discord.ButtonStyle.secondary, row=0)
     async def random_deck_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         main, side = _random_tcg_deck(self.all_cards)
+        self.session.player_deck_names[self.player_index] = '<random>'
         self.session.submit_action(self.player_index, {'deck': main, 'side_deck': side})
         await interaction.response.edit_message(
             content=f'Waiting for {self.opponent_name}...',
@@ -529,6 +531,7 @@ class TcgDeckBuilderView(discord.ui.View):
     async def on_timeout(self) -> None:
         if self.player_index not in self.session.pending_actions:
             main, side = _random_tcg_deck(self.all_cards)
+            self.session.player_deck_names[self.player_index] = '<random>'
             self.session.submit_action(self.player_index, {'deck': main, 'side_deck': side})
 
 
@@ -594,6 +597,7 @@ class TcgDeckSourceView(discord.ui.View):
     async def on_timeout(self) -> None:
         if self.player_index not in self.session.pending_actions:
             main, side = _random_tcg_deck(self.all_cards)
+            self.session.player_deck_names[self.player_index] = '<random>'
             self.session.submit_action(self.player_index, {'deck': main, 'side_deck': side})
 
 
@@ -732,6 +736,7 @@ class TcgSavedDeckSelectView(discord.ui.View):
     async def on_timeout(self) -> None:
         if self.player_index not in self.session.pending_actions:
             main, side = _random_tcg_deck(self.all_cards)
+            self.session.player_deck_names[self.player_index] = '<random>'
             self.session.submit_action(self.player_index, {'deck': main, 'side_deck': side})
 
 
@@ -765,6 +770,7 @@ class TcgSavedDeckConfirmView(discord.ui.View):
 
     @discord.ui.button(label='Confirm', style=discord.ButtonStyle.green)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.session.player_deck_names[self.player_index] = self.deck_name
         self.session.submit_action(self.player_index, {'deck': self.main_cards, 'side_deck': self.side_cards})
         await interaction.response.edit_message(
             content=f'TCG Deck **{self.deck_name}** confirmed! Waiting for {self.opponent_name}...',
@@ -794,4 +800,5 @@ class TcgSavedDeckConfirmView(discord.ui.View):
     async def on_timeout(self) -> None:
         if self.player_index not in self.session.pending_actions:
             main, side = _random_tcg_deck(self.all_cards)
+            self.session.player_deck_names[self.player_index] = '<random>'
             self.session.submit_action(self.player_index, {'deck': main, 'side_deck': side})
