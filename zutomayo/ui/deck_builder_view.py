@@ -48,6 +48,7 @@ class DeckInputModal(discord.ui.Modal):
             )
             return
 
+        self.session.player_deck_names[self.player_index] = '<manual>'
         self.session.submit_action(self.player_index, cards)
         await interaction.response.edit_message(
             content=f'Waiting for {self.parent_view.opponent_name}...',
@@ -118,4 +119,5 @@ class DeckBuilderView(discord.ui.View):
                 if counts.get(key, 0) < 2 and len(deck) < 20:
                     deck.append(card)
                     counts[key] = counts.get(key, 0) + 1
+            self.session.player_deck_names[self.player_index] = '<random>'
             self.session.submit_action(self.player_index, deck)

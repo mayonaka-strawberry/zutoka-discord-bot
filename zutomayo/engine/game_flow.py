@@ -680,6 +680,50 @@ class GameFlow:
         await self._send_to_channel(session, embed=embed)
         await self._send_to_both(session, embed=embed)
 
+        self._record_match_stats(session)
+
         if remove_session:
             from zutomayo.engine.game_session import session_manager
             session_manager.remove_game(session.game_id)
+
+    def _record_match_stats(self, session: GameSession) -> None:
+        """
+        Persist the just-finished match into player profiles.
+
+        Called from _end_game, which fires once per single match — including each match
+        inside a TCG series (via run_single_match) and the single match inside a solo game
+        (because SoloGameFlow inherits this method). Dispatch by session flags.
+        Any storage error is logged but swallowed so it can never break the game-over embed.
+        """
+        from zutomayo.data.player_storage import record_match_result
+        from zutomayo.enums.result import Result
+
+        try:
+            game_state = session.game_state
+            if game_state is None:
+                return
+            if game_state.result == Result.PLAYER_1_WIN:
+                winner_index_or_none = 0
+            elif game_state.result == Result.PLAYER_2_WIN:
+                winner_index_or_none = 1
+            else:
+                winner_index_or_none = None
+
+            player_zero_id = session.get_discord_id(0)
+            player_one_id = session.get_discord_id(1)
+            if player_zero_id is None or player_one_id is None:
+                return
+
+            mode = 'tcg_match' if session.is_tcg else 'standard'
+            record_match_result(
+                player_zero_id,
+                player_one_id,
+                session.player_deck_names.get(0),
+                session.player_deck_names.get(1),
+                winner_index_or_none,
+                mode=mode,
+                is_solo=session.is_solo,
+                solo_difficulty=session.solo_difficulty,
+            )
+        except Exception:
+            log.exception('Failed to record match stats for game %s', session.game_id)

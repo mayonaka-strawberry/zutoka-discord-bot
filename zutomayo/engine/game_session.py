@@ -42,6 +42,11 @@ class GameSession:
 
         # Solo mode (player vs bot)
         self.is_solo: bool = False
+        self.solo_difficulty: str = 'normal'  # 'normal' | 'easy', only meaningful when is_solo
+
+        # Deck name chosen by each player (populated by deck-selection views).
+        # None means the player used a random/manual/no-saved-deck path.
+        self.player_deck_names: dict[int, str | None] = {0: None, 1: None}
 
     def add_player(self, discord_id: int) -> int:
         player_index = 1

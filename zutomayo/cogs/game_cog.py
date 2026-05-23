@@ -3,7 +3,16 @@ import logging
 import discord
 from discord import app_commands
 from discord.ext import commands
+from zutomayo.data.player_storage import (
+    BOT_DISCORD_ID,
+    iter_all_profiles,
+    load_profile,
+)
 from zutomayo.engine.game_session import session_manager
+from zutomayo.ui.player_embeds import (
+    build_leaderboard_embed,
+    build_profile_embed,
+)
 from zutomayo.ui.views import GameLobbyView
 from zutomayo.ui.rank_songs_view import (
     CheckpointChoiceView,
@@ -14,6 +23,9 @@ from zutomayo.ui.rank_songs_view import (
 
 
 log = logging.getLogger(__name__)
+
+
+LEADERBOARD_MINIMUM_GAMES = 1
 
 
 class GameCog(commands.Cog):
@@ -80,6 +92,8 @@ class GameCog(commands.Cog):
             await interaction.response.send_message(str(e), ephemeral=True)
             return
 
+        session.solo_difficulty = 'normal'
+
         await interaction.response.send_message(
             f'**メカうにぐり** has accepted **{interaction.user.display_name}**\'s challenge!\n'
             f'Game ID: `{session.game_id}`\n'
@@ -101,6 +115,8 @@ class GameCog(commands.Cog):
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
+
+        session.solo_difficulty = 'easy'
 
         await interaction.response.send_message(
             f'**メカうにぐり** has accepted **{interaction.user.display_name}**\'s challenge!\n'
@@ -182,6 +198,7 @@ class GameCog(commands.Cog):
         if session.game_task and not session.game_task.done():
             session.game_task.cancel()
 
+        self._record_forfeit_for_session(session, interaction.user.id)
         session_manager.remove_game(game_id)
         log.info('Game %s ended by %s (end command)', game_id, interaction.user)
         await interaction.response.send_message(
@@ -437,11 +454,57 @@ class GameCog(commands.Cog):
         if session.game_task and not session.game_task.done():
             session.game_task.cancel()
 
+        self._record_forfeit_for_session(session, interaction.user.id)
         session_manager.remove_game(session.game_id)
         log.info('Game %s ended by %s (quit command)', session.game_id, interaction.user)
         await interaction.response.send_message(
             f'**{interaction.user.display_name}** quit the game. Game `{session.game_id}` has been removed.'
         )
+
+    @group.command(
+        name='profilestats',
+        description='Show your own ZUTOMAYO CARD player profile (Elo, win/loss, top decks, top rivals)',
+    )
+    async def profile_stats(self, interaction: discord.Interaction) -> None:
+        profile = load_profile(interaction.user.id)
+        embed = build_profile_embed(self.bot, interaction.user, profile)
+        await interaction.response.send_message(embed=embed)
+
+    @group.command(
+        name='leaderboard',
+        description='Show the server leaderboard ranked by Elo rating',
+    )
+    async def leaderboard(self, interaction: discord.Interaction) -> None:
+        ranked_rows = [
+            profile for profile in iter_all_profiles()
+            if profile.get('elo_games', 0) >= LEADERBOARD_MINIMUM_GAMES
+            and profile.get('user_id') != BOT_DISCORD_ID
+        ]
+        ranked_rows.sort(key=lambda profile: profile.get('elo', 1000), reverse=True)
+
+        embed = build_leaderboard_embed(
+            self.bot,
+            ranked_rows,
+            interaction.user.id,
+        )
+        await interaction.response.send_message(embed=embed)
+
+    @staticmethod
+    def _record_forfeit_for_session(session, quitter_id: int) -> None:
+        """Record a forfeit_given for the quitter and forfeit_received for the human opponent (if any).
+        Storage errors are logged and swallowed so the quit/end command stays responsive.
+        """
+        from zutomayo.data.player_storage import BOT_DISCORD_ID, record_forfeit
+
+        try:
+            opponent_id = None
+            for discord_id in session.player_discord_ids:
+                if discord_id != quitter_id and discord_id != BOT_DISCORD_ID:
+                    opponent_id = discord_id
+                    break
+            record_forfeit(quitter_id, opponent_id)
+        except Exception:
+            log.exception('Failed to record forfeit for game %s', session.game_id)
 
 
 async def setup(bot: commands.Bot):

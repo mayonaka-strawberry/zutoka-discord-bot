@@ -211,6 +211,7 @@ class SoloGameFlow(GameFlow):
             log.warning('No saved decks found, using random deck for bot')
             bot_deck_cards = None
 
+        session.player_deck_names[BOT_PLAYER_INDEX] = '<bot>'
         session.submit_action(BOT_PLAYER_INDEX, bot_deck_cards)
 
         # Wait for human player only
