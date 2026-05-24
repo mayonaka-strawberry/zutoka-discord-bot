@@ -191,11 +191,11 @@ def build_profile_embed(
             except (TypeError, ValueError):
                 continue
             name = _resolve_username(bot, opponent_id)
-            lines.append(f'{index:>2}. {name}  —  {games} games   {_format_record(wins, losses)}')
+            lines.append(f'{index}. {name}  —  {games} games   {_format_record(wins, losses)}')
         if lines:
             embed.add_field(
                 name=f'Top {len(lines)} Opponents',
-                value='```\n' + '\n'.join(lines) + '\n```',
+                value='\n'.join(lines),
                 inline=False,
             )
 
@@ -213,8 +213,7 @@ def build_leaderboard_embed(
     Top 10 rendered; if the caller is below rank 10, an extra 'Your rank' line is appended.
     """
     embed = discord.Embed(
-        title='Server Leaderboard',
-        description='Ranked by Elo rating · standard PvP only',
+        title='Zutoka Leaderboard',
         color=discord.Color.gold(),
     )
 
@@ -227,32 +226,31 @@ def build_leaderboard_embed(
         return embed
 
     visible_rows = ranked_rows[:10]
-    table_lines = [
-        f'{"#":>3}  {"Player":<20} {"Elo":>5}  {"Record":>7}  {"Games":>5}',
-    ]
+
     caller_rank: Optional[int] = None
     for rank_index, row in enumerate(ranked_rows, start=1):
         if row['user_id'] == caller_id:
             caller_rank = rank_index
             break
 
+    lines = []
     for rank_index, row in enumerate(visible_rows, start=1):
         stats = row.get('stats', {})
         standard = stats.get('standard', {})
         standard_wins = standard.get('wins', 0)
         standard_losses = standard.get('losses', 0)
-        record_text = f'{standard_wins}-{standard_losses}'
         name = _resolve_username(bot, row['user_id'])
         suffix = ' (you)' if row['user_id'] == caller_id else ''
-        display_name = (name + suffix)[:20]
+        elo = row.get('elo', 1000)
         elo_games = row.get('elo_games', 0)
-        table_lines.append(
-            f'{rank_index:>3}  {display_name:<20} {row.get("elo", 1000):>5}  {record_text:>7}  {elo_games:>5}'
+        lines.append(
+            f'{rank_index}. {name}{suffix}  —  {elo} Elo  '
+            f'({standard_wins}W – {standard_losses}L, {elo_games} games)'
         )
 
     embed.add_field(
         name='​',
-        value='```\n' + '\n'.join(table_lines) + '\n```',
+        value='\n'.join(lines),
         inline=False,
     )
 
