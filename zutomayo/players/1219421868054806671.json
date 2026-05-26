@@ -1,13 +1,13 @@
 {
   "user_id": 1219421868054806671,
-  "last_updated": "2026-05-23T09:02:25.731246+00:00",
-  "elo": 1017,
-  "elo_peak": 1017,
-  "elo_games": 3,
+  "last_updated": "2026-05-26T03:00:48.776639+00:00",
+  "elo": 1024,
+  "elo_peak": 1071,
+  "elo_games": 11,
   "stats": {
     "standard": {
-      "wins": 2,
-      "losses": 1,
+      "wins": 7,
+      "losses": 4,
       "draws": 0
     },
     "tcg_match": {
@@ -29,16 +29,16 @@
       "losses": 1,
       "draws": 0
     },
-    "forfeits_given": 2,
+    "forfeits_given": 5,
     "forfeits_received": 0
   },
   "deck_stats": {
     "standard": {
       "tuan tdd v2": {
         "pvp": {
-          "games": 0,
-          "wins": 0,
-          "losses": 0,
+          "games": 3,
+          "wins": 1,
+          "losses": 2,
           "draws": 0
         },
         "solo": {
@@ -50,8 +50,36 @@
       },
       "<manual>": {
         "pvp": {
-          "games": 3,
-          "wins": 2,
+          "games": 6,
+          "wins": 5,
+          "losses": 1,
+          "draws": 0
+        },
+        "solo": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        }
+      },
+      "uniguri nekoreset": {
+        "pvp": {
+          "games": 1,
+          "wins": 1,
+          "losses": 0,
+          "draws": 0
+        },
+        "solo": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        }
+      },
+      "<default>Kinox": {
+        "pvp": {
+          "games": 1,
+          "wins": 0,
           "losses": 1,
           "draws": 0
         },
@@ -67,11 +95,25 @@
   },
   "opponent_stats": {
     "273446626486386688": {
-      "games": 3,
-      "wins": 2,
+      "games": 5,
+      "wins": 3,
+      "losses": 2,
+      "draws": 0,
+      "last_played": "2026-05-26T02:56:24.967398+00:00"
+    },
+    "418732188977201164": {
+      "games": 4,
+      "wins": 3,
       "losses": 1,
       "draws": 0,
-      "last_played": "2026-05-23T09:02:25.730028+00:00"
+      "last_played": "2026-05-26T02:37:54.743466+00:00"
+    },
+    "1466155350905323636": {
+      "games": 2,
+      "wins": 1,
+      "losses": 1,
+      "draws": 0,
+      "last_played": "2026-05-25T11:57:47.053204+00:00"
     }
   }
 }

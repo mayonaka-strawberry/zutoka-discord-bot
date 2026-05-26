@@ -1,0 +1,77 @@
+{
+  "user_id": 1153600154893549599,
+  "last_updated": "2026-05-26T03:18:10.939328+00:00",
+  "elo": 956,
+  "elo_peak": 1000,
+  "elo_games": 3,
+  "stats": {
+    "standard": {
+      "wins": 0,
+      "losses": 3,
+      "draws": 0
+    },
+    "tcg_match": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 0
+    },
+    "tcg_series": {
+      "wins": 0,
+      "losses": 0
+    },
+    "solo_easy": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 0
+    },
+    "solo_normal": {
+      "wins": 1,
+      "losses": 1,
+      "draws": 0
+    },
+    "forfeits_given": 3,
+    "forfeits_received": 1
+  },
+  "deck_stats": {
+    "standard": {
+      "Ham\u3046\u306b\u304e\u308a": {
+        "pvp": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        },
+        "solo": {
+          "games": 1,
+          "wins": 1,
+          "losses": 0,
+          "draws": 0
+        }
+      },
+      "\u30ab\u30aa\u30b9": {
+        "pvp": {
+          "games": 3,
+          "wins": 0,
+          "losses": 3,
+          "draws": 0
+        },
+        "solo": {
+          "games": 1,
+          "wins": 0,
+          "losses": 1,
+          "draws": 0
+        }
+      }
+    },
+    "tcg": {}
+  },
+  "opponent_stats": {
+    "1358627084758417629": {
+      "games": 3,
+      "wins": 0,
+      "losses": 3,
+      "draws": 0,
+      "last_played": "2026-05-26T03:18:10.939255+00:00"
+    }
+  }
+}
