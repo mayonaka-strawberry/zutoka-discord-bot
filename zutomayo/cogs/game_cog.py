@@ -489,6 +489,30 @@ class GameCog(commands.Cog):
         )
         await interaction.response.send_message(embed=embed)
 
+    @group.command(
+        name='leaderboardtcg',
+        description='Show the server leaderboard ranked by TCG Elo rating',
+    )
+    async def leaderboard_tcg(self, interaction: discord.Interaction) -> None:
+        ranked_rows = [
+            profile for profile in iter_all_profiles()
+            if profile.get('tcg_elo_games', 0) >= LEADERBOARD_MINIMUM_GAMES
+            and profile.get('user_id') != BOT_DISCORD_ID
+        ]
+        ranked_rows.sort(key=lambda profile: profile.get('tcg_elo', 1000), reverse=True)
+
+        embed = build_leaderboard_embed(
+            self.bot,
+            ranked_rows,
+            interaction.user.id,
+            title='Zutoka TCG Leaderboard',
+            elo_field='tcg_elo',
+            elo_games_field='tcg_elo_games',
+            record_stats_bucket='tcg_series',
+            empty_message='No ranked players yet. Finish a TCG series with `/zutomayo createtcg` to appear here.',
+        )
+        await interaction.response.send_message(embed=embed)
+
     @staticmethod
     def _record_forfeit_for_session(session, quitter_id: int) -> None:
         """Record a forfeit_given for the quitter and forfeit_received for the human opponent (if any).

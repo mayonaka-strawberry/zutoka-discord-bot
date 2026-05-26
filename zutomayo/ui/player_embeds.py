@@ -116,9 +116,16 @@ def build_profile_embed(
 
     elo = profile.get('elo', 1000)
     elo_peak = profile.get('elo_peak', 1000)
+    tcg_elo = profile.get('tcg_elo', 1000)
+    tcg_elo_peak = profile.get('tcg_elo_peak', 1000)
     embed.add_field(
         name='Elo Rating',
         value=f'{elo} (peak {elo_peak})',
+        inline=True,
+    )
+    embed.add_field(
+        name='TCG Elo Rating',
+        value=f'{tcg_elo} (peak {tcg_elo_peak})',
         inline=True,
     )
     embed.add_field(
@@ -207,20 +214,30 @@ def build_leaderboard_embed(
     bot: discord.Client,
     ranked_rows: list[dict],
     caller_id: int,
+    *,
+    title: str = 'Zutoka Leaderboard',
+    elo_field: str = 'elo',
+    elo_games_field: str = 'elo_games',
+    record_stats_bucket: str = 'standard',
+    empty_message: str = 'No ranked players yet. Play a standard PvP game to appear here.',
 ) -> discord.Embed:
     """
     ranked_rows: profiles already filtered/sorted by the caller. This builder only renders.
     Top 10 rendered; if the caller is below rank 10, an extra 'Your rank' line is appended.
+
+    The same renderer drives both /zutomayo leaderboard (standard Elo) and
+    /zutomayo leaderboardtcg (TCG Elo) — the caller picks the rating field, the
+    W-L bucket to show beside each entry, and the empty/title strings.
     """
     embed = discord.Embed(
-        title='Zutoka Leaderboard',
+        title=title,
         color=discord.Color.gold(),
     )
 
     if not ranked_rows:
         embed.add_field(
             name='​',
-            value='No ranked players yet. Play a standard PvP game to appear here.',
+            value=empty_message,
             inline=False,
         )
         return embed
@@ -236,16 +253,16 @@ def build_leaderboard_embed(
     lines = []
     for rank_index, row in enumerate(visible_rows, start=1):
         stats = row.get('stats', {})
-        standard = stats.get('standard', {})
-        standard_wins = standard.get('wins', 0)
-        standard_losses = standard.get('losses', 0)
+        record_bucket = stats.get(record_stats_bucket, {})
+        record_wins = record_bucket.get('wins', 0)
+        record_losses = record_bucket.get('losses', 0)
         name = _resolve_username(bot, row['user_id'])
         suffix = ' (you)' if row['user_id'] == caller_id else ''
-        elo = row.get('elo', 1000)
-        elo_games = row.get('elo_games', 0)
+        elo = row.get(elo_field, 1000)
+        elo_games = row.get(elo_games_field, 0)
         lines.append(
             f'{rank_index}. {name}{suffix}  —  {elo} Elo  '
-            f'({standard_wins}W – {standard_losses}L, {elo_games} games)'
+            f'({record_wins}W – {record_losses}L, {elo_games} games)'
         )
 
     embed.add_field(
@@ -258,7 +275,7 @@ def build_leaderboard_embed(
         caller_row = next(row for row in ranked_rows if row['user_id'] == caller_id)
         embed.add_field(
             name='​',
-            value=f'Your rank: #{caller_rank} ({caller_row.get("elo", 1000)} Elo)',
+            value=f'Your rank: #{caller_rank} ({caller_row.get(elo_field, 1000)} Elo)',
             inline=False,
         )
 

@@ -38,6 +38,9 @@ def _empty_profile(user_id: int) -> dict:
         'elo': ELO_STARTING_RATING,
         'elo_peak': ELO_STARTING_RATING,
         'elo_games': 0,
+        'tcg_elo': ELO_STARTING_RATING,
+        'tcg_elo_peak': ELO_STARTING_RATING,
+        'tcg_elo_games': 0,
         'stats': {
             'standard':   {'wins': 0, 'losses': 0, 'draws': 0},
             'tcg_match':  {'wins': 0, 'losses': 0, 'draws': 0},
@@ -123,23 +126,34 @@ def _expected_score(rating_a: int, rating_b: int) -> float:
     return 1.0 / (1.0 + 10 ** ((rating_b - rating_a) / 400))
 
 
-def _apply_elo_update(profile_a: dict, profile_b: dict, score_a: float) -> None:
+def _apply_elo_update(
+    profile_a: dict,
+    profile_b: dict,
+    score_a: float,
+    *,
+    rating_field: str = 'elo',
+    peak_field: str = 'elo_peak',
+    games_field: str = 'elo_games',
+) -> None:
     """
     Update Elo on both profiles. score_a is 1.0 (a wins), 0.5 (draw), or 0.0 (b wins).
     Standard Elo formula: bigger rating gaps already produce asymmetric swings (small for
     favourites, large for upsets) without any custom K-factor tweaks.
+
+    The rating_field / peak_field / games_field parameters let the same updater drive
+    both standard PvP Elo and the parallel TCG-series Elo against different profile keys.
     """
-    rating_a = profile_a.get('elo', ELO_STARTING_RATING)
-    rating_b = profile_b.get('elo', ELO_STARTING_RATING)
+    rating_a = profile_a.get(rating_field, ELO_STARTING_RATING)
+    rating_b = profile_b.get(rating_field, ELO_STARTING_RATING)
     expected_a = _expected_score(rating_a, rating_b)
     delta_a = round(ELO_K_FACTOR * (score_a - expected_a))
 
-    profile_a['elo'] = rating_a + delta_a
-    profile_b['elo'] = rating_b - delta_a
-    profile_a['elo_peak'] = max(profile_a.get('elo_peak', ELO_STARTING_RATING), profile_a['elo'])
-    profile_b['elo_peak'] = max(profile_b.get('elo_peak', ELO_STARTING_RATING), profile_b['elo'])
-    profile_a['elo_games'] = profile_a.get('elo_games', 0) + 1
-    profile_b['elo_games'] = profile_b.get('elo_games', 0) + 1
+    profile_a[rating_field] = rating_a + delta_a
+    profile_b[rating_field] = rating_b - delta_a
+    profile_a[peak_field] = max(profile_a.get(peak_field, ELO_STARTING_RATING), profile_a[rating_field])
+    profile_b[peak_field] = max(profile_b.get(peak_field, ELO_STARTING_RATING), profile_b[rating_field])
+    profile_a[games_field] = profile_a.get(games_field, 0) + 1
+    profile_b[games_field] = profile_b.get(games_field, 0) + 1
 
 
 def _deck_format_bucket(profile: dict, deck_format: str) -> dict:
@@ -255,7 +269,13 @@ def record_tcg_series(
     player_one_id: int,
     wins_dict: dict,
 ) -> None:
-    """Record series-level TCG result. Per-match Elo and per-match stats were handled during the series."""
+    """
+    Record series-level TCG result. Per-match stats were handled during the series.
+
+    The TCG Elo ladder updates here (and only here): one Elo move per completed
+    best-of-N, regardless of whether it was a sweep or a grind. The standard Elo
+    rating is left untouched — TCG has its own parallel rating stored in tcg_elo.
+    """
     if BOT_DISCORD_ID in (player_zero_id, player_one_id):
         return  # series-level recording is PvP only
 
@@ -267,11 +287,22 @@ def record_tcg_series(
     if wins_zero > wins_one:
         profile_zero['stats']['tcg_series']['wins']   += 1
         profile_one['stats']['tcg_series']['losses']  += 1
+        score_zero = 1.0
     elif wins_one > wins_zero:
         profile_one['stats']['tcg_series']['wins']    += 1
         profile_zero['stats']['tcg_series']['losses'] += 1
+        score_zero = 0.0
     else:
         return  # tied series shouldn't happen, but skip the write rather than guessing
+
+    _apply_elo_update(
+        profile_zero,
+        profile_one,
+        score_zero,
+        rating_field='tcg_elo',
+        peak_field='tcg_elo_peak',
+        games_field='tcg_elo_games',
+    )
 
     save_profile(player_zero_id, profile_zero)
     save_profile(player_one_id, profile_one)
