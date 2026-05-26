@@ -492,9 +492,19 @@ class GameCog(commands.Cog):
     @staticmethod
     def _record_forfeit_for_session(session, quitter_id: int) -> None:
         """Record a forfeit_given for the quitter and forfeit_received for the human opponent (if any).
+
+        Standard PvP quits (non-TCG, non-solo, human opponent present) also incur a
+        half-loss Elo penalty applied symmetrically to both players. TCG quits,
+        solo quits, and lobby-stage quits (no opponent joined) only move the forfeit
+        counters, never Elo.
+
         Storage errors are logged and swallowed so the quit/end command stays responsive.
         """
-        from zutomayo.data.player_storage import BOT_DISCORD_ID, record_forfeit
+        from zutomayo.data.player_storage import (
+            BOT_DISCORD_ID,
+            record_forfeit,
+            record_standard_pvp_quit,
+        )
 
         try:
             opponent_id = None
@@ -502,7 +512,16 @@ class GameCog(commands.Cog):
                 if discord_id != quitter_id and discord_id != BOT_DISCORD_ID:
                     opponent_id = discord_id
                     break
-            record_forfeit(quitter_id, opponent_id)
+
+            is_standard_pvp = (
+                not session.is_tcg
+                and not session.is_solo
+                and opponent_id is not None
+            )
+            if is_standard_pvp:
+                record_standard_pvp_quit(quitter_id, opponent_id)
+            else:
+                record_forfeit(quitter_id, opponent_id)
         except Exception:
             log.exception('Failed to record forfeit for game %s', session.game_id)
 
