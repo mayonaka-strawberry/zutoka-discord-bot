@@ -1,23 +1,23 @@
 {
   "user_id": 273446626486386688,
-  "last_updated": "2026-05-24T05:21:40.663527+00:00",
-  "elo": 986,
+  "last_updated": "2026-05-26T15:16:07.861397+00:00",
+  "elo": 1006,
   "elo_peak": 1016,
-  "elo_games": 5,
+  "elo_games": 10,
   "stats": {
     "standard": {
-      "wins": 2,
-      "losses": 3,
+      "wins": 5,
+      "losses": 5,
       "draws": 0
     },
     "tcg_match": {
       "wins": 0,
-      "losses": 0,
+      "losses": 2,
       "draws": 0
     },
     "tcg_series": {
       "wins": 0,
-      "losses": 0
+      "losses": 1
     },
     "solo_easy": {
       "wins": 0,
@@ -25,8 +25,8 @@
       "draws": 0
     },
     "solo_normal": {
-      "wins": 2,
-      "losses": 1,
+      "wins": 4,
+      "losses": 3,
       "draws": 0
     },
     "forfeits_given": 0,
@@ -36,8 +36,8 @@
     "standard": {
       "rani": {
         "pvp": {
-          "games": 0,
-          "wins": 0,
+          "games": 1,
+          "wins": 1,
           "losses": 0,
           "draws": 0
         },
@@ -64,9 +64,53 @@
       },
       "kinox": {
         "pvp": {
+          "games": 4,
+          "wins": 2,
+          "losses": 2,
+          "draws": 0
+        },
+        "solo": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        }
+      },
+      "taidada": {
+        "pvp": {
           "games": 2,
           "wins": 1,
           "losses": 1,
+          "draws": 0
+        },
+        "solo": {
+          "games": 3,
+          "wins": 1,
+          "losses": 2,
+          "draws": 0
+        }
+      },
+      "agro": {
+        "pvp": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        },
+        "solo": {
+          "games": 1,
+          "wins": 1,
+          "losses": 0,
+          "draws": 0
+        }
+      }
+    },
+    "tcg": {
+      "agro": {
+        "pvp": {
+          "games": 2,
+          "wins": 0,
+          "losses": 2,
           "draws": 0
         },
         "solo": {
@@ -76,23 +120,29 @@
           "draws": 0
         }
       }
-    },
-    "tcg": {}
+    }
   },
   "opponent_stats": {
     "1219421868054806671": {
-      "games": 3,
-      "wins": 1,
-      "losses": 2,
+      "games": 5,
+      "wins": 2,
+      "losses": 3,
       "draws": 0,
-      "last_played": "2026-05-23T09:02:25.730028+00:00"
+      "last_played": "2026-05-26T02:56:24.967398+00:00"
     },
     "418732188977201164": {
-      "games": 2,
-      "wins": 1,
-      "losses": 1,
+      "games": 5,
+      "wins": 3,
+      "losses": 2,
       "draws": 0,
-      "last_played": "2026-05-24T05:21:40.662184+00:00"
+      "last_played": "2026-05-25T03:49:39.165274+00:00"
+    },
+    "332020856312037388": {
+      "games": 2,
+      "wins": 0,
+      "losses": 2,
+      "draws": 0,
+      "last_played": "2026-05-26T15:16:06.507620+00:00"
     }
   }
 }
