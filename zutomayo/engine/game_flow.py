@@ -228,7 +228,7 @@ class GameFlow:
                 view=view,
             )
 
-        await session.wait_for_both_players(timeout=600.0)
+        await session.wait_for_both_players(timeout=750.0)
 
         deck_0 = session.pending_actions.get(0)
         deck_1 = session.pending_actions.get(1)

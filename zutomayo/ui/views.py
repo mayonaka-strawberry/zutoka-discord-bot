@@ -49,7 +49,7 @@ class CardSelectView(discord.ui.View):
         embed: discord.Embed | None = None,
         opponent_name: str = 'opponent',
     ):
-        super().__init__(timeout=300)
+        super().__init__(timeout=750)
         self.session = session
         self.player_index = player_index
         self.cards = cards
@@ -142,7 +142,7 @@ class TwoStepCardSelectView(discord.ui.View):
         embed: discord.Embed | None = None,
         opponent_name: str = 'opponent',
     ):
-        super().__init__(timeout=300)
+        super().__init__(timeout=750)
         self.session = session
         self.player_index = player_index
         self.cards = cards
@@ -271,7 +271,7 @@ class RedrawView(discord.ui.View):
         cards: list[CardInstance],
         opponent_name: str = 'opponent',
     ):
-        super().__init__(timeout=300)
+        super().__init__(timeout=750)
         self.session = session
         self.player_index = player_index
         self.cards = cards
@@ -410,7 +410,7 @@ class EffectCardSelectView(discord.ui.View):
         cards: list[CardInstance],
         placeholder: str = 'Select a card...',
     ):
-        super().__init__(timeout=300)
+        super().__init__(timeout=750)
         self.session = session
         self.player_index = player_index
         self.cards = cards
@@ -456,7 +456,7 @@ class EffectNumberSelectView(discord.ui.View):
         placeholder: str = 'Select a number...',
         label_prefix: str | None = None,
     ):
-        super().__init__(timeout=300)
+        super().__init__(timeout=750)
         self.session = session
         self.player_index = player_index
 
@@ -507,7 +507,7 @@ class EffectTextInputModal(discord.ui.Modal):
         validator: Callable[[str], str | None] | None = None,
         prompt_text: str | None = None,
     ):
-        super().__init__(title=title, timeout=120)
+        super().__init__(title=title, timeout=750)
         self.session = session
         self.player_index = player_index
         self.validator = validator
@@ -554,7 +554,7 @@ class EffectTextInputView(discord.ui.View):
         validator: Callable[[str], str | None] | None = None,
         prompt_text: str | None = None,
     ):
-        super().__init__(timeout=300)
+        super().__init__(timeout=750)
         self.session = session
         self.player_index = player_index
         self.modal_title = modal_title
@@ -583,7 +583,7 @@ class GameLobbyView(discord.ui.View):
     """Join button shown in server channel when a game is created."""
 
     def __init__(self, game_id: str):
-        super().__init__(timeout=600)
+        super().__init__(timeout=750)
         self.game_id = game_id
 
     @discord.ui.button(label='Join Game', style=discord.ButtonStyle.green)

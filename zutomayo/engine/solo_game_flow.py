@@ -215,7 +215,7 @@ class SoloGameFlow(GameFlow):
         session.submit_action(BOT_PLAYER_INDEX, bot_deck_cards)
 
         # Wait for human player only
-        await session.wait_for_both_players(timeout=600.0)
+        await session.wait_for_both_players(timeout=750.0)
 
         human_deck = session.pending_actions.get(HUMAN_PLAYER_INDEX)
         bot_deck = session.pending_actions.get(BOT_PLAYER_INDEX)
@@ -243,7 +243,7 @@ class SoloGameFlow(GameFlow):
         bot_player = game_state.players[BOT_PLAYER_INDEX]
         bot_redraw = await asyncio.wait_for(
             asyncio.to_thread(self.bot_agent.choose_redraw, bot_player.hand[:]),
-            timeout=30.0,
+            timeout=45.0,
         )
         session.submit_action(BOT_PLAYER_INDEX, {'redraw': bot_redraw})
 
@@ -304,7 +304,7 @@ class SoloGameFlow(GameFlow):
         bot_player = game_state.players[BOT_PLAYER_INDEX]
         bot_choice = await asyncio.wait_for(
             asyncio.to_thread(self.bot_agent.choose_initial_battle_card, bot_player.hand[:]),
-            timeout=30.0,
+            timeout=45.0,
         )
         session.submit_action(BOT_PLAYER_INDEX, [bot_choice])
 
@@ -344,7 +344,7 @@ class SoloGameFlow(GameFlow):
                     asyncio.to_thread(
                         self.bot_agent.choose_cards_to_set, player.hand[:], max_cards,
                     ),
-                    timeout=30.0,
+                    timeout=45.0,
                 )
                 session.submit_action(BOT_PLAYER_INDEX, bot_selected)
                 continue

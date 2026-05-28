@@ -47,7 +47,7 @@ class MakeDeckModal(discord.ui.Modal):
         user_id: int,
         card_index: dict[tuple[int, int], Card],
     ):
-        super().__init__(title=f'Create Deck: {deck_name[:35]}', timeout=300)
+        super().__init__(title=f'Create Deck: {deck_name[:35]}', timeout=750)
         self.deck_name = deck_name
         self.user_id = user_id
         self.card_index = card_index
@@ -105,7 +105,7 @@ class EditDeckModal(discord.ui.Modal):
         user_id: int,
         card_index: dict[tuple[int, int], Card],
     ):
-        super().__init__(title=f'Edit Deck: {deck_name[:38]}', timeout=300)
+        super().__init__(title=f'Edit Deck: {deck_name[:38]}', timeout=750)
         self.deck_name = deck_name
         self.user_id = user_id
         self.card_index = card_index
@@ -150,7 +150,7 @@ class ManageDecksView(discord.ui.View):
         card_index: dict[tuple[int, int], Card],
         page: int = 0,
     ):
-        super().__init__(timeout=300)
+        super().__init__(timeout=750)
         self.user_id = user_id
         self.all_deck_names = deck_names
         self.card_index = card_index
@@ -319,7 +319,7 @@ class ViewDeckView(discord.ui.View):
         card_index: dict[tuple[int, int], Card],
         page: int = 0,
     ):
-        super().__init__(timeout=300)
+        super().__init__(timeout=750)
         self.user_id = user_id
         self.decks = decks
         self.card_index = card_index
@@ -405,7 +405,7 @@ class DeckSourceView(discord.ui.View):
         card_index: dict[tuple[int, int], Card],
         opponent_name: str = 'opponent',
     ):
-        super().__init__(timeout=600)
+        super().__init__(timeout=750)
         self.session = session
         self.player_index = player_index
         self.all_cards = all_cards
@@ -501,7 +501,7 @@ class SavedDeckSelectView(discord.ui.View):
         opponent_name: str = 'opponent',
         page: int = 0,
     ):
-        super().__init__(timeout=600)
+        super().__init__(timeout=750)
         self.session = session
         self.player_index = player_index
         self.user_id = user_id
@@ -636,7 +636,7 @@ class SavedDeckConfirmView(discord.ui.View):
         all_deck_names: list[str],
         opponent_name: str = 'opponent',
     ):
-        super().__init__(timeout=600)
+        super().__init__(timeout=750)
         self.session = session
         self.player_index = player_index
         self.user_id = user_id
@@ -695,7 +695,7 @@ class DefaultDeckSelectView(discord.ui.View):
         all_cards: list[Card],
         opponent_name: str = 'opponent',
     ):
-        super().__init__(timeout=600)
+        super().__init__(timeout=750)
         self.session = session
         self.player_index = player_index
         self.all_deck_names = deck_names
@@ -792,7 +792,7 @@ class DefaultDeckConfirmView(discord.ui.View):
         all_deck_names: list[str],
         opponent_name: str = 'opponent',
     ):
-        super().__init__(timeout=600)
+        super().__init__(timeout=750)
         self.session = session
         self.player_index = player_index
         self.deck_name = deck_name

@@ -47,7 +47,7 @@ class SwitchCardsView(discord.ui.View):
         side_deck: list[Card],
         opponent_name: str = 'opponent',
     ):
-        super().__init__(timeout=300)
+        super().__init__(timeout=750)
         self.session = session
         self.player_index = player_index
         self.main_deck = main_deck
@@ -100,7 +100,7 @@ class NoChangeConfirmView(discord.ui.View):
         side_deck: list[Card],
         opponent_name: str = 'opponent',
     ):
-        super().__init__(timeout=300)
+        super().__init__(timeout=750)
         self.session = session
         self.player_index = player_index
         self.main_deck = main_deck
@@ -147,7 +147,7 @@ class RemoveCardsView(discord.ui.View):
         side_deck: list[Card],
         opponent_name: str = 'opponent',
     ):
-        super().__init__(timeout=300)
+        super().__init__(timeout=750)
         self.session = session
         self.player_index = player_index
         self.main_deck = main_deck
@@ -254,7 +254,7 @@ class AddCardsView(discord.ui.View):
         count_needed: int,
         opponent_name: str = 'opponent',
     ):
-        super().__init__(timeout=300)
+        super().__init__(timeout=750)
         self.session = session
         self.player_index = player_index
         self.main_deck = main_deck

@@ -695,7 +695,7 @@ class EffectEngine:
         view = EffectCardSelectView(self.session, player_index, cards, placeholder=placeholder)
         await self._send_dm(player_index, content=prompt_text, view=view)
 
-        received = await self.session.wait_for_player(player_index, timeout=120.0)
+        received = await self.session.wait_for_player(player_index, timeout=300.0)
         if not received:
             return None
 
@@ -723,7 +723,7 @@ class EffectEngine:
         )
         await self._send_dm(player_index, content=prompt_text, view=view)
 
-        received = await self.session.wait_for_player(player_index, timeout=120.0)
+        received = await self.session.wait_for_player(player_index, timeout=300.0)
         if not received:
             return None
 
@@ -757,7 +757,7 @@ class EffectEngine:
         )
         await self._send_dm(player_index, content=prompt_text, view=view)
 
-        received = await self.session.wait_for_player(player_index, timeout=120.0)
+        received = await self.session.wait_for_player(player_index, timeout=300.0)
         if not received:
             return None
 
