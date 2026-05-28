@@ -139,7 +139,7 @@ class TcgMatchFlow:
                 view=view,
             )
 
-        await session.wait_for_both_players(timeout=600.0)
+        await session.wait_for_both_players(timeout=750.0)
 
         action_0 = session.pending_actions.get(0)
         action_1 = session.pending_actions.get(1)
@@ -196,7 +196,7 @@ class TcgMatchFlow:
                 view=view,
             )
 
-        await session.wait_for_both_players(timeout=300.0)
+        await session.wait_for_both_players(timeout=750.0)
 
         # Apply swaps for each player
         all_decks = [(deck_0, side_0), (deck_1, side_1)]

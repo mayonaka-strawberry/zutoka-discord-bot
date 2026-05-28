@@ -28,7 +28,7 @@ class DeckInputModal(discord.ui.Modal):
         card_index: dict[tuple[int, int], Card],
         parent_view: DeckBuilderView,
     ):
-        super().__init__(title='Deck Building [デッキ構築]', timeout=300)
+        super().__init__(title='Deck Building [デッキ構築]', timeout=750)
         self.session = session
         self.player_index = player_index
         self.card_index = card_index
@@ -67,7 +67,7 @@ class DeckBuilderView(discord.ui.View):
         all_cards: list[Card],
         opponent_name: str = 'opponent',
     ):
-        super().__init__(timeout=600)
+        super().__init__(timeout=750)
         self.session = session
         self.player_index = player_index
         self.all_cards = all_cards
