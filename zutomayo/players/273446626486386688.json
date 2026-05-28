@@ -1,23 +1,23 @@
 {
   "user_id": 273446626486386688,
-  "last_updated": "2026-05-26T15:16:07.861397+00:00",
-  "elo": 1006,
-  "elo_peak": 1016,
-  "elo_games": 10,
+  "last_updated": "2026-05-28T12:18:50.744159+00:00",
+  "elo": 1018,
+  "elo_peak": 1018,
+  "elo_games": 11,
   "stats": {
     "standard": {
-      "wins": 5,
+      "wins": 6,
       "losses": 5,
       "draws": 0
     },
     "tcg_match": {
-      "wins": 0,
-      "losses": 2,
+      "wins": 6,
+      "losses": 7,
       "draws": 0
     },
     "tcg_series": {
-      "wins": 0,
-      "losses": 1
+      "wins": 3,
+      "losses": 3
     },
     "solo_easy": {
       "wins": 0,
@@ -25,7 +25,7 @@
       "draws": 0
     },
     "solo_normal": {
-      "wins": 4,
+      "wins": 8,
       "losses": 3,
       "draws": 0
     },
@@ -42,8 +42,8 @@
           "draws": 0
         },
         "solo": {
-          "games": 3,
-          "wins": 2,
+          "games": 4,
+          "wins": 3,
           "losses": 1,
           "draws": 0
         }
@@ -84,13 +84,41 @@
           "draws": 0
         },
         "solo": {
-          "games": 3,
-          "wins": 1,
+          "games": 4,
+          "wins": 2,
           "losses": 2,
           "draws": 0
         }
       },
       "agro": {
+        "pvp": {
+          "games": 1,
+          "wins": 1,
+          "losses": 0,
+          "draws": 0
+        },
+        "solo": {
+          "games": 1,
+          "wins": 1,
+          "losses": 0,
+          "draws": 0
+        }
+      },
+      "Shade": {
+        "pvp": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        },
+        "solo": {
+          "games": 1,
+          "wins": 1,
+          "losses": 0,
+          "draws": 0
+        }
+      },
+      "obenkyo": {
         "pvp": {
           "games": 0,
           "wins": 0,
@@ -108,9 +136,37 @@
     "tcg": {
       "agro": {
         "pvp": {
-          "games": 2,
-          "wins": 0,
+          "games": 6,
+          "wins": 4,
           "losses": 2,
+          "draws": 0
+        },
+        "solo": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        }
+      },
+      "<random>": {
+        "pvp": {
+          "games": 4,
+          "wins": 0,
+          "losses": 4,
+          "draws": 0
+        },
+        "solo": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        }
+      },
+      "Shade": {
+        "pvp": {
+          "games": 3,
+          "wins": 2,
+          "losses": 1,
           "draws": 0
         },
         "solo": {
@@ -131,18 +187,28 @@
       "last_played": "2026-05-26T02:56:24.967398+00:00"
     },
     "418732188977201164": {
-      "games": 5,
-      "wins": 3,
-      "losses": 2,
+      "games": 10,
+      "wins": 7,
+      "losses": 3,
       "draws": 0,
-      "last_played": "2026-05-25T03:49:39.165274+00:00"
+      "last_played": "2026-05-27T09:14:26.064527+00:00"
     },
     "332020856312037388": {
-      "games": 2,
-      "wins": 0,
-      "losses": 2,
+      "games": 8,
+      "wins": 2,
+      "losses": 6,
       "draws": 0,
-      "last_played": "2026-05-26T15:16:06.507620+00:00"
+      "last_played": "2026-05-28T12:18:49.381321+00:00"
+    },
+    "1153600154893549599": {
+      "games": 1,
+      "wins": 1,
+      "losses": 0,
+      "draws": 0,
+      "last_played": "2026-05-28T11:41:40.641339+00:00"
     }
-  }
+  },
+  "tcg_elo": 1013,
+  "tcg_elo_peak": 1030,
+  "tcg_elo_games": 5
 }
