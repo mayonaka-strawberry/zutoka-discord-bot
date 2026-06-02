@@ -1,6 +1,6 @@
 {
   "user_id": 874800123178283009,
-  "last_updated": "2026-05-28T08:46:29.890868+00:00",
+  "last_updated": "2026-06-01T07:02:32.184904+00:00",
   "elo": 1000,
   "elo_peak": 1000,
   "elo_games": 0,
@@ -28,11 +28,11 @@
       "draws": 0
     },
     "solo_normal": {
-      "wins": 1,
-      "losses": 3,
+      "wins": 14,
+      "losses": 7,
       "draws": 0
     },
-    "forfeits_given": 0,
+    "forfeits_given": 1,
     "forfeits_received": 0
   },
   "deck_stats": {
@@ -48,6 +48,48 @@
           "games": 4,
           "wins": 1,
           "losses": 3,
+          "draws": 0
+        }
+      },
+      "ago": {
+        "pvp": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        },
+        "solo": {
+          "games": 8,
+          "wins": 6,
+          "losses": 2,
+          "draws": 0
+        }
+      },
+      "neko": {
+        "pvp": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        },
+        "solo": {
+          "games": 6,
+          "wins": 5,
+          "losses": 1,
+          "draws": 0
+        }
+      },
+      "nekoreset": {
+        "pvp": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        },
+        "solo": {
+          "games": 3,
+          "wins": 2,
+          "losses": 1,
           "draws": 0
         }
       }
