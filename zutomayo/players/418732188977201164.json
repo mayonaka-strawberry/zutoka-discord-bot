@@ -1,12 +1,12 @@
 {
   "user_id": 418732188977201164,
-  "last_updated": "2026-05-27T09:14:27.130913+00:00",
-  "elo": 963,
+  "last_updated": "2026-05-29T13:33:45.792229+00:00",
+  "elo": 982,
   "elo_peak": 1015,
-  "elo_games": 9,
+  "elo_games": 10,
   "stats": {
     "standard": {
-      "wins": 3,
+      "wins": 4,
       "losses": 6,
       "draws": 0
     },
@@ -50,8 +50,8 @@
       },
       "tuan pipebomb 2": {
         "pvp": {
-          "games": 5,
-          "wins": 1,
+          "games": 6,
+          "wins": 2,
           "losses": 4,
           "draws": 0
         },
@@ -82,11 +82,11 @@
   },
   "opponent_stats": {
     "273446626486386688": {
-      "games": 10,
-      "wins": 3,
+      "games": 11,
+      "wins": 4,
       "losses": 7,
       "draws": 0,
-      "last_played": "2026-05-27T09:14:26.064527+00:00"
+      "last_played": "2026-05-29T13:33:45.792154+00:00"
     },
     "1219421868054806671": {
       "games": 4,
