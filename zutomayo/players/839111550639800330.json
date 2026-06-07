@@ -1,0 +1,66 @@
+{
+  "user_id": 839111550639800330,
+  "last_updated": "2026-06-07T11:26:16.440320+00:00",
+  "elo": 981,
+  "elo_peak": 1000,
+  "elo_games": 1,
+  "tcg_elo": 1000,
+  "tcg_elo_peak": 1000,
+  "tcg_elo_games": 0,
+  "stats": {
+    "standard": {
+      "wins": 0,
+      "losses": 1,
+      "draws": 0
+    },
+    "tcg_match": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 0
+    },
+    "tcg_series": {
+      "wins": 0,
+      "losses": 0
+    },
+    "solo_easy": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 0
+    },
+    "solo_normal": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 0
+    },
+    "forfeits_given": 0,
+    "forfeits_received": 0
+  },
+  "deck_stats": {
+    "standard": {
+      "sisaku": {
+        "pvp": {
+          "games": 1,
+          "wins": 0,
+          "losses": 1,
+          "draws": 0
+        },
+        "solo": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        }
+      }
+    },
+    "tcg": {}
+  },
+  "opponent_stats": {
+    "1153600154893549599": {
+      "games": 1,
+      "wins": 0,
+      "losses": 1,
+      "draws": 0,
+      "last_played": "2026-06-07T11:26:16.437635+00:00"
+    }
+  }
+}
