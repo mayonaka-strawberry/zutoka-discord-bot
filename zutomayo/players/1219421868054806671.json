@@ -1,13 +1,13 @@
 {
   "user_id": 1219421868054806671,
-  "last_updated": "2026-06-08T15:12:19.437456+00:00",
-  "elo": 999,
+  "last_updated": "2026-06-10T14:30:16.283846+00:00",
+  "elo": 970,
   "elo_peak": 1071,
-  "elo_games": 23,
+  "elo_games": 25,
   "stats": {
     "standard": {
       "wins": 12,
-      "losses": 11,
+      "losses": 13,
       "draws": 0
     },
     "tcg_match": {
@@ -50,9 +50,9 @@
       },
       "<manual>": {
         "pvp": {
-          "games": 16,
+          "games": 18,
           "wins": 9,
-          "losses": 7,
+          "losses": 9,
           "draws": 0
         },
         "solo": {
@@ -124,11 +124,11 @@
   },
   "opponent_stats": {
     "273446626486386688": {
-      "games": 23,
+      "games": 25,
       "wins": 11,
-      "losses": 12,
+      "losses": 14,
       "draws": 0,
-      "last_played": "2026-06-08T15:12:19.437377+00:00"
+      "last_played": "2026-06-10T14:30:16.283766+00:00"
     },
     "418732188977201164": {
       "games": 4,
