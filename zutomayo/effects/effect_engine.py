@@ -410,6 +410,13 @@ class EffectEngine:
                 if self.turn_state.opponent_card_to_abyss.get(player.index, False):
                     should_remove = True
 
+            elif area_enchant.card.effect == '04-032':
+                # Remove (to own Abyss) immediately when the opponent has any
+                # area enchantment card on the field.
+                opponent = game_state.players[1 - player.index]
+                if opponent.set_zone_c is not None:
+                    should_remove = True
+
             elif area_enchant.card.effect == '04-033':
                 # Remove when a card is placed into your Power Charger
                 if self.turn_state.card_to_power_this_turn.get(player.index, False):
