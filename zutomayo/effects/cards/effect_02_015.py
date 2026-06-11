@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 from zutomayo.enums.attribute import Attribute
 from zutomayo.enums.card_type import CardType
 from zutomayo.enums.chronos import Chronos
-from zutomayo.enums.zone import Zone
 
 if TYPE_CHECKING:
     from zutomayo.effects.effect_engine import EffectEngine
@@ -55,9 +54,7 @@ async def effect_02_015(engine: EffectEngine, game_state: GameState, player_inde
             # Move the enchant from hand to abyss (it was used outside a set zone)
             if selected in player.hand:
                 player.hand.remove(selected)
-            selected.zone = Zone.ABYSS
-            selected.face_up = True
-            player.abyss.append(selected)
+            engine.place_in_abyss(selected, player, player_index)
             log.debug('[%s] %s: moved enchantment %s from hand to abyss', card_instance.card.effect, engine.player_label(player_index), selected.card.effect)
         else:
             log.debug('[%s] %s: no enchantment selected', card_instance.card.effect, engine.player_label(player_index))

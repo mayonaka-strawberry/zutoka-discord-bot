@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from zutomayo.enums.zone import Zone
 import logging
 
 if TYPE_CHECKING:
@@ -35,9 +34,7 @@ async def effect_04_057(
     moved_cards: list[CardInstance] = []
     for _ in range(cards_to_move):
         deck_card = opponent.deck.pop(0)
-        deck_card.zone = Zone.ABYSS
-        deck_card.face_up = True
-        opponent.abyss.append(deck_card)
+        engine.place_in_abyss(deck_card, opponent, player_index)
         moved_cards.append(deck_card)
 
     moved_names = ', '.join(moved_card.card.name for moved_card in moved_cards)

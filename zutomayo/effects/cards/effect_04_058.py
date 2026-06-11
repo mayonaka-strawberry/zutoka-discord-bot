@@ -1,7 +1,6 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 from zutomayo.enums.attribute import Attribute
-from zutomayo.enums.zone import Zone
 import logging
 
 if TYPE_CHECKING:
@@ -46,9 +45,7 @@ async def effect_04_058(
 
     # Move selected card from hand to abyss
     player.hand.remove(selected_card)
-    selected_card.zone = Zone.ABYSS
-    selected_card.face_up = True
-    player.abyss.append(selected_card)
+    engine.place_in_abyss(selected_card, player, player_index)
 
     await engine._send_dm(player_index, content=f'**Effect (04-058):** Placed {selected_card.card.name} into the Abyss.')
     await engine._send_dm(opponent_index, content=f'**Effect (04-058):** Opponent placed {selected_card.card.name} into their Abyss.')

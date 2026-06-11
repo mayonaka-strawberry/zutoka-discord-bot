@@ -41,7 +41,15 @@ class TurnEffectState:
     midnight_extended: bool = False
     end_of_turn_damage: dict[int, int] = field(default_factory=lambda: {0: 0, 1: 0})
     opponent_card_to_abyss: dict[int, bool] = field(default_factory=lambda: {0: False, 1: False})
+    # Keyed by the abyss owner: that player's abyss received a card this turn,
+    # regardless of who caused the placement (location-based trigger, 04-030).
+    # opponent_card_to_abyss is the agent-based counterpart (03-055, 03-091):
+    # keyed by the watcher, true when the watcher's opponent performed a placement.
+    abyss_received_card: dict[int, bool] = field(default_factory=lambda: {0: False, 1: False})
     battle_damage: dict[int, int] = field(default_factory=lambda: {0: 0, 1: 0})
+    # Keyed by the loser: lost the battle this turn even if damage reduction
+    # brought the battle damage to 0 (04-095 removal).
+    battle_lost: dict[int, bool] = field(default_factory=lambda: {0: False, 1: False})
     swapped_from_songs: dict[int, set] = field(default_factory=lambda: {0: set(), 1: set()})
     damage_not_reducible: dict[int, bool] = field(default_factory=lambda: {0: False, 1: False})
     card_to_power_this_turn: dict[int, bool] = field(default_factory=lambda: {0: False, 1: False})
@@ -97,6 +105,36 @@ class EffectEngine:
         elif not old_is_night and new_is_night:
             self.turn_state.day_to_night_occurred = True
         game_state.chronos = new_value
+
+    def place_in_abyss(self, card_instance: CardInstance, abyss_owner: Player, actor_index: int) -> None:
+        """
+        Move a card into a player's Abyss.
+
+        Every Abyss placement must go through here so the placement triggers
+        fire correctly: abyss_received_card records whose abyss got the card
+        (04-030), opponent_card_to_abyss records who performed the placement
+        (03-055, 03-091). actor_index is the player whose action caused the
+        placement, which is not always the abyss owner (e.g. mill effects).
+        """
+        from zutomayo.enums.zone import Zone
+        card_instance.attribute_override = None
+        card_instance.zone = Zone.ABYSS
+        card_instance.face_up = True
+        abyss_owner.abyss.append(card_instance)
+        self.turn_state.abyss_received_card[abyss_owner.index] = True
+        self.turn_state.opponent_card_to_abyss[1 - actor_index] = True
+
+    def on_area_enchant_leaves_play(self, game_state: GameState, area_enchant: CardInstance, owner_index: int) -> None:
+        """
+        Clean up persistent state tied to an area enchant when it leaves the
+        field. Must be called on every removal path (printed removal
+        condition, owner replacing it, or an opponent's effect removing it).
+        """
+        if area_enchant.card.effect == '03-055':
+            # 03-055 blocks the opponent only while it is in play
+            opponent = game_state.players[1 - owner_index]
+            opponent.area_enchant_blocked = False
+            log.debug('[03-055] left play — unblocking %s area enchant placement', self.player_label(opponent.index))
 
 
     # ------------------------------------------------------------------
@@ -406,8 +444,10 @@ class EffectEngine:
                     should_remove = True
 
             elif area_enchant.card.effect == '04-030':
-                # Remove when a card is placed in the opponent's Abyss
-                if self.turn_state.opponent_card_to_abyss.get(player.index, False):
+                # Remove when a card is placed in the opponent's Abyss.
+                # Location-based trigger (JP: 置かれた, passive): fires no
+                # matter who caused the placement.
+                if self.turn_state.abyss_received_card.get(1 - player.index, False):
                     should_remove = True
 
             elif area_enchant.card.effect == '04-032':
@@ -442,8 +482,10 @@ class EffectEngine:
                     should_remove = True
 
             elif area_enchant.card.effect == '04-095':
-                # Remove when player loses a battle (immediately)
-                if self.turn_state.battle_damage.get(player.index, 0) > 0:
+                # Remove when player loses a battle (immediately). Keyed on the
+                # loss itself, not battle damage: damage reduction can bring
+                # the damage to 0 while the battle is still lost.
+                if self.turn_state.battle_lost.get(player.index, False):
                     should_remove = True
 
             if should_remove:
@@ -452,12 +494,13 @@ class EffectEngine:
                     self.player_label(player.index), area_enchant.card.effect, area_enchant.card.name,
                 )
                 player.set_zone_c = None
-                # Reset area enchant block if 03-055 is removed
-                if area_enchant.card.effect == '03-055':
-                    opponent = game_state.players[1 - player.index]
-                    opponent.area_enchant_blocked = False
-                    log.debug('%s: unblocking opponent %s area enchant placement', self.player_label(player.index), self.player_label(opponent.index))
-                turn_manager.move_to_power_or_abyss(area_enchant, player)
+                self.on_area_enchant_leaves_play(game_state, area_enchant, player.index)
+                if area_enchant.card.effect == '04-030':
+                    # Card text sends this card to the Abyss despite its
+                    # SEND TO POWER star, so bypass the send_to_power routing.
+                    self.place_in_abyss(area_enchant, player, player.index)
+                else:
+                    turn_manager.move_to_power_or_abyss(area_enchant, player)
 
     def save_battle_characters(self, game_state: GameState) -> None:
         """Snapshot current battle zone characters for next turn (used by effect 02-010)."""
