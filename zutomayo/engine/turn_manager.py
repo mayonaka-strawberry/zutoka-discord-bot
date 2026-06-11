@@ -23,11 +23,7 @@ class TurnManager:
             # Track that a card went to this player's power charger (for effect 04-033 removal)
             self.effect_engine.turn_state.card_to_power_this_turn[player.index] = True
         else:
-            card_instance.zone = Zone.ABYSS
-            card_instance.face_up = True
-            player.abyss.append(card_instance)
-            # Track that this player sent a card to abyss (for effect 03-055 removal)
-            self.effect_engine.turn_state.opponent_card_to_abyss[1 - player.index] = True
+            self.effect_engine.place_in_abyss(card_instance, player, player.index)
 
     def advance_chronos(self, player: Player) -> int:
         total_clock = 0
@@ -169,6 +165,7 @@ class TurnManager:
             old_area_enchant = player.set_zone_c
             self.move_to_power_or_abyss(old_area_enchant, player)
             player.set_zone_c = None
+            self.effect_engine.on_area_enchant_leaves_play(self.game_state, old_area_enchant, player.index)
 
         new_area_enchant.zone = Zone.SET_ZONE_C
         new_area_enchant.face_up = True
@@ -228,6 +225,10 @@ class TurnManager:
         # Store battle damage in turn state (for effect 03-058 removal)
         self.effect_engine.turn_state.battle_damage[0] = result['damage_to_0']
         self.effect_engine.turn_state.battle_damage[1] = result['damage_to_1']
+        # Track the loss itself (for effect 04-095 removal): damage reduction
+        # can bring battle damage to 0 even though the battle was lost.
+        if result['winner'] is not None:
+            self.effect_engine.turn_state.battle_lost[1 - result['winner']] = True
 
         return result
 

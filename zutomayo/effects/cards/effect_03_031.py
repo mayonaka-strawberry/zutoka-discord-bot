@@ -1,7 +1,6 @@
 from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
-from zutomayo.enums.zone import Zone
 
 if TYPE_CHECKING:
     from zutomayo.effects.effect_engine import EffectEngine
@@ -38,9 +37,7 @@ async def effect_03_031(engine: EffectEngine, game_state: GameState, player_inde
 
     # Move selected card from hand to Abyss
     player.hand.remove(selected)
-    selected.zone = Zone.ABYSS
-    selected.face_up = True
-    player.abyss.append(selected)
+    engine.place_in_abyss(selected, player, player_index)
     log.debug('[%s] %s: moved %s from hand to abyss (hand size=%d, abyss size=%d)', card_instance.card.effect, engine.player_label(player_index), selected.card.name, len(player.hand), len(player.abyss))
 
     # Draw a card from the deck

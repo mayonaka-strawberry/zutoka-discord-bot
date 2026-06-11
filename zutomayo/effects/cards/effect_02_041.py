@@ -35,7 +35,5 @@ async def effect_02_041(engine: EffectEngine, game_state: GameState, player_inde
         player.power_charger.append(top_card)
         log.debug('[%s] %s: top card %s has STP=%d, placed on power charger', card_instance.card.effect, engine.player_label(player_index), top_card.card.effect, top_card.card.send_to_power)
     else:
-        top_card.zone = Zone.ABYSS
-        top_card.face_up = True
-        player.abyss.append(top_card)
+        engine.place_in_abyss(top_card, player, player_index)
         log.debug('[%s] %s: top card %s has no power, placed on abyss', card_instance.card.effect, engine.player_label(player_index), top_card.card.effect)

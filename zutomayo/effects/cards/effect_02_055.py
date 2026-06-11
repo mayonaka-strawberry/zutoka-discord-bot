@@ -34,4 +34,5 @@ async def effect_02_055(engine: EffectEngine, game_state: GameState, player_inde
     area_enchant.zone = Zone.DECK
     area_enchant.face_up = False
     opponent.deck.insert(0, area_enchant)
+    engine.on_area_enchant_leaves_play(game_state, area_enchant, 1 - player_index)
     log.debug('[%s] %s: moved opponent area enchantment %s to top of opponent deck', card_instance.card.effect, engine.player_label(player_index), area_enchant.card.effect)

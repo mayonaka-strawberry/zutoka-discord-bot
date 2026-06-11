@@ -66,9 +66,7 @@ async def effect_01_086(
 
     # Perform the swap
     player.hand.remove(hand_selection)
-    hand_selection.zone = Zone.ABYSS
-    hand_selection.face_up = True
-    player.abyss.append(hand_selection)
+    engine.place_in_abyss(hand_selection, player, player_index)
 
     player.abyss.remove(abyss_selection)
     abyss_selection.zone = Zone.HAND
