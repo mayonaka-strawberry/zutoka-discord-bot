@@ -5,6 +5,7 @@ import pkgutil
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Coroutine, Optional
 from constants import CHRONOS_SIZE, MIDNIGHT, NIGHT_END
+from zutomayo.data.name_storage import resolve_display_name
 from zutomayo.enums.card_type import CardType
 from zutomayo.utils.discord_utils import send_with_retry
 from zutomayo.enums.chronos import Chronos
@@ -89,10 +90,8 @@ class EffectEngine:
         label = f'P{player_index}'
         if self.session is not None and self.bot is not None:
             discord_id = self.session.get_discord_id(player_index)
-            if discord_id is not None:
-                user = self.bot.get_user(discord_id)
-                if user is not None:
-                    label = f'P{player_index} ({user.display_name})'
+            if discord_id:  # falsy 0 is the solo-mode bot sentinel
+                label = f'P{player_index} ({resolve_display_name(self.bot, discord_id)})'
         self._player_name_cache[player_index] = label
         return label
 
@@ -718,10 +717,8 @@ class EffectEngine:
         player_name = game_state.players[player_index].name
         if self.session is not None:
             discord_id = self.session.get_discord_id(player_index)
-            if discord_id is not None and self.bot is not None:
-                user = self.bot.get_user(discord_id)
-                if user is not None:
-                    player_name = user.display_name
+            if discord_id:  # falsy 0 is the solo-mode bot sentinel
+                player_name = resolve_display_name(self.bot, discord_id)
         card_word = 'card' if count == 1 else 'cards'
         msg = f'**{player_name}** drew **{count}** {card_word}.'
         await self._send_to_channel(content=msg)

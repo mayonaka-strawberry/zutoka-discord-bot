@@ -3,6 +3,13 @@ import logging
 import discord
 from discord import app_commands
 from discord.ext import commands
+from zutomayo.data.name_storage import (
+    MAXIMUM_CUSTOM_NAME_LENGTH,
+    clear_custom_name,
+    ensure_display_names,
+    remember_user,
+    set_custom_name,
+)
 from zutomayo.data.player_storage import (
     BOT_DISCORD_ID,
     iter_all_profiles,
@@ -33,6 +40,17 @@ class GameCog(commands.Cog):
         self.bot = bot
 
     group = app_commands.Group(name='zutomayo', description='ZUTOMAYO CARD game commands')
+
+    @commands.Cog.listener('on_interaction')
+    async def capture_interaction_user_name(self, interaction: discord.Interaction) -> None:
+        """
+        Record the acting user's name on every interaction. Interaction payloads
+        carry the user regardless of gateway intents, so this replaces the member
+        cache that the (removed) privileged members intent used to fill.
+        """
+        if interaction.user is None or interaction.user.bot:
+            return
+        remember_user(interaction.user.id, interaction.user.global_name or interaction.user.name)
 
     @group.command(name='create', description='Create a new ZUTOMAYO CARD game')
     @app_commands.guild_only()
@@ -462,44 +480,87 @@ class GameCog(commands.Cog):
         )
 
     @group.command(
+        name='editname',
+        description='Set the name shown in games and leaderboards (leave empty to revert to your Discord name)',
+    )
+    @app_commands.describe(name=f'Your new display name (max {MAXIMUM_CUSTOM_NAME_LENGTH} characters)')
+    async def edit_name(self, interaction: discord.Interaction, name: str | None = None) -> None:
+        if name is None or not name.strip():
+            clear_custom_name(interaction.user.id)
+            remember_user(interaction.user.id, interaction.user.global_name or interaction.user.name)
+            await interaction.response.send_message(
+                'Your display name now follows your Discord name again.', ephemeral=True,
+            )
+            return
+
+        name = name.strip()
+        if len(name) > MAXIMUM_CUSTOM_NAME_LENGTH:
+            await interaction.response.send_message(
+                f'Display name must be {MAXIMUM_CUSTOM_NAME_LENGTH} characters or fewer.', ephemeral=True,
+            )
+            return
+
+        set_custom_name(interaction.user.id, name)
+        await interaction.response.send_message(
+            f'Your display name is now **{name}**.', ephemeral=True,
+        )
+
+    @group.command(
         name='profilestats',
         description='Show your own ZUTOMAYO CARD player profile (Elo, win/loss, top decks, top rivals)',
     )
     async def profile_stats(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
         profile = load_profile(interaction.user.id)
+        rival_ids = [
+            int(opponent_id_str)
+            for opponent_id_str in profile.get('opponent_stats', {})
+            if opponent_id_str.isdigit()
+        ]
+        await ensure_display_names(self.bot, rival_ids)
         embed = build_profile_embed(self.bot, interaction.user, profile)
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @group.command(
         name='leaderboard',
         description='Show the server leaderboard ranked by Elo rating',
     )
     async def leaderboard(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
         ranked_rows = [
             profile for profile in iter_all_profiles()
             if profile.get('elo_games', 0) >= LEADERBOARD_MINIMUM_GAMES
             and profile.get('user_id') != BOT_DISCORD_ID
         ]
         ranked_rows.sort(key=lambda profile: profile.get('elo', 1000), reverse=True)
+        await ensure_display_names(
+            self.bot,
+            [row['user_id'] for row in ranked_rows[:10]] + [interaction.user.id],
+        )
 
         embed = build_leaderboard_embed(
             self.bot,
             ranked_rows,
             interaction.user.id,
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @group.command(
         name='leaderboardtcg',
         description='Show the server leaderboard ranked by TCG Elo rating',
     )
     async def leaderboard_tcg(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
         ranked_rows = [
             profile for profile in iter_all_profiles()
             if profile.get('tcg_elo_games', 0) >= LEADERBOARD_MINIMUM_GAMES
             and profile.get('user_id') != BOT_DISCORD_ID
         ]
         ranked_rows.sort(key=lambda profile: profile.get('tcg_elo', 1000), reverse=True)
+        await ensure_display_names(
+            self.bot,
+            [row['user_id'] for row in ranked_rows[:10]] + [interaction.user.id],
+        )
 
         embed = build_leaderboard_embed(
             self.bot,
@@ -511,7 +572,7 @@ class GameCog(commands.Cog):
             record_stats_bucket='tcg_series',
             empty_message='No ranked players yet. Finish a TCG series with `/zutomayo createtcg` to appear here.',
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @staticmethod
     def _record_forfeit_for_session(session, quitter_id: int) -> None:

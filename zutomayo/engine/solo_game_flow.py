@@ -22,6 +22,7 @@ from zutomayo.engine.bot_agent import (
     load_random_best_deck_v2, load_random_best_deck_v2_easy,
     load_random_saved_deck,
 )
+from zutomayo.data.name_storage import resolve_display_name
 from zutomayo.engine.bot_effect_engine import BotEffectEngine, BOT_PLAYER_INDEX
 from zutomayo.engine.game_flow import GameFlow
 from zutomayo.ui.embeds import (
@@ -75,8 +76,7 @@ class SoloGameFlow(GameFlow):
         # Human player
         human_discord_id = session.get_discord_id(HUMAN_PLAYER_INDEX)
         if human_discord_id is not None:
-            user = self.bot.get_user(human_discord_id)
-            names[HUMAN_PLAYER_INDEX] = user.display_name if user else str(human_discord_id)
+            names[HUMAN_PLAYER_INDEX] = resolve_display_name(self.bot, human_discord_id)
         # Bot player
         names[BOT_PLAYER_INDEX] = BOT_NAME
         return names
