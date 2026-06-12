@@ -11,6 +11,8 @@ from typing import Optional
 
 import discord
 
+from zutomayo.data.name_storage import resolve_display_name
+
 
 def _format_win_rate(wins: int, losses: int) -> str:
     """Win-rate over decided games only. Draws excluded from both numerator and denominator."""
@@ -74,17 +76,6 @@ def _top_rivals(opponent_stats: dict, limit: int = 10) -> list[tuple[str, int, i
         ))
     flat.sort(key=lambda row: (row[1], row[4]), reverse=True)
     return [(row[0], row[1], row[2], row[3]) for row in flat[:limit]]
-
-
-def _short_user_fallback(user_id: int) -> str:
-    return f'User#{str(user_id)[-4:]}'
-
-
-def _resolve_username(bot: discord.Client, user_id: int) -> str:
-    user = bot.get_user(user_id)
-    if user is not None:
-        return user.display_name
-    return _short_user_fallback(user_id)
 
 
 def build_profile_embed(
@@ -197,7 +188,7 @@ def build_profile_embed(
                 opponent_id = int(opponent_id_str)
             except (TypeError, ValueError):
                 continue
-            name = _resolve_username(bot, opponent_id)
+            name = resolve_display_name(bot, opponent_id)
             lines.append(f'{index}. {name}  —  {games} games   {_format_record(wins, losses)}')
         if lines:
             embed.add_field(
@@ -256,7 +247,7 @@ def build_leaderboard_embed(
         record_bucket = stats.get(record_stats_bucket, {})
         record_wins = record_bucket.get('wins', 0)
         record_losses = record_bucket.get('losses', 0)
-        name = _resolve_username(bot, row['user_id'])
+        name = resolve_display_name(bot, row['user_id'])
         suffix = ' (you)' if row['user_id'] == caller_id else ''
         elo = row.get(elo_field, 1000)
         elo_games = row.get(elo_games_field, 0)

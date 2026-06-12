@@ -8,6 +8,7 @@ from zutomayo.enums.chronos import Chronos
 from zutomayo.enums.phase import Phase
 from zutomayo.enums.result import Result
 from zutomayo.enums.zone import Zone
+from zutomayo.data.name_storage import resolve_display_name
 from zutomayo.ui.embeds import (
     build_battle_result_embed,
     build_effect_resolution_embed,
@@ -37,8 +38,7 @@ class GameFlow:
     def _player_names(self, session: GameSession) -> dict[int, str]:
         names = {}
         for discord_id, index in session.player_discord_ids.items():
-            user = self.bot.get_user(discord_id)
-            names[index] = user.display_name if user else str(discord_id)
+            names[index] = resolve_display_name(self.bot, discord_id)
         return names
 
     async def _get_dm_channel(self, discord_id: int) -> discord.DMChannel:
