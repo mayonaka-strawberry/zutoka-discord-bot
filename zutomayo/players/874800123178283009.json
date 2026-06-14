@@ -1,6 +1,6 @@
 {
   "user_id": 874800123178283009,
-  "last_updated": "2026-06-01T07:02:32.184904+00:00",
+  "last_updated": "2026-06-14T15:53:29.041360+00:00",
   "elo": 1000,
   "elo_peak": 1000,
   "elo_games": 0,
@@ -28,8 +28,8 @@
       "draws": 0
     },
     "solo_normal": {
-      "wins": 14,
-      "losses": 7,
+      "wins": 19,
+      "losses": 9,
       "draws": 0
     },
     "forfeits_given": 1,
@@ -90,6 +90,20 @@
           "games": 3,
           "wins": 2,
           "losses": 1,
+          "draws": 0
+        }
+      },
+      "studyme": {
+        "pvp": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        },
+        "solo": {
+          "games": 7,
+          "wins": 5,
+          "losses": 2,
           "draws": 0
         }
       }
