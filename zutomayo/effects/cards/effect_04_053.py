@@ -2,7 +2,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from zutomayo.enums.card_type import CardType
 from zutomayo.enums.song import Song
-from zutomayo.enums.zone import Zone
 import logging
 
 if TYPE_CHECKING:
@@ -51,9 +50,7 @@ async def effect_04_053(
 
     # Move selected card from hand to power charger
     player.hand.remove(selected_card)
-    selected_card.zone = Zone.POWER_CHARGER
-    selected_card.face_up = True
-    player.power_charger.append(selected_card)
+    engine.place_in_power_charger(selected_card, player, player_index)
 
     await engine._send_dm(player_index, content=f'**Effect (04-053):** Placed {selected_card.card.name} on the Power Charger.')
     await engine._send_dm(opponent_index, content=f'**Effect (04-053):** Opponent placed {selected_card.card.name} on their Power Charger.')

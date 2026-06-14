@@ -1,7 +1,6 @@
 from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
-from zutomayo.enums.zone import Zone
 from zutomayo.ui.embeds import card_detail_description, create_deck_grid_image
 
 if TYPE_CHECKING:
@@ -47,19 +46,13 @@ async def effect_03_097(engine: EffectEngine, game_state: GameState, player_inde
     if top_card.card.power_cost >= 6:
         log.debug('[%s] %s: power cost %d >= 6, moving to power charger', card_instance.card.effect, engine.player_label(player_index), top_card.card.power_cost)
         opponent.deck.pop(0)
-        top_card.zone = Zone.POWER_CHARGER
-        top_card.face_up = True
-        top_card.attribute_override = None
-        opponent.power_charger.append(top_card)
+        engine.place_in_power_charger(top_card, opponent, player_index)
         log.debug('[%s] %s: moved %s to opponent power charger', card_instance.card.effect, engine.player_label(player_index), top_card.card.name)
         # 厳戒態勢 itself goes to Power Charger when this condition is met
         # (despite having no SEND TO POWER, per Q&A rules)
         if player.set_zone_c is card_instance:
             player.set_zone_c = None
-            card_instance.zone = Zone.POWER_CHARGER
-            card_instance.face_up = True
-            card_instance.attribute_override = None
-            player.power_charger.append(card_instance)
+            engine.place_in_power_charger(card_instance, player, player_index)
             log.debug('[%s] %s: self-destructed area enchant to power charger', card_instance.card.effect, engine.player_label(player_index))
         msg = f'**Effect (03-097):** Power cost {top_card.card.power_cost} >= 6. Card placed on Power Charger. 厳戒態勢 also sent to Power Charger.'
     else:

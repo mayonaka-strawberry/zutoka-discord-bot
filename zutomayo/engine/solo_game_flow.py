@@ -423,7 +423,7 @@ class SoloGameFlow(GameFlow):
         # Phase 4: Character swap
         game_state.current_phase = Phase.CHARACTER_SWAP
         for player in game_state.players:
-            turn_manager.do_character_swap(player)
+            await turn_manager.do_character_swap(player)
 
         turn_manager.effect_engine.check_area_enchant_removal(game_state, turn_manager)
 
