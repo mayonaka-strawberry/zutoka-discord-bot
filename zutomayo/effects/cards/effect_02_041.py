@@ -2,7 +2,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 from zutomayo.enums.attribute import Attribute
-from zutomayo.enums.zone import Zone
 
 if TYPE_CHECKING:
     from zutomayo.effects.effect_engine import EffectEngine
@@ -30,9 +29,7 @@ async def effect_02_041(engine: EffectEngine, game_state: GameState, player_inde
 
     top_card = player.deck.pop(0)
     if top_card.card.send_to_power > 0:
-        top_card.zone = Zone.POWER_CHARGER
-        top_card.face_up = True
-        player.power_charger.append(top_card)
+        engine.place_in_power_charger(top_card, player, player_index)
         log.debug('[%s] %s: top card %s has STP=%d, placed on power charger', card_instance.card.effect, engine.player_label(player_index), top_card.card.effect, top_card.card.send_to_power)
     else:
         engine.place_in_abyss(top_card, player, player_index)

@@ -38,6 +38,11 @@ class TurnEffectState:
     damage_reduction: dict[int, int] = field(default_factory=lambda: {0: 0, 1: 0})
     day_night_reversed: dict[int, bool] = field(default_factory=lambda: {0: False, 1: False})
     power_bonus: dict[int, int] = field(default_factory=lambda: {0: 0, 1: 0})
+    # Keyed by the charger owner: the owner placed a character card on their
+    # own Power Charger this turn (02-058 removal). Like card_to_power_this_turn
+    # this is an agent-based trigger (JP: 置いた, active voice), so placements
+    # caused by the opponent's effects do not set it. Set via
+    # EffectEngine.place_in_power_charger.
     character_to_power_this_turn: dict[int, bool] = field(default_factory=lambda: {0: False, 1: False})
     midnight_extended: bool = False
     end_of_turn_damage: dict[int, int] = field(default_factory=lambda: {0: 0, 1: 0})
@@ -53,6 +58,9 @@ class TurnEffectState:
     battle_lost: dict[int, bool] = field(default_factory=lambda: {0: False, 1: False})
     swapped_from_songs: dict[int, set] = field(default_factory=lambda: {0: set(), 1: set()})
     damage_not_reducible: dict[int, bool] = field(default_factory=lambda: {0: False, 1: False})
+    # Keyed by the charger owner: the owner placed a card on their own Power
+    # Charger this turn (04-033 removal). Agent-based trigger (JP: 置いた,
+    # active voice). Set via EffectEngine.place_in_power_charger.
     card_to_power_this_turn: dict[int, bool] = field(default_factory=lambda: {0: False, 1: False})
     attack_override: dict[int, int | None] = field(default_factory=lambda: {0: None, 1: None})
     reflect_reduction: dict[int, bool] = field(default_factory=lambda: {0: False, 1: False})
@@ -61,6 +69,11 @@ class TurnEffectState:
     # occurred at any point during this turn (even if later reverted).
     day_to_night_occurred: bool = False
     night_to_day_occurred: bool = False
+    # Keyed by player: how much that player's cards advanced the chronos during
+    # the Advance Chronos phase (after 02-005/03-061 adjustments). Snapshot for
+    # effects that reference "the opponent's clock this turn" (01-026), which
+    # resolve after played cards have moved between zones.
+    chronos_advanced: dict[int, int] = field(default_factory=lambda: {0: 0, 1: 0})
 
 
 @dataclass
@@ -122,6 +135,28 @@ class EffectEngine:
         abyss_owner.abyss.append(card_instance)
         self.turn_state.abyss_received_card[abyss_owner.index] = True
         self.turn_state.opponent_card_to_abyss[1 - actor_index] = True
+
+    def place_in_power_charger(self, card_instance: CardInstance, charger_owner: Player, actor_index: int) -> None:
+        """
+        Move a card onto a player's Power Charger.
+
+        Every Power Charger placement must go through here so the placement
+        triggers fire correctly: card_to_power_this_turn (04-033 removal) and
+        character_to_power_this_turn (02-058 removal). Both cards use active
+        voice (JP: 置いた, "you placed"), so the flags are only set when the
+        actor is the charger owner — placements forced by the opponent's
+        effects (e.g. 04-006, 03-097's mill) do not count. actor_index is the
+        player whose action caused the placement.
+        """
+        from zutomayo.enums.zone import Zone
+        card_instance.attribute_override = None
+        card_instance.zone = Zone.POWER_CHARGER
+        card_instance.face_up = True
+        charger_owner.power_charger.append(card_instance)
+        if actor_index == charger_owner.index:
+            self.turn_state.card_to_power_this_turn[charger_owner.index] = True
+            if card_instance.card.card_type == CardType.CHARACTER:
+                self.turn_state.character_to_power_this_turn[charger_owner.index] = True
 
     def on_area_enchant_leaves_play(self, game_state: GameState, area_enchant: CardInstance, owner_index: int) -> None:
         """

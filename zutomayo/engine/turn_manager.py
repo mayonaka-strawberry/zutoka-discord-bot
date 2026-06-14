@@ -15,13 +15,8 @@ class TurnManager:
         self.effect_engine = effect_engine
 
     def move_to_power_or_abyss(self, card_instance: CardInstance, player: Player) -> None:
-        card_instance.attribute_override = None
         if card_instance.card.send_to_power > 0:
-            card_instance.zone = Zone.POWER_CHARGER
-            card_instance.face_up = True
-            player.power_charger.append(card_instance)
-            # Track that a card went to this player's power charger (for effect 04-033 removal)
-            self.effect_engine.turn_state.card_to_power_this_turn[player.index] = True
+            self.effect_engine.place_in_power_charger(card_instance, player, player.index)
         else:
             self.effect_engine.place_in_abyss(card_instance, player, player.index)
 
@@ -48,6 +43,9 @@ class TurnManager:
                 self.effect_engine.turn_state.day_to_night_occurred = True
 
         self.game_state.chronos = (self.game_state.chronos + total_clock) % CHRONOS_SIZE
+        # Snapshot this player's contribution for effects that reference
+        # "the opponent's clock this turn" after cards have changed zones (01-026)
+        self.effect_engine.turn_state.chronos_advanced[player.index] = total_clock
         return total_clock
 
     def get_cards_played_this_turn(self, player: Player) -> list[CardInstance]:
@@ -102,7 +100,7 @@ class TurnManager:
         modifier = self.effect_engine.apply_attack_modifier(self.game_state, player.index)
         return max(0, base + modifier)
 
-    def do_character_swap(self, player: Player) -> None:
+    async def do_character_swap(self, player: Player) -> None:
         new_character = None
         # Set zone A has priority for character swap
         if player.set_zone_a and player.set_zone_a.card.card_type == CardType.CHARACTER:
@@ -113,22 +111,31 @@ class TurnManager:
         if new_character is None:
             return
 
-        # Check if 02-062 is active — skip character swap
+        # 02-062 grants a permission (変えなくてもよい): the owner may skip the
+        # character swap, but does not have to. Ask the player; timeout keeps
+        # the current battle character (the likely intent of playing the card).
         for zone_attr in ('set_zone_a', 'set_zone_b'):
             card_instance = getattr(player, zone_attr)
             if card_instance is not None and card_instance.card.effect == '02-062' and card_instance.played_this_turn:
                 effective_cost = self.effect_engine.get_effective_power_cost(card_instance, player)
                 if player.total_power >= effective_cost:
-                    return
+                    selection = await self.effect_engine._prompt_number_selection(
+                        player.index, 0, 1,
+                        prompt_text=(
+                            f'**Effect (02-062):** You may skip swapping {new_character.card.name} '
+                            f'into the Battle Zone. 1 = skip the swap, 0 = swap normally.'
+                        ),
+                        placeholder='Skip the character swap?',
+                    )
+                    if selection is None or selection == 1:
+                        return
+                break
 
         if player.battle_zone is not None:
             old_character = player.battle_zone
             # Track the song of the swapped-out character (for effects 04-023, 04-024)
             self.effect_engine.turn_state.swapped_from_songs[player.index].add(old_character.card.song)
             self.move_to_power_or_abyss(old_character, player)
-            # Track if a character was sent to power charger (for 02-058 removal)
-            if old_character.card.send_to_power > 0:
-                self.effect_engine.turn_state.character_to_power_this_turn[player.index] = True
             player.battle_zone = None
 
         new_character.zone = Zone.BATTLE_ZONE

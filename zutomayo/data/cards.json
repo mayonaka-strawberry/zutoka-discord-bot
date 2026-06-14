@@ -2295,7 +2295,7 @@
       "power_cost": 5,
       "send_to_power": 1,
       "effect": "02-015",
-      "effect_text": "If the attribute of the character card used in the previous turn is darkness and it is now daytime, you may use an additional enchantment from your hand only the first time you use this card. Then draw a card.",
+      "effect_text": "If the attribute of the character card used in the previous turn is darkness and it is now daytime, you may use an additional enchantment from your hand. Then draw a card.",
       "effect_text_jp": "前のターンで使用したキャラクターカードの属性が闇で、今が昼なら手札からエンチャントを追加で1枚使っても良い。その後、カードを1枚引く",
       "rarity": "SR"
     },

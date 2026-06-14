@@ -134,11 +134,10 @@ async def effect_04_006(
     # Perform the swap
     old_battle_character = opponent.battle_zone
 
-    # Move old battle zone character to power charger (swap, regardless of send_to_power)
-    old_battle_character.attribute_override = None
-    old_battle_character.zone = Zone.POWER_CHARGER
-    old_battle_character.face_up = True
-    opponent.power_charger.append(old_battle_character)
+    # Move old battle zone character to power charger (swap, regardless of send_to_power).
+    # The placement is caused by this player's effect, so the opponent's own
+    # 02-058/04-033 active-voice triggers do not fire.
+    engine.place_in_power_charger(old_battle_character, opponent, player_index)
 
     # Move selected power charger character to battle zone (effects disabled)
     opponent.power_charger.remove(selected_power_character)

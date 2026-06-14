@@ -23,6 +23,8 @@ async def effect_04_032(
     Note: the printed effect text says "immediately place it into the Abyss",
     where "it" refers to THIS card, not the opponent's Area Enchantment
     (per the Japanese text, same self-removal pattern as 03-061).
+    Ruling re-confirmed as intended on 2026-06-12, including the timing where
+    the immediate removal can fire before this card's reveal/+50 resolves.
 
     Self-removal is handled in check_area_enchant_removal().
     """

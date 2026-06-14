@@ -15,6 +15,8 @@ async def effect_02_062(engine: EffectEngine, game_state: GameState, player_inde
     """
     Character cards played at the same time do not have to be changed.
 
-    Actual logic is handled in TurnManager.do_character_swap() before effects are processed.
+    This is a permission, not an obligation: TurnManager.do_character_swap()
+    prompts the owner whether to skip the swap (timeout defaults to skipping).
+    Handled there, before effects are processed.
     """
     log.debug('[%s] %s: passive effect, checked elsewhere', card_instance.card.effect, engine.player_label(player_index))

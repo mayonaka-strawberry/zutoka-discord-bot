@@ -580,7 +580,7 @@ class GameFlow:
         # Phase 4: Character swap
         game_state.current_phase = Phase.CHARACTER_SWAP
         for player in game_state.players:
-            turn_manager.do_character_swap(player)
+            await turn_manager.do_character_swap(player)
 
         # Immediate area enchant removal check after character swap
         # (e.g. 晩餐会 removed when opponent character costs 4+)

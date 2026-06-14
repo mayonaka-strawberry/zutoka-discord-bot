@@ -1,7 +1,6 @@
 from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
-from zutomayo.enums.zone import Zone
 from zutomayo.ui.embeds import card_detail_description, create_deck_grid_image
 
 if TYPE_CHECKING:
@@ -56,10 +55,7 @@ async def effect_03_103(engine: EffectEngine, game_state: GameState, player_inde
         # Self-destruct: move this area enchant to the owner's Power Charger
         log.debug('[%s] %s: revealed card has SEND TO POWER, self-destructing area enchant to power charger', card_instance.card.effect, engine.player_label(player_index))
         player.set_zone_c = None
-        card_instance.zone = Zone.POWER_CHARGER
-        card_instance.face_up = True
-        card_instance.attribute_override = None
-        player.power_charger.append(card_instance)
+        engine.place_in_power_charger(card_instance, player, player_index)
         log.debug('[%s] %s: area enchant moved to power charger', card_instance.card.effect, engine.player_label(player_index))
         await engine._send_dm(player_index, content='**Effect (03-103):** Revealed card has SEND TO POWER. This card is placed on the Power Charger.')
         await engine._send_dm(opponent_index, content="**Effect (03-103):** Revealed card has SEND TO POWER. Opponent's area enchant sent to Power Charger.")
