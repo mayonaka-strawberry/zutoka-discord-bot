@@ -1,6 +1,6 @@
 {
   "user_id": 874800123178283009,
-  "last_updated": "2026-06-14T15:53:29.041360+00:00",
+  "last_updated": "2026-06-15T08:37:57.131349+00:00",
   "elo": 1000,
   "elo_peak": 1000,
   "elo_games": 0,
@@ -28,11 +28,11 @@
       "draws": 0
     },
     "solo_normal": {
-      "wins": 19,
+      "wins": 24,
       "losses": 9,
       "draws": 0
     },
-    "forfeits_given": 1,
+    "forfeits_given": 2,
     "forfeits_received": 0
   },
   "deck_stats": {
@@ -45,8 +45,8 @@
           "draws": 0
         },
         "solo": {
-          "games": 4,
-          "wins": 1,
+          "games": 8,
+          "wins": 5,
           "losses": 3,
           "draws": 0
         }
@@ -101,8 +101,8 @@
           "draws": 0
         },
         "solo": {
-          "games": 7,
-          "wins": 5,
+          "games": 8,
+          "wins": 6,
           "losses": 2,
           "draws": 0
         }

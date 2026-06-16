@@ -1,0 +1,115 @@
+{
+  "user_id": 673566733818396673,
+  "last_updated": "2026-06-16T00:57:52.861929+00:00",
+  "elo": 995,
+  "elo_peak": 1000,
+  "elo_games": 7,
+  "tcg_elo": 1000,
+  "tcg_elo_peak": 1000,
+  "tcg_elo_games": 0,
+  "stats": {
+    "standard": {
+      "wins": 3,
+      "losses": 4,
+      "draws": 0
+    },
+    "tcg_match": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 0
+    },
+    "tcg_series": {
+      "wins": 0,
+      "losses": 0
+    },
+    "solo_easy": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 0
+    },
+    "solo_normal": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 0
+    },
+    "forfeits_given": 0,
+    "forfeits_received": 0
+  },
+  "deck_stats": {
+    "standard": {
+      "<default>Wave 1+2 Deck": {
+        "pvp": {
+          "games": 1,
+          "wins": 0,
+          "losses": 1,
+          "draws": 0
+        },
+        "solo": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        }
+      },
+      "<default>Kinox": {
+        "pvp": {
+          "games": 5,
+          "wins": 2,
+          "losses": 3,
+          "draws": 0
+        },
+        "solo": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        }
+      },
+      "<default>Wave 1+2 Deck V2.0": {
+        "pvp": {
+          "games": 1,
+          "wins": 1,
+          "losses": 0,
+          "draws": 0
+        },
+        "solo": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        }
+      }
+    },
+    "tcg": {}
+  },
+  "opponent_stats": {
+    "273446626486386688": {
+      "games": 1,
+      "wins": 0,
+      "losses": 1,
+      "draws": 0,
+      "last_played": "2026-06-15T02:19:03.187028+00:00"
+    },
+    "332020856312037388": {
+      "games": 3,
+      "wins": 2,
+      "losses": 1,
+      "draws": 0,
+      "last_played": "2026-06-16T00:57:52.860541+00:00"
+    },
+    "1219421868054806671": {
+      "games": 1,
+      "wins": 0,
+      "losses": 1,
+      "draws": 0,
+      "last_played": "2026-06-15T02:56:58.923968+00:00"
+    },
+    "1153600154893549599": {
+      "games": 2,
+      "wins": 1,
+      "losses": 1,
+      "draws": 0,
+      "last_played": "2026-06-15T13:49:32.327482+00:00"
+    }
+  }
+}
