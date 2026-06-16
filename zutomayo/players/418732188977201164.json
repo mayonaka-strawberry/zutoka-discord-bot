@@ -1,12 +1,12 @@
 {
   "user_id": 418732188977201164,
-  "last_updated": "2026-06-05T12:11:36.389787+00:00",
-  "elo": 982,
+  "last_updated": "2026-06-15T14:35:46.582923+00:00",
+  "elo": 1000,
   "elo_peak": 1015,
-  "elo_games": 10,
+  "elo_games": 11,
   "stats": {
     "standard": {
-      "wins": 4,
+      "wins": 5,
       "losses": 6,
       "draws": 0
     },
@@ -36,8 +36,8 @@
     "standard": {
       "obenkyo": {
         "pvp": {
-          "games": 4,
-          "wins": 2,
+          "games": 5,
+          "wins": 3,
           "losses": 2,
           "draws": 0
         },
@@ -82,11 +82,11 @@
   },
   "opponent_stats": {
     "273446626486386688": {
-      "games": 11,
-      "wins": 4,
+      "games": 12,
+      "wins": 5,
       "losses": 7,
       "draws": 0,
-      "last_played": "2026-05-29T13:33:45.792154+00:00"
+      "last_played": "2026-06-15T14:35:46.582850+00:00"
     },
     "1219421868054806671": {
       "games": 4,
