@@ -1,0 +1,43 @@
+{
+  "user_id": 1207531440787558440,
+  "last_updated": "2026-06-16T03:55:45.175476+00:00",
+  "elo": 1000,
+  "elo_peak": 1000,
+  "elo_games": 0,
+  "tcg_elo": 1000,
+  "tcg_elo_peak": 1000,
+  "tcg_elo_games": 0,
+  "stats": {
+    "standard": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 0
+    },
+    "tcg_match": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 0
+    },
+    "tcg_series": {
+      "wins": 0,
+      "losses": 0
+    },
+    "solo_easy": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 0
+    },
+    "solo_normal": {
+      "wins": 0,
+      "losses": 0,
+      "draws": 0
+    },
+    "forfeits_given": 1,
+    "forfeits_received": 0
+  },
+  "deck_stats": {
+    "standard": {},
+    "tcg": {}
+  },
+  "opponent_stats": {}
+}
