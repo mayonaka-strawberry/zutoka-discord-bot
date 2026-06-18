@@ -1,13 +1,13 @@
 {
   "user_id": 332020856312037388,
-  "last_updated": "2026-06-16T00:57:52.860616+00:00",
-  "elo": 1028,
+  "last_updated": "2026-06-18T12:05:59.352952+00:00",
+  "elo": 1014,
   "elo_peak": 1068,
-  "elo_games": 12,
+  "elo_games": 15,
   "stats": {
     "standard": {
-      "wins": 7,
-      "losses": 5,
+      "wins": 8,
+      "losses": 7,
       "draws": 0
     },
     "tcg_match": {
@@ -29,16 +29,16 @@
       "losses": 0,
       "draws": 0
     },
-    "forfeits_given": 1,
+    "forfeits_given": 5,
     "forfeits_received": 1
   },
   "deck_stats": {
     "standard": {
       "techno v2 tanks tuan": {
         "pvp": {
-          "games": 1,
+          "games": 2,
           "wins": 0,
-          "losses": 1,
+          "losses": 2,
           "draws": 0
         },
         "solo": {
@@ -50,8 +50,8 @@
       },
       "<manual>": {
         "pvp": {
-          "games": 10,
-          "wins": 7,
+          "games": 11,
+          "wins": 8,
           "losses": 3,
           "draws": 0
         },
@@ -77,6 +77,20 @@
         }
       },
       "nekoreset": {
+        "pvp": {
+          "games": 1,
+          "wins": 0,
+          "losses": 1,
+          "draws": 0
+        },
+        "solo": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        }
+      },
+      "<default>Starter STUDY ME (\u304a\u52c9\u5f37\u3057\u3068\u3044\u3066\u3088) [STD-1]": {
         "pvp": {
           "games": 1,
           "wins": 0,
@@ -124,11 +138,11 @@
   },
   "opponent_stats": {
     "273446626486386688": {
-      "games": 22,
-      "wins": 13,
-      "losses": 9,
+      "games": 25,
+      "wins": 14,
+      "losses": 11,
       "draws": 0,
-      "last_played": "2026-06-15T15:08:47.554125+00:00"
+      "last_played": "2026-06-18T12:05:59.352878+00:00"
     },
     "673566733818396673": {
       "games": 3,
