@@ -1,22 +1,22 @@
 {
   "user_id": 273446626486386688,
-  "last_updated": "2026-06-18T16:18:15.775641+00:00",
-  "elo": 1041,
+  "last_updated": "2026-06-20T14:25:25.628342+00:00",
+  "elo": 1019,
   "elo_peak": 1070,
-  "elo_games": 41,
+  "elo_games": 49,
   "stats": {
     "standard": {
-      "wins": 23,
-      "losses": 18,
+      "wins": 27,
+      "losses": 22,
       "draws": 0
     },
     "tcg_match": {
-      "wins": 15,
-      "losses": 13,
+      "wins": 17,
+      "losses": 14,
       "draws": 0
     },
     "tcg_series": {
-      "wins": 7,
+      "wins": 8,
       "losses": 5
     },
     "solo_easy": {
@@ -25,11 +25,11 @@
       "draws": 0
     },
     "solo_normal": {
-      "wins": 17,
-      "losses": 8,
+      "wins": 19,
+      "losses": 9,
       "draws": 0
     },
-    "forfeits_given": 2,
+    "forfeits_given": 3,
     "forfeits_received": 2
   },
   "deck_stats": {
@@ -42,17 +42,17 @@
           "draws": 0
         },
         "solo": {
-          "games": 5,
-          "wins": 4,
+          "games": 6,
+          "wins": 5,
           "losses": 1,
           "draws": 0
         }
       },
       "<manual>": {
         "pvp": {
-          "games": 11,
-          "wins": 4,
-          "losses": 7,
+          "games": 14,
+          "wins": 6,
+          "losses": 8,
           "draws": 0
         },
         "solo": {
@@ -92,9 +92,9 @@
       },
       "agro": {
         "pvp": {
-          "games": 1,
+          "games": 3,
           "wins": 1,
-          "losses": 0,
+          "losses": 2,
           "draws": 0
         },
         "solo": {
@@ -126,16 +126,16 @@
           "draws": 0
         },
         "solo": {
-          "games": 4,
-          "wins": 4,
+          "games": 5,
+          "wins": 5,
           "losses": 0,
           "draws": 0
         }
       },
       "kaiba": {
         "pvp": {
-          "games": 0,
-          "wins": 0,
+          "games": 1,
+          "wins": 1,
           "losses": 0,
           "draws": 0
         },
@@ -148,9 +148,9 @@
       },
       "4 attrib": {
         "pvp": {
-          "games": 7,
+          "games": 8,
           "wins": 4,
-          "losses": 3,
+          "losses": 4,
           "draws": 0
         },
         "solo": {
@@ -210,9 +210,23 @@
           "draws": 0
         },
         "solo": {
-          "games": 1,
+          "games": 2,
           "wins": 0,
-          "losses": 1,
+          "losses": 2,
+          "draws": 0
+        }
+      },
+      "pure study": {
+        "pvp": {
+          "games": 1,
+          "wins": 1,
+          "losses": 0,
+          "draws": 0
+        },
+        "solo": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
           "draws": 0
         }
       }
@@ -234,9 +248,9 @@
       },
       "<random>": {
         "pvp": {
-          "games": 6,
-          "wins": 2,
-          "losses": 4,
+          "games": 9,
+          "wins": 4,
+          "losses": 5,
           "draws": 0
         },
         "solo": {
@@ -292,11 +306,11 @@
   },
   "opponent_stats": {
     "1219421868054806671": {
-      "games": 26,
-      "wins": 14,
-      "losses": 12,
+      "games": 29,
+      "wins": 16,
+      "losses": 13,
       "draws": 0,
-      "last_played": "2026-06-15T11:11:23.285469+00:00"
+      "last_played": "2026-06-20T03:11:27.828018+00:00"
     },
     "418732188977201164": {
       "games": 12,
@@ -306,18 +320,18 @@
       "last_played": "2026-06-15T14:35:46.582850+00:00"
     },
     "332020856312037388": {
-      "games": 25,
-      "wins": 11,
-      "losses": 14,
+      "games": 29,
+      "wins": 13,
+      "losses": 16,
       "draws": 0,
-      "last_played": "2026-06-18T12:05:59.352878+00:00"
+      "last_played": "2026-06-20T13:45:02.496044+00:00"
     },
     "1153600154893549599": {
-      "games": 1,
+      "games": 2,
       "wins": 1,
-      "losses": 0,
+      "losses": 1,
       "draws": 0,
-      "last_played": "2026-05-28T11:41:40.641339+00:00"
+      "last_played": "2026-06-19T11:09:22.356798+00:00"
     },
     "599157396031668238": {
       "games": 2,
@@ -327,14 +341,21 @@
       "last_played": "2026-06-14T14:10:43.039361+00:00"
     },
     "673566733818396673": {
-      "games": 3,
-      "wins": 3,
+      "games": 5,
+      "wins": 4,
+      "losses": 1,
+      "draws": 0,
+      "last_played": "2026-06-20T14:17:32.805266+00:00"
+    },
+    "1207531440787558440": {
+      "games": 1,
+      "wins": 1,
       "losses": 0,
       "draws": 0,
-      "last_played": "2026-06-17T13:28:20.026069+00:00"
+      "last_played": "2026-06-20T04:19:35.333541+00:00"
     }
   },
-  "tcg_elo": 1047,
-  "tcg_elo_peak": 1047,
-  "tcg_elo_games": 11
+  "tcg_elo": 1060,
+  "tcg_elo_peak": 1060,
+  "tcg_elo_games": 12
 }

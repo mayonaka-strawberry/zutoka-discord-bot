@@ -1,13 +1,13 @@
 {
   "user_id": 1219421868054806671,
-  "last_updated": "2026-06-15T11:11:23.287190+00:00",
-  "elo": 991,
+  "last_updated": "2026-06-20T03:11:27.828090+00:00",
+  "elo": 985,
   "elo_peak": 1071,
-  "elo_games": 28,
+  "elo_games": 31,
   "stats": {
     "standard": {
-      "wins": 14,
-      "losses": 14,
+      "wins": 15,
+      "losses": 16,
       "draws": 0
     },
     "tcg_match": {
@@ -50,9 +50,9 @@
       },
       "<manual>": {
         "pvp": {
-          "games": 19,
+          "games": 21,
           "wins": 9,
-          "losses": 10,
+          "losses": 12,
           "draws": 0
         },
         "solo": {
@@ -64,8 +64,8 @@
       },
       "uniguri nekoreset": {
         "pvp": {
-          "games": 3,
-          "wins": 3,
+          "games": 4,
+          "wins": 4,
           "losses": 0,
           "draws": 0
         },
@@ -124,11 +124,11 @@
   },
   "opponent_stats": {
     "273446626486386688": {
-      "games": 26,
-      "wins": 12,
-      "losses": 14,
+      "games": 29,
+      "wins": 13,
+      "losses": 16,
       "draws": 0,
-      "last_played": "2026-06-15T11:11:23.285469+00:00"
+      "last_played": "2026-06-20T03:11:27.828018+00:00"
     },
     "418732188977201164": {
       "games": 4,
