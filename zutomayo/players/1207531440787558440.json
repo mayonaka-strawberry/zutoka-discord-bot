@@ -1,16 +1,16 @@
 {
   "user_id": 1207531440787558440,
-  "last_updated": "2026-06-16T03:55:45.175476+00:00",
-  "elo": 1000,
+  "last_updated": "2026-06-20T04:19:35.333613+00:00",
+  "elo": 984,
   "elo_peak": 1000,
-  "elo_games": 0,
+  "elo_games": 1,
   "tcg_elo": 1000,
   "tcg_elo_peak": 1000,
   "tcg_elo_games": 0,
   "stats": {
     "standard": {
       "wins": 0,
-      "losses": 0,
+      "losses": 1,
       "draws": 0
     },
     "tcg_match": {
@@ -36,8 +36,31 @@
     "forfeits_received": 0
   },
   "deck_stats": {
-    "standard": {},
+    "standard": {
+      "Remove cards": {
+        "pvp": {
+          "games": 1,
+          "wins": 0,
+          "losses": 1,
+          "draws": 0
+        },
+        "solo": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        }
+      }
+    },
     "tcg": {}
   },
-  "opponent_stats": {}
+  "opponent_stats": {
+    "273446626486386688": {
+      "games": 1,
+      "wins": 0,
+      "losses": 1,
+      "draws": 0,
+      "last_played": "2026-06-20T04:19:35.333541+00:00"
+    }
+  }
 }
