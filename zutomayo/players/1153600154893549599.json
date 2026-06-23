@@ -1,13 +1,13 @@
 {
   "user_id": 1153600154893549599,
-  "last_updated": "2026-06-20T14:25:25.630539+00:00",
-  "elo": 996,
+  "last_updated": "2026-06-22T03:01:58.201610+00:00",
+  "elo": 980,
   "elo_peak": 1000,
-  "elo_games": 15,
+  "elo_games": 16,
   "stats": {
     "standard": {
       "wins": 6,
-      "losses": 9,
+      "losses": 10,
       "draws": 0
     },
     "tcg_match": {
@@ -25,11 +25,11 @@
       "draws": 0
     },
     "solo_normal": {
-      "wins": 2,
+      "wins": 5,
       "losses": 1,
       "draws": 0
     },
-    "forfeits_given": 3,
+    "forfeits_given": 6,
     "forfeits_received": 2
   },
   "deck_stats": {
@@ -112,8 +112,8 @@
           "draws": 0
         },
         "solo": {
-          "games": 0,
-          "wins": 0,
+          "games": 1,
+          "wins": 1,
           "losses": 0,
           "draws": 0
         }
@@ -131,6 +131,34 @@
           "losses": 0,
           "draws": 0
         }
+      },
+      "<default>Wave 1+2 V2.0": {
+        "pvp": {
+          "games": 1,
+          "wins": 0,
+          "losses": 1,
+          "draws": 0
+        },
+        "solo": {
+          "games": 1,
+          "wins": 1,
+          "losses": 0,
+          "draws": 0
+        }
+      },
+      "<default>Kinox": {
+        "pvp": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        },
+        "solo": {
+          "games": 1,
+          "wins": 1,
+          "losses": 0,
+          "draws": 0
+        }
       }
     },
     "tcg": {}
@@ -144,11 +172,11 @@
       "last_played": "2026-05-27T02:20:56.680217+00:00"
     },
     "273446626486386688": {
-      "games": 2,
+      "games": 3,
       "wins": 1,
-      "losses": 1,
+      "losses": 2,
       "draws": 0,
-      "last_played": "2026-06-19T11:09:22.356798+00:00"
+      "last_played": "2026-06-22T03:01:58.201535+00:00"
     },
     "1219421868054806671": {
       "games": 3,
