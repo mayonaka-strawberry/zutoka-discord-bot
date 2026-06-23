@@ -233,6 +233,7 @@ zutomayo/engine/search_agent_v3.py
 zutomayo/engine/uniguri_env_v3.py
 zutomayo/engine/replay_buffer_v3.py
 zutomayo/engine/self_play_workers.py
+zutomayo/engine/batched_evaluator_v3.py
 zutomayo/engine/deploy_v3.py
 zutomayo/optimization/
 # Offline driver scripts
