@@ -231,10 +231,14 @@ zutomayo/engine/mcts_v3.py
 zutomayo/engine/rl_model_v3.py
 zutomayo/engine/search_agent_v3.py
 zutomayo/engine/uniguri_env_v3.py
+zutomayo/engine/replay_buffer_v3.py
+zutomayo/engine/self_play_workers.py
+zutomayo/engine/deploy_v3.py
 zutomayo/optimization/
 # Offline driver scripts
 train_uniguri_v3.py
 optimize_decks_coevolution.py
+distill_uniguri_v3.py
 test_game_fork_v3.py
 # Generated artifacts
 zutomayo/models_trained_v3/
