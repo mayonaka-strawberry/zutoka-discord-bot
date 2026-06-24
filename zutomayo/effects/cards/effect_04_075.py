@@ -21,8 +21,7 @@ async def effect_04_075(
     opponent = game_state.players[opponent_index]
 
     if Song.SHADE in engine.turn_state.swapped_from_songs.get(player_index, set()):
-        opponent.hp = max(0, opponent.hp - 20)
-        log.debug('[%s] %s: opponent HP -20 (now %d)', card_instance.card.effect, engine.player_label(player_index), opponent.hp)
+        engine.deal_damage(game_state, opponent_index, 20, source=card_instance.card.effect)
         await engine._send_dm(player_index, content="**Effect (04-075):** Swapped with a SHADE character this turn. Opponent's HP -20!")
         await engine._send_dm(opponent_index, content='**Effect (04-075):** Opponent swapped with a SHADE character. Your HP -20.')
     else:

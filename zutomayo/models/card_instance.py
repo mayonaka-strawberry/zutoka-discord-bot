@@ -15,7 +15,8 @@ class CardInstance:
     face_up: bool = False
     played_this_turn: bool = False
     effects_disabled: bool = False
-    # Transient per-turn reduction applied by effect 02-006
+    # Transient per-turn reduction applied by effects 02-006 / 04-065 (they
+    # stack); reset each turn by TurnManager.reset_turn_flags
     power_cost_reduction: int = 0
     # Persistent attribute override applied by effect 02-084; cleared when card leaves battle zone
     attribute_override: Optional[Attribute] = None

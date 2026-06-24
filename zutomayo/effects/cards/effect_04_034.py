@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from zutomayo.enums.chronos import Chronos
 import logging
 
 if TYPE_CHECKING:
@@ -20,33 +19,9 @@ async def effect_04_034(
     opponent_index = 1 - player_index
     opponent = game_state.players[opponent_index]
 
-    # Calculate opponent's effective attack power
-    opponent_attack = 0
-    if opponent.battle_zone is not None:
-        effective_cost = engine.get_effective_power_cost(opponent.battle_zone, opponent)
-        total_power = opponent.total_power + engine.turn_state.power_bonus.get(opponent_index, 0)
-
-        if total_power >= effective_cost:
-            opponent_card = opponent.battle_zone.card
-            # Determine base attack considering day/night modifiers
-            force_day = engine.should_force_day_attack(game_state, opponent_index)
-            reversed_day_night = engine.should_reverse_day_night(game_state, opponent_index)
-
-            if force_day:
-                base_attack = opponent_card.attack_day
-            elif reversed_day_night:
-                if game_state.day_night == Chronos.NIGHT:
-                    base_attack = opponent_card.attack_day
-                else:
-                    base_attack = opponent_card.attack_night
-            else:
-                if game_state.day_night == Chronos.NIGHT:
-                    base_attack = opponent_card.attack_night
-                else:
-                    base_attack = opponent_card.attack_day
-
-            modifier = engine.turn_state.attack_bonus.get(opponent_index, 0)
-            opponent_attack = max(0, base_attack + modifier)
+    # Use the engine's single source of truth so 04-099's attack_override and
+    # the power-cost gate are honored (not a hand-rolled calculation).
+    opponent_attack = engine.get_effective_attack(game_state, opponent)
 
     if opponent_attack == 0:
         engine.turn_state.attack_bonus[player_index] += 30

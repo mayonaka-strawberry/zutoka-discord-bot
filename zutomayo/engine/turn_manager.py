@@ -1,7 +1,6 @@
 from constants import CHRONOS_SIZE, NIGHT_END
 from zutomayo.effects.effect_engine import EffectEngine
 from zutomayo.enums.card_type import CardType
-from zutomayo.enums.chronos import Chronos
 from zutomayo.enums.result import Result
 from zutomayo.enums.zone import Zone
 from zutomayo.models.card_instance import CardInstance
@@ -65,40 +64,10 @@ class TurnManager:
         return cards
 
     def get_attack_power(self, player: Player) -> int:
-        if player.battle_zone is None:
-            return 0
-
-        # Effect 04-099: attack override takes precedence over all other calculations
-        override = self.effect_engine.turn_state.attack_override.get(player.index)
-        if override is not None:
-            return override
-        card = player.battle_zone.card
-        effective_cost = self.effect_engine.get_effective_power_cost(player.battle_zone, player)
-        total_power = player.total_power + self.effect_engine.turn_state.power_bonus.get(player.index, 0)
-        if total_power < effective_cost:
-            return 0
-
-        # Determine which attack value to use
-        force_day = self.effect_engine.should_force_day_attack(self.game_state, player.index)
-        reversed_dn = self.effect_engine.should_reverse_day_night(self.game_state, player.index)
-
-        if force_day:
-            # 02-007: always use day attack
-            base = card.attack_day
-        elif reversed_dn:
-            # 01-005: opponent reversed our day/night
-            if self.game_state.day_night == Chronos.NIGHT:
-                base = card.attack_day
-            else:
-                base = card.attack_night
-        else:
-            if self.game_state.day_night == Chronos.NIGHT:
-                base = card.attack_night
-            else:
-                base = card.attack_day
-
-        modifier = self.effect_engine.apply_attack_modifier(self.game_state, player.index)
-        return max(0, base + modifier)
+        # Delegates to the single source of truth on the effect engine, which
+        # honors 04-099's attack_override, the power-cost gate, and day/night
+        # modifiers. Effects (04-034, 04-039) use the same method.
+        return self.effect_engine.get_effective_attack(self.game_state, player)
 
     async def do_character_swap(self, player: Player) -> None:
         new_character = None
@@ -232,6 +201,10 @@ class TurnManager:
         # Store battle damage in turn state (for effect 03-058 removal)
         self.effect_engine.turn_state.battle_damage[0] = result['damage_to_0']
         self.effect_engine.turn_state.battle_damage[1] = result['damage_to_1']
+        # Also accumulate into total damage taken this turn (battle + effect),
+        # used by 03-058/03-085's ">=30 damage taken" self-removal threshold.
+        self.effect_engine.turn_state.damage_taken_this_turn[0] += result['damage_to_0']
+        self.effect_engine.turn_state.damage_taken_this_turn[1] += result['damage_to_1']
         # Track the loss itself (for effect 04-095 removal): damage reduction
         # can bring battle damage to 0 even though the battle was lost.
         if result['winner'] is not None:
