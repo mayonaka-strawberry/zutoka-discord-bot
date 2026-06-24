@@ -1,6 +1,6 @@
 {
   "user_id": 1207531440787558440,
-  "last_updated": "2026-06-23T17:35:51.974425+00:00",
+  "last_updated": "2026-06-24T14:03:08.339081+00:00",
   "elo": 967,
   "elo_peak": 1000,
   "elo_games": 7,
@@ -32,7 +32,7 @@
       "losses": 1,
       "draws": 0
     },
-    "forfeits_given": 2,
+    "forfeits_given": 3,
     "forfeits_received": 0
   },
   "deck_stats": {

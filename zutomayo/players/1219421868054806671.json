@@ -1,6 +1,6 @@
 {
   "user_id": 1219421868054806671,
-  "last_updated": "2026-06-23T13:59:58.151535+00:00",
+  "last_updated": "2026-06-24T08:26:05.439588+00:00",
   "elo": 1005,
   "elo_peak": 1071,
   "elo_games": 38,
@@ -21,7 +21,7 @@
     },
     "solo_easy": {
       "wins": 1,
-      "losses": 1,
+      "losses": 2,
       "draws": 0
     },
     "solo_normal": {
@@ -42,9 +42,9 @@
           "draws": 0
         },
         "solo": {
-          "games": 10,
+          "games": 11,
           "wins": 6,
-          "losses": 4,
+          "losses": 5,
           "draws": 0
         }
       },
