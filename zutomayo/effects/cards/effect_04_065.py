@@ -27,7 +27,10 @@ async def effect_04_065(
 
     if (player.battle_zone is not None
             and player.battle_zone.card.song == Song.STUDY_ME):
-        player.battle_zone.power_cost_reduction = 2
+        # Accumulate so this stacks with 02-006 on the same character
+        # (power_cost_reduction is reset each turn, so this cannot grow
+        # unbounded across turns).
+        player.battle_zone.power_cost_reduction += 2
         log.debug('[%s] %s: power cost reduction set to %d', card_instance.card.effect, engine.player_label(player_index), 2)
         await engine._send_dm(
             player_index,

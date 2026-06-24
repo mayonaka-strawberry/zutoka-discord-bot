@@ -33,25 +33,25 @@ async def effect_04_010(
         log.debug('[%s] %s: early return, skipping effect', card_instance.card.effect, engine.player_label(player_index))
         return
 
-    reveal_count = await engine._prompt_number_selection(
+    # Let the player choose WHICH characters to reveal, not just how many —
+    # the revealed identities are shown to the opponent, so the choice matters.
+    revealed_cards = await engine._prompt_card_multiselect(
         player_index,
-        min_value=0,
-        max_value=len(taidada_characters),
-        prompt_text=f'**Effect (04-010):** You have {len(taidada_characters)} TAIDADA character(s) in hand. How many do you want to reveal?',
-        placeholder='Select number to reveal...',
+        taidada_characters,
+        prompt_text=f'**Effect (04-010):** You have {len(taidada_characters)} TAIDADA character(s) in hand. Choose which to reveal (Attack +20 each).',
+        placeholder='Select TAIDADA characters to reveal...',
     )
-    log.debug('[%s] %s: number selection result: %s', card_instance.card.effect, engine.player_label(player_index), reveal_count)
+    log.debug('[%s] %s: reveal selection result: %s', card_instance.card.effect, engine.player_label(player_index), revealed_cards)
 
-    if not reveal_count:
+    if not revealed_cards:
         await engine._send_dm(player_index, content='**Effect (04-010):** No effect.')
         log.debug('[%s] %s: early return, skipping effect', card_instance.card.effect, engine.player_label(player_index))
         return
 
+    reveal_count = len(revealed_cards)
     attack_bonus = 20 * reveal_count
     engine.turn_state.attack_bonus[player_index] += attack_bonus
     log.debug('[%s] %s: attack bonus +%d (now %d)', card_instance.card.effect, engine.player_label(player_index), attack_bonus, engine.turn_state.attack_bonus[player_index])
-
-    revealed_cards = taidada_characters[:reveal_count]
     revealed_names = ', '.join(hand_card.card.name for hand_card in revealed_cards)
     player_msg = f'**Effect (04-010):** Revealed {reveal_count} TAIDADA character(s): {revealed_names}. Attack +{attack_bonus}!'
     opponent_msg = f'**Effect (04-010):** Opponent revealed {reveal_count} TAIDADA character(s): {revealed_names}.'

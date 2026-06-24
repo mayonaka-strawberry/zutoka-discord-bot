@@ -17,8 +17,6 @@ async def effect_02_050(engine: EffectEngine, game_state: GameState, player_inde
     player = game_state.players[player_index]
     opponent = game_state.players[1 - player_index]
     if any(card_instance.card.attribute == Attribute.ELECTRICITY for card_instance in player.abyss):
-        old_hp = opponent.hp
-        opponent.hp = max(0, opponent.hp - 20)
-        log.debug('[%s] %s: electric card in abyss, opponent HP -%d (from %d to %d)', card_instance.card.effect, engine.player_label(player_index), old_hp - opponent.hp, old_hp, opponent.hp)
+        engine.deal_damage(game_state, opponent.index, 20, source=card_instance.card.effect)
     else:
         log.debug('[%s] %s: no electric card in abyss, no HP reduction', card_instance.card.effect, engine.player_label(player_index))

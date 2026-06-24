@@ -53,6 +53,11 @@ class TurnEffectState:
     # keyed by the watcher, true when the watcher's opponent performed a placement.
     abyss_received_card: dict[int, bool] = field(default_factory=lambda: {0: False, 1: False})
     battle_damage: dict[int, int] = field(default_factory=lambda: {0: 0, 1: 0})
+    # Keyed by the damaged player: total damage taken this turn from all
+    # sources (battle + effect), used by 03-058/03-085's ">=30 damage taken"
+    # self-removal. battle_damage tracks combat only; this accumulates every
+    # damage application via EffectEngine.deal_damage and the battle resolver.
+    damage_taken_this_turn: dict[int, int] = field(default_factory=lambda: {0: 0, 1: 0})
     # Keyed by the loser: lost the battle this turn even if damage reduction
     # brought the battle damage to 0 (04-095 removal).
     battle_lost: dict[int, bool] = field(default_factory=lambda: {0: False, 1: False})
@@ -118,6 +123,27 @@ class EffectEngine:
             self.turn_state.day_to_night_occurred = True
         game_state.chronos = new_value
 
+    def deal_damage(self, game_state: GameState, player_index: int, amount: int, *, source: str = '') -> None:
+        """
+        Deal damage to a player's HP and record it for the turn.
+
+        Every effect-damage application should go through here so the damage
+        counts toward 03-058/03-085's ">=30 damage taken" self-removal
+        (damage_taken_this_turn). Battle damage is recorded separately by the
+        battle resolver, which also feeds damage_taken_this_turn.
+        """
+        if amount <= 0:
+            return
+        player = game_state.players[player_index]
+        old_hp = player.hp
+        player.hp = max(0, player.hp - amount)
+        self.turn_state.damage_taken_this_turn[player_index] += amount
+        log.debug(
+            '%s%s: damage %d (HP %d -> %d)',
+            f'[{source}] ' if source else '', self.player_label(player_index),
+            amount, old_hp, player.hp,
+        )
+
     def place_in_abyss(self, card_instance: CardInstance, abyss_owner: Player, actor_index: int) -> None:
         """
         Move a card into a player's Abyss.
@@ -130,6 +156,7 @@ class EffectEngine:
         """
         from zutomayo.enums.zone import Zone
         card_instance.attribute_override = None
+        card_instance.effects_disabled = False
         card_instance.zone = Zone.ABYSS
         card_instance.face_up = True
         abyss_owner.abyss.append(card_instance)
@@ -150,6 +177,7 @@ class EffectEngine:
         """
         from zutomayo.enums.zone import Zone
         card_instance.attribute_override = None
+        card_instance.effects_disabled = False
         card_instance.zone = Zone.POWER_CHARGER
         card_instance.face_up = True
         charger_owner.power_charger.append(card_instance)
@@ -232,6 +260,51 @@ class EffectEngine:
     def apply_attack_modifier(self, game_state: GameState, player_index: int) -> int:
         return self.turn_state.attack_bonus.get(player_index, 0)
 
+    def get_effective_attack(self, game_state: GameState, player: Player) -> int:
+        """
+        Compute a battle character's effective attack power.
+
+        Single source of truth for attack: used by battle resolution
+        (TurnManager.get_attack_power) and by effects that test the opponent's
+        attack (04-034, 04-039). Honors 04-099's attack_override, the power-cost
+        gate, and day/night modifiers (02-007 force-day, 01-005 reversal).
+        Returns 0 when there is no battle character or the power cost is unmet.
+        """
+        if player.battle_zone is None:
+            return 0
+
+        # Effect 04-099: attack override takes precedence over all other calculations
+        override = self.turn_state.attack_override.get(player.index)
+        if override is not None:
+            return override
+
+        card = player.battle_zone.card
+        effective_cost = self.get_effective_power_cost(player.battle_zone, player)
+        total_power = player.total_power + self.turn_state.power_bonus.get(player.index, 0)
+        if total_power < effective_cost:
+            return 0
+
+        force_day = self.should_force_day_attack(game_state, player.index)
+        reversed_day_night = self.should_reverse_day_night(game_state, player.index)
+
+        if force_day:
+            # 02-007: always use day attack
+            base = card.attack_day
+        elif reversed_day_night:
+            # 01-005: opponent reversed our day/night
+            if game_state.day_night == Chronos.NIGHT:
+                base = card.attack_day
+            else:
+                base = card.attack_night
+        else:
+            if game_state.day_night == Chronos.NIGHT:
+                base = card.attack_night
+            else:
+                base = card.attack_day
+
+        modifier = self.apply_attack_modifier(game_state, player.index)
+        return max(0, base + modifier)
+
     def apply_damage_reduction(self, game_state: GameState, player_index: int) -> int:
         return self.turn_state.damage_reduction.get(player_index, 0)
 
@@ -290,68 +363,65 @@ class EffectEngine:
 
     def process_end_of_turn_effects(self, game_state: GameState) -> None:
         """Apply end-of-turn effects (e.g. 03-027 damage, 03-058 healing/removal)."""
-        from zutomayo.enums.zone import Zone
-
         log.debug('Processing end-of-turn effects')
 
-        # Effect 03-085: check removal (>=30 damage), then advance clock if daytime
-        for player in game_state.players:
-            area_enchant = player.set_zone_c
-            if area_enchant is not None and area_enchant.card.effect == '03-085':
-                damage = self.turn_state.battle_damage.get(player.index, 0)
-                if damage >= 30:
-                    log.debug('[03-085] %s: removing — took %d damage (>= 30)', self.player_label(player.index), damage)
-                    player.set_zone_c = None
-                    area_enchant.zone = Zone.ABYSS
-                    area_enchant.face_up = True
-                    area_enchant.attribute_override = None
-                    player.abyss.append(area_enchant)
-                elif game_state.day_night == Chronos.DAY:
-                    log.debug('[03-085] %s: daytime — advancing clock by 2', self.player_label(player.index))
-                    self.set_chronos(game_state, (game_state.chronos + 2) % CHRONOS_SIZE)
-
-        # Effect 03-058: check removal first (>=30 damage), then heal if still active
-        for player in game_state.players:
-            area_enchant = player.set_zone_c
-            if area_enchant is not None and area_enchant.card.effect == '03-058':
-                damage = self.turn_state.battle_damage.get(player.index, 0)
-                if damage >= 30:
-                    log.debug('[03-058] %s: removing — took %d damage (>= 30)', self.player_label(player.index), damage)
-                    # Remove to abyss (forced, regardless of send_to_power)
-                    player.set_zone_c = None
-                    area_enchant.zone = Zone.ABYSS
-                    area_enchant.face_up = True
-                    area_enchant.attribute_override = None
-                    player.abyss.append(area_enchant)
-
-        # Effect 03-058: heal both players by 10 if still active
-        for player in game_state.players:
-            area_enchant = player.set_zone_c
-            if area_enchant is not None and area_enchant.card.effect == '03-058':
-                log.debug('[03-058] %s: still active — healing both players by 10', self.player_label(player.index))
-                for player_index in (0, 1):
-                    old_hp = game_state.players[player_index].hp
-                    game_state.players[player_index].hp = min(100, game_state.players[player_index].hp + 10)
-                    log.debug('[03-058] %s: HP %d -> %d', self.player_label(player_index), old_hp, game_state.players[player_index].hp)
-                break  # Only apply once even if both players somehow have 03-058
+        # End-of-turn effect damage is applied FIRST so it counts toward the
+        # 03-058/03-085 ">=30 damage taken" self-removal threshold (together
+        # with the battle damage already accumulated during combat).
 
         # Effect 03-027: end-of-turn damage
         for player_index in (0, 1):
             damage = self.turn_state.end_of_turn_damage.get(player_index, 0)
-            if damage > 0:
-                old_hp = game_state.players[player_index].hp
-                game_state.players[player_index].hp = max(0, game_state.players[player_index].hp - damage)
-                log.debug('[03-027] %s: end-of-turn damage %d (HP %d -> %d)', self.player_label(player_index), damage, old_hp, game_state.players[player_index].hp)
+            self.deal_damage(game_state, player_index, damage, source='03-027')
 
         # Effect 04-100: reflect reduced damage to opponent
         for player_index in (0, 1):
             if self.turn_state.reflect_reduction.get(player_index, False):
                 reflected_damage = self.turn_state.damage_reduced_this_turn.get(player_index, 0)
-                if reflected_damage > 0:
-                    opponent_index = 1 - player_index
-                    old_hp = game_state.players[opponent_index].hp
-                    game_state.players[opponent_index].hp = max(0, game_state.players[opponent_index].hp - reflected_damage)
-                    log.debug('[04-100] %s: reflecting %d reduced damage to %s (HP %d -> %d)', self.player_label(player_index), reflected_damage, self.player_label(opponent_index), old_hp, game_state.players[opponent_index].hp)
+                self.deal_damage(game_state, 1 - player_index, reflected_damage, source='04-100')
+
+        # Effect 03-085: remove if >=30 total damage taken this turn (battle +
+        # effect), otherwise advance the clock by 2 if daytime. Gated on power
+        # cost like every other area enchant; removal routes through
+        # place_in_abyss so its placement triggers (04-030/03-055/03-091) fire.
+        for player in game_state.players:
+            area_enchant = player.set_zone_c
+            if area_enchant is None or area_enchant.card.effect != '03-085':
+                continue
+            if player.total_power < self.get_effective_power_cost(area_enchant, player):
+                continue
+            damage = self.turn_state.damage_taken_this_turn.get(player.index, 0)
+            if damage >= 30:
+                log.debug('[03-085] %s: removing — took %d damage (>= 30)', self.player_label(player.index), damage)
+                player.set_zone_c = None
+                self.place_in_abyss(area_enchant, player, player.index)
+            elif game_state.day_night == Chronos.DAY:
+                log.debug('[03-085] %s: daytime — advancing clock by 2', self.player_label(player.index))
+                self.set_chronos(game_state, (game_state.chronos + 2) % CHRONOS_SIZE)
+
+        # Effect 03-058: remove if >=30 total damage taken this turn, otherwise
+        # (if still active) heal both players by 10. Gated on power cost;
+        # removal routes through place_in_abyss.
+        healed = False
+        for player in game_state.players:
+            area_enchant = player.set_zone_c
+            if area_enchant is None or area_enchant.card.effect != '03-058':
+                continue
+            if player.total_power < self.get_effective_power_cost(area_enchant, player):
+                continue
+            damage = self.turn_state.damage_taken_this_turn.get(player.index, 0)
+            if damage >= 30:
+                log.debug('[03-058] %s: removing — took %d damage (>= 30)', self.player_label(player.index), damage)
+                player.set_zone_c = None
+                self.place_in_abyss(area_enchant, player, player.index)
+            elif not healed:
+                # Only heal once even if both players somehow have 03-058
+                log.debug('[03-058] %s: still active — healing both players by 10', self.player_label(player.index))
+                for heal_index in (0, 1):
+                    old_hp = game_state.players[heal_index].hp
+                    game_state.players[heal_index].hp = min(100, game_state.players[heal_index].hp + 10)
+                    log.debug('[03-058] %s: HP %d -> %d', self.player_label(heal_index), old_hp, game_state.players[heal_index].hp)
+                healed = True
 
 
     def get_effective_power_cost(self, card_instance: CardInstance, player: Player) -> int:
@@ -782,6 +852,53 @@ class EffectEngine:
             return None
 
         return self.session.pending_actions.get(player_index)
+
+    async def _prompt_card_multiselect(
+        self,
+        player_index: int,
+        cards: list[CardInstance],
+        prompt_text: str,
+        placeholder: str = 'Select cards...',
+        min_cards: int = 0,
+    ) -> Optional[list[CardInstance]]:
+        """
+        Let a player choose a subset of cards — exactly which ones, not just
+        how many.
+
+        Built on the single-card and number primitives (like
+        ``_prompt_effect_order``) so every engine subclass that overrides those
+        — Discord, bot, RL, headless — gets multi-select for free: first choose
+        how many, then choose which. Returns the chosen list (possibly empty
+        when ``min_cards`` is 0) or None on timeout.
+        """
+        if not cards:
+            return [] if min_cards == 0 else None
+
+        count = await self._prompt_number_selection(
+            player_index,
+            min_value=min_cards,
+            max_value=len(cards),
+            prompt_text=prompt_text,
+            placeholder='Select how many...',
+        )
+        if count is None:
+            return None
+        if count <= 0:
+            return []
+
+        remaining = list(cards)
+        chosen: list[CardInstance] = []
+        for selection_number in range(count):
+            pick_text = f'{prompt_text}\nChoose card {selection_number + 1} of {count}.'
+            selected = await self._prompt_card_selection(
+                player_index, remaining, pick_text, placeholder=placeholder,
+            )
+            if selected is None:
+                # Timed out partway — keep whatever was chosen so far
+                break
+            chosen.append(selected)
+            remaining.remove(selected)
+        return chosen
 
     async def _prompt_number_selection(
         self,

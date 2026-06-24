@@ -37,5 +37,9 @@ class Player:
         for card_instance in draw:
             card_instance.zone = Zone.HAND
             card_instance.face_up = False
+            # Clear any negation that lingered while the card was recycled
+            # through the deck (effect 04-041 / 04-006). A re-drawn card must
+            # behave as a fresh copy when replayed.
+            card_instance.effects_disabled = False
         self.hand.extend(draw)
         return draw
