@@ -241,6 +241,7 @@ train_uniguri_v3.py
 optimize_decks_coevolution.py
 distill_uniguri_v3.py
 test_game_fork_v3.py
+test_observation_v3_equivalence.py
 # Generated artifacts
 zutomayo/models_trained_v3/
 zutomayo/best_decks_optimal_v3.json
