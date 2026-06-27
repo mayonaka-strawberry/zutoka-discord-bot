@@ -1,13 +1,13 @@
 {
   "user_id": 1219421868054806671,
-  "last_updated": "2026-06-24T14:54:09.194267+00:00",
-  "elo": 1021,
+  "last_updated": "2026-06-27T08:12:50.636636+00:00",
+  "elo": 1028,
   "elo_peak": 1071,
-  "elo_games": 39,
+  "elo_games": 44,
   "stats": {
     "standard": {
-      "wins": 20,
-      "losses": 19,
+      "wins": 23,
+      "losses": 21,
       "draws": 0
     },
     "tcg_match": {
@@ -30,14 +30,14 @@
       "draws": 0
     },
     "forfeits_given": 8,
-    "forfeits_received": 0
+    "forfeits_received": 1
   },
   "deck_stats": {
     "standard": {
       "tuan tdd v2": {
         "pvp": {
-          "games": 6,
-          "wins": 2,
+          "games": 7,
+          "wins": 3,
           "losses": 4,
           "draws": 0
         },
@@ -50,9 +50,9 @@
       },
       "<manual>": {
         "pvp": {
-          "games": 26,
-          "wins": 12,
-          "losses": 14,
+          "games": 29,
+          "wins": 14,
+          "losses": 15,
           "draws": 0
         },
         "solo": {
@@ -64,9 +64,9 @@
       },
       "uniguri nekoreset": {
         "pvp": {
-          "games": 5,
+          "games": 6,
           "wins": 5,
-          "losses": 0,
+          "losses": 1,
           "draws": 0
         },
         "solo": {
@@ -138,18 +138,18 @@
   },
   "opponent_stats": {
     "273446626486386688": {
-      "games": 35,
-      "wins": 16,
-      "losses": 19,
+      "games": 39,
+      "wins": 19,
+      "losses": 20,
       "draws": 0,
-      "last_played": "2026-06-24T14:54:09.194146+00:00"
+      "last_played": "2026-06-27T08:12:50.635203+00:00"
     },
     "418732188977201164": {
-      "games": 4,
+      "games": 5,
       "wins": 3,
-      "losses": 1,
+      "losses": 2,
       "draws": 0,
-      "last_played": "2026-05-26T02:37:54.743466+00:00"
+      "last_played": "2026-06-26T16:12:03.918453+00:00"
     },
     "1466155350905323636": {
       "games": 2,

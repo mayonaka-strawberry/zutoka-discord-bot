@@ -1,13 +1,13 @@
 {
   "user_id": 418732188977201164,
-  "last_updated": "2026-06-15T14:35:46.582923+00:00",
-  "elo": 1000,
-  "elo_peak": 1015,
-  "elo_games": 11,
+  "last_updated": "2026-06-27T12:37:38.174391+00:00",
+  "elo": 1050,
+  "elo_peak": 1050,
+  "elo_games": 17,
   "stats": {
     "standard": {
-      "wins": 5,
-      "losses": 6,
+      "wins": 10,
+      "losses": 7,
       "draws": 0
     },
     "tcg_match": {
@@ -29,16 +29,16 @@
       "losses": 0,
       "draws": 0
     },
-    "forfeits_given": 2,
+    "forfeits_given": 3,
     "forfeits_received": 2
   },
   "deck_stats": {
     "standard": {
       "obenkyo": {
         "pvp": {
-          "games": 5,
-          "wins": 3,
-          "losses": 2,
+          "games": 10,
+          "wins": 7,
+          "losses": 3,
           "draws": 0
         },
         "solo": {
@@ -50,8 +50,8 @@
       },
       "tuan pipebomb 2": {
         "pvp": {
-          "games": 6,
-          "wins": 2,
+          "games": 7,
+          "wins": 3,
           "losses": 4,
           "draws": 0
         },
@@ -82,18 +82,25 @@
   },
   "opponent_stats": {
     "273446626486386688": {
-      "games": 12,
-      "wins": 5,
-      "losses": 7,
+      "games": 15,
+      "wins": 7,
+      "losses": 8,
       "draws": 0,
-      "last_played": "2026-06-15T14:35:46.582850+00:00"
+      "last_played": "2026-06-27T12:37:38.172700+00:00"
     },
     "1219421868054806671": {
-      "games": 4,
-      "wins": 1,
+      "games": 5,
+      "wins": 2,
       "losses": 3,
       "draws": 0,
-      "last_played": "2026-05-26T02:37:54.743466+00:00"
+      "last_played": "2026-06-26T16:12:03.918453+00:00"
+    },
+    "645132554533470219": {
+      "games": 2,
+      "wins": 2,
+      "losses": 0,
+      "draws": 0,
+      "last_played": "2026-06-26T15:57:56.970666+00:00"
     }
   },
   "tcg_elo": 969,
