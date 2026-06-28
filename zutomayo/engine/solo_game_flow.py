@@ -503,7 +503,6 @@ class SoloGameFlow(GameFlow):
             game_state, turn_manager, end_of_turn=True,
         )
 
-        turn_manager.check_deck_loss()
         if game_state.result != Result.IN_PROGRESS:
             return
 
@@ -684,7 +683,6 @@ class SoloGameFlow(GameFlow):
         turn_manager.effect_engine.check_area_enchant_removal(
             game_state, turn_manager, end_of_turn=True,
         )
-        turn_manager.check_deck_loss()
         if game_state.result != Result.IN_PROGRESS:
             await self._end_game(session, names, remove_session=False)
             return self._winner_index(game_state)

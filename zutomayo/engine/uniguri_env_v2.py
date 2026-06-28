@@ -744,7 +744,6 @@ class HeadlessGameEnvV2:
             player.hand_size_bonus += player.pending_hand_size_bonus
             player.pending_hand_size_bonus = 0
         self.effect_engine.check_area_enchant_removal(game_state, turn_manager, end_of_turn=True)
-        turn_manager.check_deck_loss()
         if game_state.result != Result.IN_PROGRESS:
             return self._make_game_result()
 
@@ -847,7 +846,6 @@ class HeadlessGameEnvV2:
             player.hand_size_bonus += player.pending_hand_size_bonus
             player.pending_hand_size_bonus = 0
         self.effect_engine.check_area_enchant_removal(game_state, turn_manager, end_of_turn=True)
-        turn_manager.check_deck_loss()
         if game_state.result != Result.IN_PROGRESS:
             return
 

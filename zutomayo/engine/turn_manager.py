@@ -220,17 +220,25 @@ class TurnManager:
                 self.move_to_power_or_abyss(card_instance, player)
                 setattr(player, zone_attr, None)
 
-        # Draw cards equal to number played this turn plus any hand size bonus
+        # Draw cards equal to number played this turn plus any hand size bonus.
+        # The loss is decided here, by the pre-draw deck size: a player loses
+        # only if the deck cannot supply the full mandatory draw. Drawing the
+        # deck down to empty while still satisfying the draw is legal.
         draw_count = player.cards_played_this_turn
         if player.can_draw(draw_count):
             player.draw(draw_count)
             return draw_count
-        else:
-            remaining = len(player.deck)
-            if remaining > 0:
-                player.draw(remaining)
-                return remaining
-            return 0
+
+        # Deck cannot supply the mandatory end-of-turn draw: this player loses.
+        # (can_draw(0) is always true, so a player who played nothing never
+        # reaches this branch.) Draw whatever remains, then record the loss.
+        remaining = len(player.deck)
+        if remaining > 0:
+            player.draw(remaining)
+        self.game_state.result = (
+            Result.PLAYER_2_WIN if player.index == 0 else Result.PLAYER_1_WIN
+        )
+        return remaining
 
     def check_win_condition(self) -> None:
         player_0 = self.game_state.players[0]
@@ -248,15 +256,6 @@ class TurnManager:
             self.game_state.result = Result.PLAYER_2_WIN
         elif player_1.hp <= 0:
             self.game_state.result = Result.PLAYER_1_WIN
-
-    def check_deck_loss(self) -> None:
-        for i, player in enumerate(self.game_state.players):
-            if player.cards_played_this_turn > 0 and not player.can_draw(player.cards_played_this_turn):
-                if len(player.deck) == 0:
-                    if i == 0:
-                        self.game_state.result = Result.PLAYER_2_WIN
-                    else:
-                        self.game_state.result = Result.PLAYER_1_WIN
 
     def get_max_cards_to_set(self, player: Player) -> int:
         if self.game_state.last_battle_winner is None:
