@@ -1,13 +1,13 @@
 {
   "user_id": 1219421868054806671,
-  "last_updated": "2026-06-27T08:12:50.636636+00:00",
-  "elo": 1028,
+  "last_updated": "2026-06-28T03:59:18.569264+00:00",
+  "elo": 997,
   "elo_peak": 1071,
-  "elo_games": 44,
+  "elo_games": 46,
   "stats": {
     "standard": {
       "wins": 23,
-      "losses": 21,
+      "losses": 23,
       "draws": 0
     },
     "tcg_match": {
@@ -36,9 +36,9 @@
     "standard": {
       "tuan tdd v2": {
         "pvp": {
-          "games": 7,
+          "games": 8,
           "wins": 3,
-          "losses": 4,
+          "losses": 5,
           "draws": 0
         },
         "solo": {
@@ -50,9 +50,9 @@
       },
       "<manual>": {
         "pvp": {
-          "games": 29,
+          "games": 30,
           "wins": 14,
-          "losses": 15,
+          "losses": 16,
           "draws": 0
         },
         "solo": {
@@ -145,11 +145,11 @@
       "last_played": "2026-06-27T08:12:50.635203+00:00"
     },
     "418732188977201164": {
-      "games": 5,
+      "games": 6,
       "wins": 3,
-      "losses": 2,
+      "losses": 3,
       "draws": 0,
-      "last_played": "2026-06-26T16:12:03.918453+00:00"
+      "last_played": "2026-06-28T03:26:12.949516+00:00"
     },
     "1466155350905323636": {
       "games": 2,
@@ -194,11 +194,11 @@
       "last_played": "2026-06-15T03:39:00.987303+00:00"
     },
     "1207531440787558440": {
-      "games": 2,
+      "games": 3,
       "wins": 2,
-      "losses": 0,
+      "losses": 1,
       "draws": 0,
-      "last_played": "2026-06-21T14:43:01.406915+00:00"
+      "last_played": "2026-06-28T03:59:18.569190+00:00"
     }
   },
   "tcg_elo": 1013,
