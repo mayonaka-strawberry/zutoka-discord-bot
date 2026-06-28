@@ -386,7 +386,6 @@ class GameFlow:
             player.hand_size_bonus += player.pending_hand_size_bonus
             player.pending_hand_size_bonus = 0
         turn_manager.effect_engine.check_area_enchant_removal(game_state, turn_manager, end_of_turn=True)
-        turn_manager.check_deck_loss()
         if game_state.result != Result.IN_PROGRESS:
             await self._end_game(session, names, remove_session=False)
             return self._winner_index(game_state)
@@ -661,7 +660,6 @@ class GameFlow:
             player.pending_hand_size_bonus = 0
         turn_manager.effect_engine.check_area_enchant_removal(game_state, turn_manager, end_of_turn=True)
 
-        turn_manager.check_deck_loss()
         if game_state.result != Result.IN_PROGRESS:
             return
 
