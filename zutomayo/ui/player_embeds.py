@@ -7,6 +7,7 @@ W-L only — draws are tracked in the data but never shown in any embed.
 
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 import discord
@@ -206,6 +207,8 @@ def build_leaderboard_embed(
     ranked_rows: list[dict],
     caller_id: int,
     *,
+    page: int = 0,
+    page_size: int = 10,
     title: str = 'Zutoka Leaderboard',
     elo_field: str = 'elo',
     elo_games_field: str = 'elo_games',
@@ -214,7 +217,9 @@ def build_leaderboard_embed(
 ) -> discord.Embed:
     """
     ranked_rows: profiles already filtered/sorted by the caller. This builder only renders.
-    Top 10 rendered; if the caller is below rank 10, an extra 'Your rank' line is appended.
+    One page of `page_size` rows is rendered; if the caller is not on the current page,
+    an extra 'Your rank' line is appended. A 'Page X of Y' footer is shown when there
+    is more than one page.
 
     The same renderer drives both /zutomayo leaderboard (standard Elo) and
     /zutomayo leaderboardtcg (TCG Elo) — the caller picks the rating field, the
@@ -233,7 +238,8 @@ def build_leaderboard_embed(
         )
         return embed
 
-    visible_rows = ranked_rows[:10]
+    start = page * page_size
+    visible_rows = ranked_rows[start:start + page_size]
 
     caller_rank: Optional[int] = None
     for rank_index, row in enumerate(ranked_rows, start=1):
@@ -242,7 +248,7 @@ def build_leaderboard_embed(
             break
 
     lines = []
-    for rank_index, row in enumerate(visible_rows, start=1):
+    for rank_index, row in enumerate(visible_rows, start=start + 1):
         stats = row.get('stats', {})
         record_bucket = stats.get(record_stats_bucket, {})
         record_wins = record_bucket.get('wins', 0)
@@ -262,12 +268,19 @@ def build_leaderboard_embed(
         inline=False,
     )
 
-    if caller_rank is not None and caller_rank > len(visible_rows):
+    caller_on_page = (
+        caller_rank is not None and start < caller_rank <= start + len(visible_rows)
+    )
+    if caller_rank is not None and not caller_on_page:
         caller_row = next(row for row in ranked_rows if row['user_id'] == caller_id)
         embed.add_field(
             name='​',
             value=f'Your rank: #{caller_rank} ({caller_row.get(elo_field, 1000)} Elo)',
             inline=False,
         )
+
+    total_pages = math.ceil(len(ranked_rows) / page_size)
+    if total_pages > 1:
+        embed.set_footer(text=f'Page {page + 1} of {total_pages}')
 
     return embed
