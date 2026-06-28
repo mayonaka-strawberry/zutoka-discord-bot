@@ -1,15 +1,15 @@
 {
   "user_id": 1207531440787558440,
-  "last_updated": "2026-06-24T15:21:06.628835+00:00",
-  "elo": 984,
-  "elo_peak": 1000,
-  "elo_games": 8,
+  "last_updated": "2026-06-28T03:59:18.570664+00:00",
+  "elo": 1020,
+  "elo_peak": 1020,
+  "elo_games": 10,
   "tcg_elo": 1000,
   "tcg_elo_peak": 1000,
   "tcg_elo_games": 0,
   "stats": {
     "standard": {
-      "wins": 3,
+      "wins": 5,
       "losses": 5,
       "draws": 0
     },
@@ -53,8 +53,8 @@
       },
       "tori-kaiba": {
         "pvp": {
-          "games": 6,
-          "wins": 2,
+          "games": 8,
+          "wins": 4,
           "losses": 4,
           "draws": 0
         },
@@ -105,11 +105,11 @@
       "last_played": "2026-06-24T15:21:06.628756+00:00"
     },
     "1219421868054806671": {
-      "games": 2,
-      "wins": 0,
+      "games": 3,
+      "wins": 1,
       "losses": 2,
       "draws": 0,
-      "last_played": "2026-06-21T14:43:01.406915+00:00"
+      "last_played": "2026-06-28T03:59:18.569190+00:00"
     },
     "332020856312037388": {
       "games": 2,
@@ -117,6 +117,13 @@
       "losses": 2,
       "draws": 0,
       "last_played": "2026-06-22T14:02:48.500383+00:00"
+    },
+    "418732188977201164": {
+      "games": 1,
+      "wins": 1,
+      "losses": 0,
+      "draws": 0,
+      "last_played": "2026-06-28T03:41:13.433596+00:00"
     }
   }
 }
