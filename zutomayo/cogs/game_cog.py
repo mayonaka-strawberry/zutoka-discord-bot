@@ -20,6 +20,7 @@ from zutomayo.ui.player_embeds import (
     build_leaderboard_embed,
     build_profile_embed,
 )
+from zutomayo.ui.leaderboard_view import LeaderboardView
 from zutomayo.ui.views import GameLobbyView
 from zutomayo.ui.rank_songs_view import (
     CheckpointChoiceView,
@@ -521,6 +522,42 @@ class GameCog(commands.Cog):
         embed = build_profile_embed(self.bot, interaction.user, profile)
         await interaction.followup.send(embed=embed)
 
+    async def _send_leaderboard(
+        self,
+        interaction: discord.Interaction,
+        ranked_rows: list[dict],
+        **embed_kwargs,
+    ) -> None:
+        """
+        Render and send a leaderboard. Short leaderboards (<= one page) are sent as a
+        plain embed; longer ones get a paginated LeaderboardView. The same renderer
+        kwargs flow through to build_leaderboard_embed either way.
+        """
+        await ensure_display_names(
+            self.bot,
+            [row['user_id'] for row in ranked_rows[:LeaderboardView.PAGE_SIZE]]
+            + [interaction.user.id],
+        )
+
+        if len(ranked_rows) <= LeaderboardView.PAGE_SIZE:
+            embed = build_leaderboard_embed(
+                self.bot,
+                ranked_rows,
+                interaction.user.id,
+                **embed_kwargs,
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
+        view = LeaderboardView(
+            self.bot,
+            ranked_rows,
+            interaction.user.id,
+            **embed_kwargs,
+        )
+        view.rebuild_buttons()
+        view.message = await interaction.followup.send(embed=view.build_embed(), view=view)
+
     @group.command(
         name='leaderboard',
         description='Show the server leaderboard ranked by Elo rating',
@@ -533,17 +570,7 @@ class GameCog(commands.Cog):
             and profile.get('user_id') != BOT_DISCORD_ID
         ]
         ranked_rows.sort(key=lambda profile: profile.get('elo', 1000), reverse=True)
-        await ensure_display_names(
-            self.bot,
-            [row['user_id'] for row in ranked_rows[:10]] + [interaction.user.id],
-        )
-
-        embed = build_leaderboard_embed(
-            self.bot,
-            ranked_rows,
-            interaction.user.id,
-        )
-        await interaction.followup.send(embed=embed)
+        await self._send_leaderboard(interaction, ranked_rows)
 
     @group.command(
         name='leaderboardtcg',
@@ -557,22 +584,15 @@ class GameCog(commands.Cog):
             and profile.get('user_id') != BOT_DISCORD_ID
         ]
         ranked_rows.sort(key=lambda profile: profile.get('tcg_elo', 1000), reverse=True)
-        await ensure_display_names(
-            self.bot,
-            [row['user_id'] for row in ranked_rows[:10]] + [interaction.user.id],
-        )
-
-        embed = build_leaderboard_embed(
-            self.bot,
+        await self._send_leaderboard(
+            interaction,
             ranked_rows,
-            interaction.user.id,
             title='Zutoka TCG Leaderboard',
             elo_field='tcg_elo',
             elo_games_field='tcg_elo_games',
             record_stats_bucket='tcg_series',
             empty_message='No ranked players yet. Finish a TCG series with `/zutomayo createtcg` to appear here.',
         )
-        await interaction.followup.send(embed=embed)
 
     @staticmethod
     def _record_forfeit_for_session(session, quitter_id: int) -> None:
