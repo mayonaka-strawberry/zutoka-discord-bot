@@ -1,16 +1,16 @@
 {
   "user_id": 645132554533470219,
-  "last_updated": "2026-06-28T13:30:40.866705+00:00",
-  "elo": 944,
+  "last_updated": "2026-06-30T13:58:32.530904+00:00",
+  "elo": 911,
   "elo_peak": 1000,
-  "elo_games": 6,
+  "elo_games": 9,
   "tcg_elo": 1000,
   "tcg_elo_peak": 1000,
   "tcg_elo_games": 0,
   "stats": {
     "standard": {
       "wins": 1,
-      "losses": 5,
+      "losses": 8,
       "draws": 0
     },
     "tcg_match": {
@@ -81,9 +81,23 @@
       },
       "shade": {
         "pvp": {
-          "games": 1,
+          "games": 3,
           "wins": 1,
+          "losses": 2,
+          "draws": 0
+        },
+        "solo": {
+          "games": 0,
+          "wins": 0,
           "losses": 0,
+          "draws": 0
+        }
+      },
+      "<default>Starter NEKO RESET (\u732b\u30ea\u30bb\u30c3\u30c8) [STD-2]": {
+        "pvp": {
+          "games": 1,
+          "wins": 0,
+          "losses": 1,
           "draws": 0
         },
         "solo": {
@@ -112,11 +126,11 @@
       "last_played": "2026-06-26T14:10:35.899971+00:00"
     },
     "418732188977201164": {
-      "games": 2,
+      "games": 5,
       "wins": 0,
-      "losses": 2,
+      "losses": 5,
       "draws": 0,
-      "last_played": "2026-06-26T15:57:56.970666+00:00"
+      "last_played": "2026-06-30T13:58:32.529576+00:00"
     },
     "273446626486386688": {
       "games": 2,

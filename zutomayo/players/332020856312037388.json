@@ -1,12 +1,12 @@
 {
   "user_id": 332020856312037388,
-  "last_updated": "2026-06-24T11:11:53.538362+00:00",
-  "elo": 1079,
-  "elo_peak": 1079,
-  "elo_games": 20,
+  "last_updated": "2026-06-29T12:13:22.932609+00:00",
+  "elo": 1091,
+  "elo_peak": 1091,
+  "elo_games": 21,
   "stats": {
     "standard": {
-      "wins": 13,
+      "wins": 14,
       "losses": 7,
       "draws": 0
     },
@@ -25,7 +25,7 @@
       "draws": 0
     },
     "solo_normal": {
-      "wins": 4,
+      "wins": 5,
       "losses": 0,
       "draws": 0
     },
@@ -36,14 +36,14 @@
     "standard": {
       "techno v2 tanks tuan": {
         "pvp": {
-          "games": 4,
-          "wins": 2,
+          "games": 5,
+          "wins": 3,
           "losses": 2,
           "draws": 0
         },
         "solo": {
-          "games": 5,
-          "wins": 4,
+          "games": 6,
+          "wins": 5,
           "losses": 1,
           "draws": 0
         }
@@ -152,11 +152,11 @@
       "last_played": "2026-06-24T11:11:53.537003+00:00"
     },
     "1219421868054806671": {
-      "games": 2,
-      "wins": 0,
+      "games": 3,
+      "wins": 1,
       "losses": 2,
       "draws": 0,
-      "last_played": "2026-06-15T03:39:00.987303+00:00"
+      "last_played": "2026-06-28T13:51:06.611834+00:00"
     },
     "1207531440787558440": {
       "games": 2,
