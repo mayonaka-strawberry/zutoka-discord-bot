@@ -1,6 +1,6 @@
 {
   "user_id": 1153600154893549599,
-  "last_updated": "2026-06-29T02:00:01.671457+00:00",
+  "last_updated": "2026-07-01T06:05:04.657789+00:00",
   "elo": 969,
   "elo_peak": 1000,
   "elo_games": 17,
@@ -25,11 +25,11 @@
       "draws": 0
     },
     "solo_normal": {
-      "wins": 5,
-      "losses": 1,
+      "wins": 8,
+      "losses": 2,
       "draws": 0
     },
-    "forfeits_given": 6,
+    "forfeits_given": 9,
     "forfeits_received": 2
   },
   "deck_stats": {
@@ -42,8 +42,8 @@
           "draws": 0
         },
         "solo": {
-          "games": 1,
-          "wins": 1,
+          "games": 2,
+          "wins": 2,
           "losses": 0,
           "draws": 0
         }
@@ -157,6 +157,48 @@
           "games": 1,
           "wins": 1,
           "losses": 0,
+          "draws": 0
+        }
+      },
+      "\u30b7\u30a7\u30fc\u30c9": {
+        "pvp": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        },
+        "solo": {
+          "games": 1,
+          "wins": 1,
+          "losses": 0,
+          "draws": 0
+        }
+      },
+      "\u521d\u5fc3\u8005\u5411\u3051\u3046\u306b\u304e\u308a": {
+        "pvp": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        },
+        "solo": {
+          "games": 1,
+          "wins": 1,
+          "losses": 0,
+          "draws": 0
+        }
+      },
+      "<default>Starter NEKO RESET (\u732b\u30ea\u30bb\u30c3\u30c8) [STD-2]": {
+        "pvp": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        },
+        "solo": {
+          "games": 1,
+          "wins": 0,
+          "losses": 1,
           "draws": 0
         }
       }

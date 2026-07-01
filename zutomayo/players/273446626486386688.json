@@ -1,12 +1,12 @@
 {
   "user_id": 273446626486386688,
-  "last_updated": "2026-06-30T14:09:35.269164+00:00",
-  "elo": 982,
+  "last_updated": "2026-07-01T08:28:39.528870+00:00",
+  "elo": 1035,
   "elo_peak": 1070,
-  "elo_games": 72,
+  "elo_games": 75,
   "stats": {
     "standard": {
-      "wins": 37,
+      "wins": 40,
       "losses": 35,
       "draws": 0
     },
@@ -36,8 +36,8 @@
     "standard": {
       "rani": {
         "pvp": {
-          "games": 3,
-          "wins": 3,
+          "games": 4,
+          "wins": 4,
           "losses": 0,
           "draws": 0
         },
@@ -78,8 +78,8 @@
       },
       "taidada": {
         "pvp": {
-          "games": 5,
-          "wins": 3,
+          "games": 7,
+          "wins": 5,
           "losses": 2,
           "draws": 0
         },
@@ -327,11 +327,11 @@
       "last_played": "2026-06-30T12:57:52.895343+00:00"
     },
     "418732188977201164": {
-      "games": 16,
-      "wins": 9,
+      "games": 19,
+      "wins": 12,
       "losses": 7,
       "draws": 0,
-      "last_played": "2026-06-30T14:09:35.269090+00:00"
+      "last_played": "2026-07-01T08:28:39.527343+00:00"
     },
     "332020856312037388": {
       "games": 29,
