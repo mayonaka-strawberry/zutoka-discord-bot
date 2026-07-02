@@ -1,13 +1,13 @@
 {
   "user_id": 273446626486386688,
-  "last_updated": "2026-07-01T08:28:39.528870+00:00",
-  "elo": 1035,
+  "last_updated": "2026-07-02T11:30:56.426711+00:00",
+  "elo": 1032,
   "elo_peak": 1070,
-  "elo_games": 75,
+  "elo_games": 77,
   "stats": {
     "standard": {
-      "wins": 40,
-      "losses": 35,
+      "wins": 41,
+      "losses": 36,
       "draws": 0
     },
     "tcg_match": {
@@ -25,7 +25,7 @@
       "draws": 0
     },
     "solo_normal": {
-      "wins": 24,
+      "wins": 25,
       "losses": 10,
       "draws": 0
     },
@@ -134,9 +134,9 @@
       },
       "kaiba": {
         "pvp": {
-          "games": 1,
+          "games": 2,
           "wins": 1,
-          "losses": 0,
+          "losses": 1,
           "draws": 0
         },
         "solo": {
@@ -243,6 +243,20 @@
           "losses": 0,
           "draws": 0
         }
+      },
+      "zarth": {
+        "pvp": {
+          "games": 1,
+          "wins": 1,
+          "losses": 0,
+          "draws": 0
+        },
+        "solo": {
+          "games": 1,
+          "wins": 1,
+          "losses": 0,
+          "draws": 0
+        }
       }
     },
     "tcg": {
@@ -320,18 +334,18 @@
   },
   "opponent_stats": {
     "1219421868054806671": {
-      "games": 42,
-      "wins": 22,
+      "games": 43,
+      "wins": 23,
       "losses": 20,
       "draws": 0,
-      "last_played": "2026-06-30T12:57:52.895343+00:00"
+      "last_played": "2026-07-02T02:44:24.708610+00:00"
     },
     "418732188977201164": {
-      "games": 19,
+      "games": 20,
       "wins": 12,
-      "losses": 7,
+      "losses": 8,
       "draws": 0,
-      "last_played": "2026-07-01T08:28:39.527343+00:00"
+      "last_played": "2026-07-02T11:30:56.425380+00:00"
     },
     "332020856312037388": {
       "games": 29,
