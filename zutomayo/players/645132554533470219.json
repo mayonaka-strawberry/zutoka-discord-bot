@@ -1,26 +1,26 @@
 {
   "user_id": 645132554533470219,
-  "last_updated": "2026-07-02T11:22:45.984456+00:00",
-  "elo": 914,
+  "last_updated": "2026-07-06T15:45:28.453541+00:00",
+  "elo": 925,
   "elo_peak": 1000,
-  "elo_games": 12,
-  "tcg_elo": 1000,
+  "elo_games": 14,
+  "tcg_elo": 999,
   "tcg_elo_peak": 1000,
-  "tcg_elo_games": 0,
+  "tcg_elo_games": 2,
   "stats": {
     "standard": {
-      "wins": 2,
-      "losses": 10,
+      "wins": 3,
+      "losses": 11,
       "draws": 0
     },
     "tcg_match": {
-      "wins": 0,
-      "losses": 0,
+      "wins": 3,
+      "losses": 3,
       "draws": 0
     },
     "tcg_series": {
-      "wins": 0,
-      "losses": 0
+      "wins": 1,
+      "losses": 1
     },
     "solo_easy": {
       "wins": 0,
@@ -109,9 +109,9 @@
       },
       "shade 3": {
         "pvp": {
-          "games": 3,
-          "wins": 1,
-          "losses": 2,
+          "games": 5,
+          "wins": 2,
+          "losses": 3,
           "draws": 0
         },
         "solo": {
@@ -122,15 +122,30 @@
         }
       }
     },
-    "tcg": {}
+    "tcg": {
+      "<random>": {
+        "pvp": {
+          "games": 6,
+          "wins": 3,
+          "losses": 3,
+          "draws": 0
+        },
+        "solo": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        }
+      }
+    }
   },
   "opponent_stats": {
     "1219421868054806671": {
-      "games": 1,
-      "wins": 0,
-      "losses": 1,
+      "games": 7,
+      "wins": 3,
+      "losses": 4,
       "draws": 0,
-      "last_played": "2026-05-27T13:22:17.456942+00:00"
+      "last_played": "2026-07-06T15:45:26.241084+00:00"
     },
     "1146818770405429248": {
       "games": 1,
@@ -147,11 +162,11 @@
       "last_played": "2026-07-02T11:22:45.983124+00:00"
     },
     "273446626486386688": {
-      "games": 2,
-      "wins": 1,
-      "losses": 1,
+      "games": 4,
+      "wins": 2,
+      "losses": 2,
       "draws": 0,
-      "last_played": "2026-06-28T13:30:40.866624+00:00"
+      "last_played": "2026-07-04T14:47:47.996988+00:00"
     },
     "332020856312037388": {
       "games": 1,

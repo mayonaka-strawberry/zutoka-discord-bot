@@ -1,23 +1,23 @@
 {
   "user_id": 273446626486386688,
-  "last_updated": "2026-07-02T11:30:56.426711+00:00",
-  "elo": 1032,
+  "last_updated": "2026-07-06T15:33:42.578883+00:00",
+  "elo": 1004,
   "elo_peak": 1070,
-  "elo_games": 77,
+  "elo_games": 84,
   "stats": {
     "standard": {
-      "wins": 41,
-      "losses": 36,
+      "wins": 44,
+      "losses": 40,
       "draws": 0
     },
     "tcg_match": {
-      "wins": 17,
-      "losses": 14,
+      "wins": 21,
+      "losses": 18,
       "draws": 0
     },
     "tcg_series": {
-      "wins": 8,
-      "losses": 5
+      "wins": 9,
+      "losses": 6
     },
     "solo_easy": {
       "wins": 0,
@@ -25,8 +25,8 @@
       "draws": 0
     },
     "solo_normal": {
-      "wins": 25,
-      "losses": 10,
+      "wins": 26,
+      "losses": 11,
       "draws": 0
     },
     "forfeits_given": 4,
@@ -50,9 +50,9 @@
       },
       "<manual>": {
         "pvp": {
-          "games": 20,
+          "games": 21,
           "wins": 8,
-          "losses": 12,
+          "losses": 13,
           "draws": 0
         },
         "solo": {
@@ -98,9 +98,9 @@
           "draws": 0
         },
         "solo": {
-          "games": 2,
-          "wins": 2,
-          "losses": 0,
+          "games": 4,
+          "wins": 3,
+          "losses": 1,
           "draws": 0
         }
       },
@@ -134,8 +134,8 @@
       },
       "kaiba": {
         "pvp": {
-          "games": 2,
-          "wins": 1,
+          "games": 4,
+          "wins": 3,
           "losses": 1,
           "draws": 0
         },
@@ -190,9 +190,9 @@
       },
       "<default>Starter NEKO RESET (\u732b\u30ea\u30bb\u30c3\u30c8) [STD-2]": {
         "pvp": {
-          "games": 1,
+          "games": 2,
           "wins": 0,
-          "losses": 1,
+          "losses": 2,
           "draws": 0
         },
         "solo": {
@@ -232,9 +232,9 @@
       },
       "liberation": {
         "pvp": {
-          "games": 1,
+          "games": 2,
           "wins": 0,
-          "losses": 1,
+          "losses": 2,
           "draws": 0
         },
         "solo": {
@@ -257,14 +257,28 @@
           "losses": 0,
           "draws": 0
         }
+      },
+      "giri ham kaiba": {
+        "pvp": {
+          "games": 2,
+          "wins": 1,
+          "losses": 1,
+          "draws": 0
+        },
+        "solo": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        }
       }
     },
     "tcg": {
       "agro": {
         "pvp": {
-          "games": 9,
-          "wins": 6,
-          "losses": 3,
+          "games": 12,
+          "wins": 8,
+          "losses": 4,
           "draws": 0
         },
         "solo": {
@@ -318,9 +332,9 @@
       },
       "tdd": {
         "pvp": {
-          "games": 2,
-          "wins": 2,
-          "losses": 0,
+          "games": 7,
+          "wins": 4,
+          "losses": 3,
           "draws": 0
         },
         "solo": {
@@ -334,25 +348,25 @@
   },
   "opponent_stats": {
     "1219421868054806671": {
-      "games": 43,
-      "wins": 23,
-      "losses": 20,
+      "games": 49,
+      "wins": 26,
+      "losses": 23,
       "draws": 0,
-      "last_played": "2026-07-02T02:44:24.708610+00:00"
+      "last_played": "2026-07-06T05:47:34.566467+00:00"
     },
     "418732188977201164": {
-      "games": 20,
-      "wins": 12,
+      "games": 21,
+      "wins": 13,
       "losses": 8,
       "draws": 0,
-      "last_played": "2026-07-02T11:30:56.425380+00:00"
+      "last_played": "2026-07-04T03:37:15.909461+00:00"
     },
     "332020856312037388": {
-      "games": 29,
-      "wins": 13,
-      "losses": 16,
+      "games": 35,
+      "wins": 15,
+      "losses": 20,
       "draws": 0,
-      "last_played": "2026-06-20T13:45:02.496044+00:00"
+      "last_played": "2026-07-06T15:33:42.578805+00:00"
     },
     "1153600154893549599": {
       "games": 3,
@@ -383,14 +397,14 @@
       "last_played": "2026-06-24T15:21:06.628756+00:00"
     },
     "645132554533470219": {
-      "games": 2,
-      "wins": 1,
-      "losses": 1,
+      "games": 4,
+      "wins": 2,
+      "losses": 2,
       "draws": 0,
-      "last_played": "2026-06-28T13:30:40.866624+00:00"
+      "last_played": "2026-07-04T14:47:47.996988+00:00"
     }
   },
-  "tcg_elo": 1060,
+  "tcg_elo": 1055,
   "tcg_elo_peak": 1060,
-  "tcg_elo_games": 12
+  "tcg_elo_games": 14
 }

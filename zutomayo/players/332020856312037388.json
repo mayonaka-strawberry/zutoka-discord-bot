@@ -1,22 +1,22 @@
 {
   "user_id": 332020856312037388,
-  "last_updated": "2026-07-02T11:15:52.679532+00:00",
-  "elo": 1099,
-  "elo_peak": 1099,
-  "elo_games": 22,
+  "last_updated": "2026-07-06T15:33:42.602670+00:00",
+  "elo": 1111,
+  "elo_peak": 1111,
+  "elo_games": 23,
   "stats": {
     "standard": {
-      "wins": 15,
+      "wins": 16,
       "losses": 7,
       "draws": 0
     },
     "tcg_match": {
-      "wins": 10,
-      "losses": 10,
+      "wins": 15,
+      "losses": 13,
       "draws": 0
     },
     "tcg_series": {
-      "wins": 4,
+      "wins": 6,
       "losses": 5
     },
     "solo_easy": {
@@ -50,8 +50,8 @@
       },
       "<manual>": {
         "pvp": {
-          "games": 13,
-          "wins": 10,
+          "games": 14,
+          "wins": 11,
           "losses": 3,
           "draws": 0
         },
@@ -108,9 +108,9 @@
     "tcg": {
       "<manual>": {
         "pvp": {
-          "games": 9,
-          "wins": 3,
-          "losses": 6,
+          "games": 14,
+          "wins": 6,
+          "losses": 8,
           "draws": 0
         },
         "solo": {
@@ -122,9 +122,9 @@
       },
       "<random>": {
         "pvp": {
-          "games": 11,
-          "wins": 7,
-          "losses": 4,
+          "games": 14,
+          "wins": 9,
+          "losses": 5,
           "draws": 0
         },
         "solo": {
@@ -138,11 +138,11 @@
   },
   "opponent_stats": {
     "273446626486386688": {
-      "games": 29,
-      "wins": 16,
-      "losses": 13,
+      "games": 35,
+      "wins": 20,
+      "losses": 15,
       "draws": 0,
-      "last_played": "2026-06-20T13:45:02.496044+00:00"
+      "last_played": "2026-07-06T15:33:42.578805+00:00"
     },
     "673566733818396673": {
       "games": 5,
@@ -152,11 +152,11 @@
       "last_played": "2026-06-24T11:11:53.537003+00:00"
     },
     "1219421868054806671": {
-      "games": 5,
-      "wins": 3,
-      "losses": 2,
+      "games": 8,
+      "wins": 5,
+      "losses": 3,
       "draws": 0,
-      "last_played": "2026-07-01T16:11:31.218461+00:00"
+      "last_played": "2026-07-03T08:20:38.363969+00:00"
     },
     "1207531440787558440": {
       "games": 2,
@@ -173,7 +173,7 @@
       "last_played": "2026-07-02T11:15:52.677790+00:00"
     }
   },
-  "tcg_elo": 977,
+  "tcg_elo": 1013,
   "tcg_elo_peak": 1018,
-  "tcg_elo_games": 8
+  "tcg_elo_games": 10
 }
