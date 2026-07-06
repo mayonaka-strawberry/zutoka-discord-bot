@@ -1,16 +1,16 @@
 {
   "user_id": 324917854652596225,
-  "last_updated": "2026-06-11T14:50:48.460409+00:00",
-  "elo": 1000,
-  "elo_peak": 1000,
-  "elo_games": 0,
+  "last_updated": "2026-07-04T17:46:00.159705+00:00",
+  "elo": 1026,
+  "elo_peak": 1026,
+  "elo_games": 20,
   "tcg_elo": 1000,
   "tcg_elo_peak": 1000,
   "tcg_elo_games": 0,
   "stats": {
     "standard": {
-      "wins": 0,
-      "losses": 0,
+      "wins": 9,
+      "losses": 11,
       "draws": 0
     },
     "tcg_match": {
@@ -32,7 +32,7 @@
       "losses": 1,
       "draws": 0
     },
-    "forfeits_given": 0,
+    "forfeits_given": 1,
     "forfeits_received": 0
   },
   "deck_stats": {
@@ -50,9 +50,80 @@
           "losses": 1,
           "draws": 0
         }
+      },
+      "study": {
+        "pvp": {
+          "games": 5,
+          "wins": 1,
+          "losses": 4,
+          "draws": 0
+        },
+        "solo": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        }
+      },
+      "taidada": {
+        "pvp": {
+          "games": 5,
+          "wins": 1,
+          "losses": 4,
+          "draws": 0
+        },
+        "solo": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        }
+      },
+      "chaos": {
+        "pvp": {
+          "games": 3,
+          "wins": 1,
+          "losses": 2,
+          "draws": 0
+        },
+        "solo": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        }
+      },
+      "paul2": {
+        "pvp": {
+          "games": 7,
+          "wins": 6,
+          "losses": 1,
+          "draws": 0
+        },
+        "solo": {
+          "games": 0,
+          "wins": 0,
+          "losses": 0,
+          "draws": 0
+        }
       }
     },
     "tcg": {}
   },
-  "opponent_stats": {}
+  "opponent_stats": {
+    "874800123178283009": {
+      "games": 17,
+      "wins": 7,
+      "losses": 10,
+      "draws": 0,
+      "last_played": "2026-07-04T15:58:26.518574+00:00"
+    },
+    "1219421868054806671": {
+      "games": 3,
+      "wins": 2,
+      "losses": 1,
+      "draws": 0,
+      "last_played": "2026-07-04T17:46:00.158180+00:00"
+    }
+  }
 }
