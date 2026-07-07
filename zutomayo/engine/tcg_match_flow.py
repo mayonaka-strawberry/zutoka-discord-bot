@@ -13,7 +13,7 @@ import discord
 from zutomayo.engine.game_flow import GameFlow
 from zutomayo.engine.game_session import session_manager
 from zutomayo.ui.deck_management_views_tcg import TcgDeckSourceView, _random_tcg_deck
-from zutomayo.ui.embeds import create_deck_grid_image
+from zutomayo.ui.embeds import create_deck_grid_image_off_thread
 from zutomayo.ui.tcg_switch_views import SwitchCardsView
 
 if TYPE_CHECKING:
@@ -160,8 +160,8 @@ class TcgMatchFlow:
         self, session: GameSession, player_index: int, deck: list[Card], side: list[Card],
     ) -> None:
         """DM a player images of their main deck and side deck."""
-        main_img = create_deck_grid_image(deck, columns=5, filename='main_deck.webp')
-        side_img = create_deck_grid_image(side, columns=4, filename='side_deck.webp')
+        main_img = await create_deck_grid_image_off_thread(deck, columns=5, filename='main_deck.webp')
+        side_img = await create_deck_grid_image_off_thread(side, columns=4, filename='side_deck.webp')
         if main_img:
             await self._send_to_player(session, player_index, content='**Main Deck (20):**', file=main_img)
         if side_img:

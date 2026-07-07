@@ -2,7 +2,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 from zutomayo.effects.cards._card_id_validator import validate_card_id
-from zutomayo.ui.embeds import card_detail_description, create_deck_grid_image
+from zutomayo.ui.embeds import card_detail_description, create_deck_grid_image_off_thread
 
 if TYPE_CHECKING:
     from zutomayo.effects.effect_engine import EffectEngine
@@ -67,13 +67,13 @@ async def effect_03_059(engine: EffectEngine, game_state: GameState, player_inde
     embed = _discord.Embed(title='Revealed Card [公開カード]', color=_discord.Color.gold())
     embed.description = card_detail_description(revealed)
 
-    reveal_img = create_deck_grid_image([revealed], columns=1)
+    reveal_img = await create_deck_grid_image_off_thread([revealed], columns=1)
     await engine._send_dm(player_index, content='**Effect (03-059):** Revealed card:', embed=embed, file=reveal_img)
 
-    reveal_img = create_deck_grid_image([revealed], columns=1)
+    reveal_img = await create_deck_grid_image_off_thread([revealed], columns=1)
     await engine._send_dm(1 - player_index, content=f'**Effect (03-059):** Your card was revealed: {revealed_name}.', file=reveal_img)
 
-    reveal_img = create_deck_grid_image([revealed], columns=1)
+    reveal_img = await create_deck_grid_image_off_thread([revealed], columns=1)
     await engine._send_to_channel(content=f"**Effect (03-059):** A card was revealed from opponent's hand: {revealed_name}.", file=reveal_img)
 
     # Step 4: Check if card IDs match

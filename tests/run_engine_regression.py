@@ -194,10 +194,21 @@ def _stub_deck_grid_rendering() -> None:
             )
         return None
 
+    async def recording_stub_off_thread(cards, *args, **kwargs):
+        # Same recorded label as the sync stub so baselines are unaffected by
+        # the Stage 1 move to off-thread rendering wrappers.
+        return recording_stub(cards, *args, **kwargs)
+
     embeds_module.create_deck_grid_image = recording_stub
+    if hasattr(embeds_module, 'create_deck_grid_image_off_thread'):
+        embeds_module.create_deck_grid_image_off_thread = recording_stub_off_thread
     for module_name, module in list(sys.modules.items()):
-        if module_name.startswith('zutomayo.effects.cards.') and hasattr(module, 'create_deck_grid_image'):
+        if not module_name.startswith('zutomayo.effects.cards.'):
+            continue
+        if hasattr(module, 'create_deck_grid_image'):
             module.create_deck_grid_image = recording_stub
+        if hasattr(module, 'create_deck_grid_image_off_thread'):
+            module.create_deck_grid_image_off_thread = recording_stub_off_thread
 
 
 def _install_recording_classes() -> None:

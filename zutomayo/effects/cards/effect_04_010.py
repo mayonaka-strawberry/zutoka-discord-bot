@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from zutomayo.enums.card_type import CardType
 from zutomayo.enums.song import Song
-from zutomayo.ui.embeds import create_deck_grid_image
+from zutomayo.ui.embeds import create_deck_grid_image_off_thread
 import logging
 
 if TYPE_CHECKING:
@@ -58,11 +58,11 @@ async def effect_04_010(
 
     # Send text + reveal image to both players and the server channel.
     # discord.File is consumed on send, so we create a fresh image per recipient.
-    reveal_img = create_deck_grid_image(revealed_cards, columns=reveal_count)
+    reveal_img = await create_deck_grid_image_off_thread(revealed_cards, columns=reveal_count)
     await engine._send_dm(player_index, content=player_msg, file=reveal_img)
 
-    reveal_img = create_deck_grid_image(revealed_cards, columns=reveal_count)
+    reveal_img = await create_deck_grid_image_off_thread(revealed_cards, columns=reveal_count)
     await engine._send_dm(1 - player_index, content=opponent_msg, file=reveal_img)
 
-    reveal_img = create_deck_grid_image(revealed_cards, columns=reveal_count)
+    reveal_img = await create_deck_grid_image_off_thread(revealed_cards, columns=reveal_count)
     await engine._send_to_channel(content=opponent_msg, file=reveal_img)

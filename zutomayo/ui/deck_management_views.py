@@ -14,7 +14,7 @@ from zutomayo.data.deck_storage import (
     update_deck,
 )
 from zutomayo.data.deck_validator import parse_deck_input
-from zutomayo.ui.embeds import build_deck_list_embed, create_deck_grid_image
+from zutomayo.ui.embeds import build_deck_list_embed, create_deck_grid_image_off_thread
 
 if TYPE_CHECKING:
     from zutomayo.engine.game_session import GameSession
@@ -77,7 +77,7 @@ class MakeDeckModal(discord.ui.Modal):
             embed=embed,
             ephemeral=True,
         )
-        grid = create_deck_grid_image(cards)
+        grid = await create_deck_grid_image_off_thread(cards)
         if grid:
             await interaction.followup.send(file=grid, ephemeral=True)
 
@@ -135,7 +135,7 @@ class EditDeckModal(discord.ui.Modal):
             embed=embed,
             ephemeral=True,
         )
-        grid = create_deck_grid_image(cards)
+        grid = await create_deck_grid_image_off_thread(cards)
         if grid:
             await interaction.followup.send(file=grid, ephemeral=True)
 
@@ -221,7 +221,7 @@ class ManageDecksView(discord.ui.View):
             embed=embed,
             view=self,
         )
-        grid = create_deck_grid_image(cards)
+        grid = await create_deck_grid_image_off_thread(cards)
         if grid:
             await interaction.followup.send(file=grid, ephemeral=True)
 
@@ -361,7 +361,7 @@ class ViewDeckView(discord.ui.View):
         self.clear_items()
         self._build_buttons()
         await interaction.response.edit_message(embed=self.current_embed(), view=self)
-        grid = create_deck_grid_image(self.current_cards())
+        grid = await create_deck_grid_image_off_thread(self.current_cards())
         if grid:
             await interaction.followup.send(file=grid, ephemeral=True)
 
@@ -370,7 +370,7 @@ class ViewDeckView(discord.ui.View):
         self.clear_items()
         self._build_buttons()
         await interaction.response.edit_message(embed=self.current_embed(), view=self)
-        grid = create_deck_grid_image(self.current_cards())
+        grid = await create_deck_grid_image_off_thread(self.current_cards())
         if grid:
             await interaction.followup.send(file=grid, ephemeral=True)
 
@@ -576,7 +576,7 @@ class SavedDeckSelectView(discord.ui.View):
             view=view,
         )
         self.stop()
-        grid = create_deck_grid_image(cards)
+        grid = await create_deck_grid_image_off_thread(cards)
         if grid:
             await interaction.followup.send(file=grid, ephemeral=True)
 
@@ -750,7 +750,7 @@ class DefaultDeckSelectView(discord.ui.View):
             view=view,
         )
         self.stop()
-        grid = create_deck_grid_image(cards)
+        grid = await create_deck_grid_image_off_thread(cards)
         if grid:
             await interaction.followup.send(file=grid, ephemeral=True)
 

@@ -1,4 +1,4 @@
-discord.py
-Pillow
-python-dotenv
-torch>=2.0.0
+discord.py==2.7.0
+Pillow==12.1.1
+python-dotenv==1.2.2
+torch==2.10.0

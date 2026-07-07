@@ -6,6 +6,7 @@ Each user's decks are stored in a JSON file at zutomayo/decks/<discord_user_id>.
 
 from __future__ import annotations
 import json
+import os
 from pathlib import Path
 from zutomayo.models.card import Card
 
@@ -38,12 +39,14 @@ def load_user_decks(user_id: int) -> list[dict]:
 
 
 def save_user_decks(user_id: int, decks: list[dict]) -> None:
-    """Write all decks for a user to disk."""
+    """Write all decks for a user atomically (temp + os.replace) to avoid corruption."""
     DECKS_DIR.mkdir(parents=True, exist_ok=True)
-    path = _user_file(user_id)
+    final_path = _user_file(user_id)
+    temp_path = final_path.with_suffix('.json.tmp')
     data = {'user_id': user_id, 'decks': decks}
-    with open(path, 'w', encoding='utf-8') as f:
+    with open(temp_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2)
+    os.replace(temp_path, final_path)
 
 
 def get_deck_names(user_id: int) -> list[str]:

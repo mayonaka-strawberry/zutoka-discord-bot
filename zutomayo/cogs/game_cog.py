@@ -299,7 +299,7 @@ class GameCog(commands.Cog):
         card_index = build_card_index(all_cards)
 
         from zutomayo.ui.deck_management_views import ViewDeckView
-        from zutomayo.ui.embeds import create_deck_grid_image
+        from zutomayo.ui.embeds import create_deck_grid_image_off_thread
 
         view = ViewDeckView(
             user_id=interaction.user.id,
@@ -311,7 +311,7 @@ class GameCog(commands.Cog):
             view=view,
             ephemeral=True,
         )
-        grid = create_deck_grid_image(view.current_cards())
+        grid = await create_deck_grid_image_off_thread(view.current_cards())
         if grid:
             await interaction.followup.send(file=grid, ephemeral=True)
 
@@ -361,7 +361,7 @@ class GameCog(commands.Cog):
         card_index = build_card_index(all_cards)
 
         from zutomayo.ui.deck_management_views_tcg import ViewDeckTcgView
-        from zutomayo.ui.embeds import create_deck_grid_image
+        from zutomayo.ui.embeds import create_deck_grid_image_off_thread
 
         view = ViewDeckTcgView(
             user_id=interaction.user.id,
@@ -374,10 +374,10 @@ class GameCog(commands.Cog):
             ephemeral=True,
         )
         main_cards, side_cards = view.current_cards()
-        grid = create_deck_grid_image(main_cards)
+        grid = await create_deck_grid_image_off_thread(main_cards)
         if grid:
             await interaction.followup.send(content='**Main Deck:**', file=grid, ephemeral=True)
-        side_grid = create_deck_grid_image(side_cards, columns=4)
+        side_grid = await create_deck_grid_image_off_thread(side_cards, columns=4)
         if side_grid:
             await interaction.followup.send(content='**Side Deck:**', file=side_grid, ephemeral=True)
 
@@ -421,11 +421,11 @@ class GameCog(commands.Cog):
 
         from zutomayo.data.card_loader import load_cards
         from zutomayo.data.gacha import draw_gacha
-        from zutomayo.ui.embeds import create_deck_grid_image
+        from zutomayo.ui.embeds import create_deck_grid_image_off_thread
 
         all_cards = load_cards()
         drawn = draw_gacha(pack, all_cards)
-        image = create_deck_grid_image(drawn, columns=5, filename='gacha.webp')
+        image = await create_deck_grid_image_off_thread(drawn, columns=5, filename='gacha.webp')
         if image:
             await interaction.response.send_message(file=image)
         else:
@@ -447,13 +447,13 @@ class GameCog(commands.Cog):
 
         from zutomayo.data.card_loader import load_cards
         from zutomayo.data.gacha import draw_gachabox
-        from zutomayo.ui.embeds import create_deck_grid_image
+        from zutomayo.ui.embeds import create_deck_grid_image_off_thread
 
         all_cards = load_cards()
         drawn = draw_gachabox(pack, all_cards)
         half = len(drawn) // 2
-        image1 = create_deck_grid_image(drawn[:half], columns=5, filename='gachabox_1.webp')
-        image2 = create_deck_grid_image(drawn[half:], columns=5, filename='gachabox_2.webp')
+        image1 = await create_deck_grid_image_off_thread(drawn[:half], columns=5, filename='gachabox_1.webp')
+        image2 = await create_deck_grid_image_off_thread(drawn[half:], columns=5, filename='gachabox_2.webp')
         files = [f for f in (image1, image2) if f]
         if files:
             await interaction.followup.send(files=files)
