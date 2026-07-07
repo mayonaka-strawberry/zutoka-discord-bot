@@ -1,12 +1,20 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Callable
 import discord
+from zutomayo.engine.decisions import PAYLOAD_INDICES, PAYLOAD_NUMBER, PAYLOAD_TEXT
 from zutomayo.enums.card_type import CardType
 from zutomayo.models.card_instance import CardInstance
 from zutomayo.ui.embeds import ATTRIBUTE_EN, ATTRIBUTE_JP, CARD_TYPE_LABEL
 
 if TYPE_CHECKING:
     from zutomayo.engine.game_session import GameSession
+
+# Views answer prompts either through a submit_callback (the decision broker
+# path: JSON-serializable payloads of option indices / number / text) or, when
+# no callback is given, through the legacy session.submit_action mechanism
+# with live objects. The legacy path remains for deck building and TCG deck
+# selection, which run before match persistence begins.
+SubmitCallback = Callable[[str, object], None]
 
 
 def _build_select_option(card_instance: CardInstance) -> tuple[str, str]:
@@ -48,6 +56,7 @@ class CardSelectView(discord.ui.View):
         placeholder: str = 'Select a card...',
         embed: discord.Embed | None = None,
         opponent_name: str = 'opponent',
+        submit_callback: SubmitCallback | None = None,
     ):
         super().__init__(timeout=750)
         self.session = session
@@ -58,7 +67,9 @@ class CardSelectView(discord.ui.View):
         self.placeholder = placeholder
         self.embed = embed
         self.opponent_name = opponent_name
+        self.submit_callback = submit_callback
         self.selected_cards: list[CardInstance] = []
+        self.selected_indices: list[int] = []
 
         self._build_dropdown()
 
@@ -82,8 +93,8 @@ class CardSelectView(discord.ui.View):
         self.add_item(select)
 
     async def select_callback(self, interaction: discord.Interaction):
-        selected_indices = [int(v) for v in interaction.data['values']]
-        self.selected_cards = [self.cards[i] for i in selected_indices]
+        self.selected_indices = [int(v) for v in interaction.data['values']]
+        self.selected_cards = [self.cards[i] for i in self.selected_indices]
         card_names = ', '.join(card_instance.card.name for card_instance in self.selected_cards)
 
         # Show confirmation buttons
@@ -104,7 +115,10 @@ class CardSelectView(discord.ui.View):
         )
 
     async def _confirm_callback(self, interaction: discord.Interaction):
-        self.session.submit_action(self.player_index, self.selected_cards)
+        if self.submit_callback is not None:
+            self.submit_callback(PAYLOAD_INDICES, self.selected_indices)
+        else:
+            self.session.submit_action(self.player_index, self.selected_cards)
         card_names = ', '.join(card_instance.card.name for card_instance in self.selected_cards)
         await interaction.response.edit_message(
             content=f'You selected: **{card_names}**. Waiting for {self.opponent_name}...',
@@ -114,6 +128,7 @@ class CardSelectView(discord.ui.View):
 
     async def _reselect_callback(self, interaction: discord.Interaction):
         self.selected_cards = []
+        self.selected_indices = []
         self.clear_items()
         self._build_dropdown()
         await interaction.response.edit_message(
@@ -141,6 +156,7 @@ class TwoStepCardSelectView(discord.ui.View):
         cards: list[CardInstance],
         embed: discord.Embed | None = None,
         opponent_name: str = 'opponent',
+        submit_callback: SubmitCallback | None = None,
     ):
         super().__init__(timeout=750)
         self.session = session
@@ -148,8 +164,10 @@ class TwoStepCardSelectView(discord.ui.View):
         self.cards = cards
         self.embed = embed
         self.opponent_name = opponent_name
+        self.submit_callback = submit_callback
         self.first_card: CardInstance | None = None
         self.selected_cards: list[CardInstance] = []
+        self.selected_indices: list[int] = []
 
         self._build_step1_dropdown()
 
@@ -215,11 +233,14 @@ class TwoStepCardSelectView(discord.ui.View):
     async def _step2_callback(self, interaction: discord.Interaction) -> None:
         value = interaction.data['values'][0]
 
+        first_index = self.cards.index(self.first_card)
         if value == self.NONE_SENTINEL:
             self.selected_cards = [self.first_card]
+            self.selected_indices = [first_index]
         else:
             second_index = int(value)
             self.selected_cards = [self.first_card, self.cards[second_index]]
+            self.selected_indices = [first_index, second_index]
 
         card_names = ', '.join(card_instance.card.name for card_instance in self.selected_cards)
 
@@ -241,7 +262,10 @@ class TwoStepCardSelectView(discord.ui.View):
         )
 
     async def _confirm_callback(self, interaction: discord.Interaction) -> None:
-        self.session.submit_action(self.player_index, self.selected_cards)
+        if self.submit_callback is not None:
+            self.submit_callback(PAYLOAD_INDICES, self.selected_indices)
+        else:
+            self.session.submit_action(self.player_index, self.selected_cards)
         card_names = ', '.join(card_instance.card.name for card_instance in self.selected_cards)
         await interaction.response.edit_message(
             content=f'You selected: **{card_names}**. Waiting for {self.opponent_name}...',
@@ -252,6 +276,7 @@ class TwoStepCardSelectView(discord.ui.View):
     async def _reselect_callback(self, interaction: discord.Interaction) -> None:
         self.first_card = None
         self.selected_cards = []
+        self.selected_indices = []
         self.clear_items()
         self._build_step1_dropdown()
         await interaction.response.edit_message(
@@ -270,13 +295,16 @@ class RedrawView(discord.ui.View):
         player_index: int,
         cards: list[CardInstance],
         opponent_name: str = 'opponent',
+        submit_callback: SubmitCallback | None = None,
     ):
         super().__init__(timeout=750)
         self.session = session
         self.player_index = player_index
         self.cards = cards
         self.opponent_name = opponent_name
+        self.submit_callback = submit_callback
         self.selected_cards: list[CardInstance] = []
+        self.selected_indices: list[int] = []
 
         self._build_initial()
 
@@ -334,7 +362,10 @@ class RedrawView(discord.ui.View):
         )
 
     async def _keep_hand_confirm(self, interaction: discord.Interaction):
-        self.session.submit_action(self.player_index, {'redraw': []})
+        if self.submit_callback is not None:
+            self.submit_callback(PAYLOAD_INDICES, [])
+        else:
+            self.session.submit_action(self.player_index, {'redraw': []})
         await interaction.response.edit_message(
             content=f'Keeping your hand. Waiting for {self.opponent_name}...',
             view=None,
@@ -351,8 +382,8 @@ class RedrawView(discord.ui.View):
         )
 
     async def _discard_select_callback(self, interaction: discord.Interaction):
-        selected_indices = [int(v) for v in interaction.data['values']]
-        self.selected_cards = [self.cards[i] for i in selected_indices]
+        self.selected_indices = [int(v) for v in interaction.data['values']]
+        self.selected_cards = [self.cards[i] for i in self.selected_indices]
         card_names = ', '.join(card_instance.card.name for card_instance in self.selected_cards)
 
         self.clear_items()
@@ -371,7 +402,10 @@ class RedrawView(discord.ui.View):
         )
 
     async def _discard_confirm(self, interaction: discord.Interaction):
-        self.session.submit_action(self.player_index, {'redraw': self.selected_cards})
+        if self.submit_callback is not None:
+            self.submit_callback(PAYLOAD_INDICES, self.selected_indices)
+        else:
+            self.session.submit_action(self.player_index, {'redraw': self.selected_cards})
         count = len(self.selected_cards)
         await interaction.response.edit_message(
             content=f'Redrawing **{count}** card(s)... Waiting for {self.opponent_name}.',
@@ -383,6 +417,7 @@ class RedrawView(discord.ui.View):
 
     async def _go_back_to_initial(self, interaction: discord.Interaction):
         self.selected_cards = []
+        self.selected_indices = []
         self.clear_items()
         self._build_initial()
         await interaction.response.edit_message(
@@ -392,6 +427,7 @@ class RedrawView(discord.ui.View):
 
     async def _go_back_to_discard_select(self, interaction: discord.Interaction):
         self.selected_cards = []
+        self.selected_indices = []
         self.clear_items()
         self._build_discard_select()
         await interaction.response.edit_message(
@@ -409,11 +445,13 @@ class EffectCardSelectView(discord.ui.View):
         player_index: int,
         cards: list[CardInstance],
         placeholder: str = 'Select a card...',
+        submit_callback: SubmitCallback | None = None,
     ):
         super().__init__(timeout=750)
         self.session = session
         self.player_index = player_index
         self.cards = cards
+        self.submit_callback = submit_callback
 
         options = []
         for i, card_instance in enumerate(cards):
@@ -436,7 +474,10 @@ class EffectCardSelectView(discord.ui.View):
     async def select_callback(self, interaction: discord.Interaction):
         selected_index = int(interaction.data['values'][0])
         selected_card = self.cards[selected_index]
-        self.session.submit_action(self.player_index, selected_card)
+        if self.submit_callback is not None:
+            self.submit_callback(PAYLOAD_INDICES, [selected_index])
+        else:
+            self.session.submit_action(self.player_index, selected_card)
         await interaction.response.edit_message(
             content=f'You selected: **{selected_card.card.name}**',
             view=None,
@@ -455,10 +496,12 @@ class EffectNumberSelectView(discord.ui.View):
         max_value: int,
         placeholder: str = 'Select a number...',
         label_prefix: str | None = None,
+        submit_callback: SubmitCallback | None = None,
     ):
         super().__init__(timeout=750)
         self.session = session
         self.player_index = player_index
+        self.submit_callback = submit_callback
 
         options = [
             discord.SelectOption(
@@ -479,7 +522,10 @@ class EffectNumberSelectView(discord.ui.View):
 
     async def select_callback(self, interaction: discord.Interaction):
         selected_value = int(interaction.data['values'][0])
-        self.session.submit_action(self.player_index, selected_value)
+        if self.submit_callback is not None:
+            self.submit_callback(PAYLOAD_NUMBER, selected_value)
+        else:
+            self.session.submit_action(self.player_index, selected_value)
         await interaction.response.edit_message(
             content=f'You selected: **{selected_value}**',
             view=None,
@@ -506,12 +552,14 @@ class EffectTextInputModal(discord.ui.Modal):
         placeholder: str | None = None,
         validator: Callable[[str], str | None] | None = None,
         prompt_text: str | None = None,
+        submit_callback: SubmitCallback | None = None,
     ):
         super().__init__(title=title, timeout=750)
         self.session = session
         self.player_index = player_index
         self.validator = validator
         self.prompt_text = prompt_text
+        self.submit_callback = submit_callback
         if label is not None:
             self.name_input.label = label
         if placeholder is not None:
@@ -530,10 +578,14 @@ class EffectTextInputModal(discord.ui.Modal):
                     placeholder=self.name_input.placeholder,
                     validator=self.validator,
                     prompt_text=self.prompt_text,
+                    submit_callback=self.submit_callback,
                 )
                 await interaction.response.send_message(content=error, view=view, ephemeral=True)
                 return
-        self.session.submit_action(self.player_index, value)
+        if self.submit_callback is not None:
+            self.submit_callback(PAYLOAD_TEXT, value)
+        else:
+            self.session.submit_action(self.player_index, value)
         await interaction.response.send_message(
             content=f'You specified: **{value}**',
             ephemeral=True,
@@ -553,6 +605,7 @@ class EffectTextInputView(discord.ui.View):
         placeholder: str | None = None,
         validator: Callable[[str], str | None] | None = None,
         prompt_text: str | None = None,
+        submit_callback: SubmitCallback | None = None,
     ):
         super().__init__(timeout=750)
         self.session = session
@@ -562,6 +615,7 @@ class EffectTextInputView(discord.ui.View):
         self.input_placeholder = placeholder
         self.validator = validator
         self.prompt_text = prompt_text
+        self.submit_callback = submit_callback
         self.open_modal.label = button_label
 
     @discord.ui.button(label='Enter Card ID', style=discord.ButtonStyle.primary)
@@ -574,6 +628,7 @@ class EffectTextInputView(discord.ui.View):
             placeholder=self.input_placeholder,
             validator=self.validator,
             prompt_text=self.prompt_text,
+            submit_callback=self.submit_callback,
         )
         await interaction.response.send_modal(modal)
         self.stop()
