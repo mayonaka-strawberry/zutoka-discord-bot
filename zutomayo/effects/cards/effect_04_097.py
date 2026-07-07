@@ -40,7 +40,7 @@ async def effect_04_097(
     if len(hand_attributes) >= 3:
         engine.turn_state.attack_bonus[player_index] += 50
         log.debug('[%s] %s: attack bonus +%d (now %d)', card_instance.card.effect, engine.player_label(player_index), 50, engine.turn_state.attack_bonus[player_index])
-        attribute_names = ', '.join(attribute.value for attribute in hand_attributes)
+        attribute_names = ', '.join(sorted(attribute.value for attribute in hand_attributes))
         await engine._send_dm(
             player_index,
             content=f'**Effect (04-097):** Hand revealed with {len(hand_attributes)} attributes ({attribute_names}). Attack +50!',
@@ -50,7 +50,7 @@ async def effect_04_097(
             content=f'**Effect (04-097):** Opponent has {len(hand_attributes)} attributes in hand. Attack +50.',
         )
     else:
-        attribute_names = ', '.join(attribute.value for attribute in hand_attributes)
+        attribute_names = ', '.join(sorted(attribute.value for attribute in hand_attributes))
         await engine._send_dm(
             player_index,
             content=f'**Effect (04-097):** Hand revealed with only {len(hand_attributes)} attribute(s) ({attribute_names}). Need 3+. No bonus.',

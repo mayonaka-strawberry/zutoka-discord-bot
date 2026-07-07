@@ -24,7 +24,7 @@ async def effect_04_093(
     if len(power_charger_attributes) >= 2:
         player.hp = min(100, player.hp + 30)
         log.debug('[%s] %s: HP +30 (now %d)', card_instance.card.effect, engine.player_label(player_index), player.hp)
-        attribute_names = ', '.join(attribute.value for attribute in power_charger_attributes)
+        attribute_names = ', '.join(sorted(attribute.value for attribute in power_charger_attributes))
         await engine._send_dm(
             player_index,
             content=f'**Effect (04-093):** Power Charger has {len(power_charger_attributes)} attributes ({attribute_names}). HP +30!',

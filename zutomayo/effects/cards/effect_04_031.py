@@ -29,9 +29,9 @@ async def effect_04_031(
     if len(power_charger_attributes) >= 4:
         engine.turn_state.attack_bonus[player_index] += 100
         log.debug('[%s] %s: attack bonus +%d (now %d)', card_instance.card.effect, engine.player_label(player_index), 100, engine.turn_state.attack_bonus[player_index])
-        attribute_names = ', '.join(attribute.value for attribute in power_charger_attributes)
+        attribute_names = ', '.join(sorted(attribute.value for attribute in power_charger_attributes))
         await engine._send_dm(player_index, content=f'**Effect (04-031):** {len(power_charger_attributes)} attributes in Power Charger ({attribute_names}). Attack +100!')
         await engine._send_dm(opponent_index, content=f'**Effect (04-031):** Opponent has {len(power_charger_attributes)} attributes in Power Charger. Attack +100.')
     else:
-        attribute_names = ', '.join(attribute.value for attribute in power_charger_attributes)
+        attribute_names = ', '.join(sorted(attribute.value for attribute in power_charger_attributes))
         await engine._send_dm(player_index, content=f'**Effect (04-031):** Only {len(power_charger_attributes)} attribute(s) in Power Charger ({attribute_names}). Need 4+. No effect.')
