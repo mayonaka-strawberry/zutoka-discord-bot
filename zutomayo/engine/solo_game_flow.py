@@ -30,9 +30,9 @@ from zutomayo.ui.embeds import (
     build_field_embed,
     build_game_over_embed,
     build_hand_embed,
-    create_hand_image,
+    create_hand_image_off_thread,
 )
-from zutomayo.ui.board_renderer import generate_zone_messages, render_board_image
+from zutomayo.ui.board_renderer import generate_zone_messages_off_thread, render_board_image_off_thread
 from zutomayo.ui.deck_management_views import DeckSourceView
 from zutomayo.ui.views import CardSelectView, RedrawView, TwoStepCardSelectView
 
@@ -147,7 +147,7 @@ class SoloGameFlow(GameFlow):
             await self._send_zone_messages(
                 session, names, to_channel=True, changed_indices=changed_indices,
             )
-        board_file = render_board_image(game_state, Chronos.DAY)
+        board_file = await render_board_image_off_thread(game_state, Chronos.DAY)
         await self._send_to_channel(session, content=content, embeds=embeds, files=[board_file])
 
         # Human player DM only
@@ -157,7 +157,7 @@ class SoloGameFlow(GameFlow):
                 session, names, player_index=HUMAN_PLAYER_INDEX,
                 changed_indices=changed_indices,
             )
-        board_file = render_board_image(game_state, human_player.side)
+        board_file = await render_board_image_off_thread(game_state, human_player.side)
         await self._send_to_player(
             session, HUMAN_PLAYER_INDEX,
             content=content, embeds=embeds, files=[board_file],
@@ -272,7 +272,7 @@ class SoloGameFlow(GameFlow):
                 if index == HUMAN_PLAYER_INDEX:
                     embed = build_hand_embed(player)
                     await self._send_to_player(session, index, content='New hand', embed=embed)
-                    hand_file = create_hand_image(player.hand)
+                    hand_file = await create_hand_image_off_thread(player.hand)
                     if hand_file:
                         await self._send_to_player(session, index, files=[hand_file])
             else:
@@ -375,7 +375,7 @@ class SoloGameFlow(GameFlow):
                     status = 'Set 1 card'
 
             await self._send_to_player(session, index, content=status, embed=embed)
-            hand_file = create_hand_image(player.hand)
+            hand_file = await create_hand_image_off_thread(player.hand)
             if hand_file:
                 await self._send_to_player(session, index, files=[hand_file])
             await self._send_to_player(session, index, content='Select your cards:', view=view)
@@ -574,7 +574,7 @@ class SoloGameFlow(GameFlow):
         human_player = game_state.players[HUMAN_PLAYER_INDEX]
         embed = build_hand_embed(human_player)
         await self._send_to_player(session, HUMAN_PLAYER_INDEX, embed=embed)
-        hand_file = create_hand_image(human_player.hand)
+        hand_file = await create_hand_image_off_thread(human_player.hand)
         if hand_file:
             await self._send_to_player(session, HUMAN_PLAYER_INDEX, files=[hand_file])
 
@@ -593,7 +593,7 @@ class SoloGameFlow(GameFlow):
         start_content = f'**ゲームスタート: {names[HUMAN_PLAYER_INDEX]} vs. {names[BOT_PLAYER_INDEX]}**'
 
         await self._send_zone_messages(session, names, to_channel=True)
-        board_file = render_board_image(game_state, Chronos.DAY)
+        board_file = await render_board_image_off_thread(game_state, Chronos.DAY)
         await self._send_to_channel(
             session, content=start_content, embed=field_embed, files=[board_file],
         )
@@ -602,7 +602,7 @@ class SoloGameFlow(GameFlow):
         await self._send_zone_messages(
             session, names, player_index=HUMAN_PLAYER_INDEX,
         )
-        board_file = render_board_image(game_state, human_player.side)
+        board_file = await render_board_image_off_thread(game_state, human_player.side)
         await self._send_to_player(
             session, HUMAN_PLAYER_INDEX,
             content=start_content, embed=field_embed, files=[board_file],

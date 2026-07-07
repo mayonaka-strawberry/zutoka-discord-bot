@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -257,3 +258,24 @@ def generate_zone_messages(
         messages.append((f'{name} Power Charger', pc_strip))
 
     return messages
+
+
+# ---------------------------------------------------------------------------
+# Event-loop-friendly wrappers
+# ---------------------------------------------------------------------------
+
+
+async def render_board_image_off_thread(
+    game_state: GameState,
+    perspective: Chronos,
+) -> discord.File:
+    """Run render_board_image in a worker thread so the event loop stays responsive."""
+    return await asyncio.to_thread(render_board_image, game_state, perspective)
+
+
+async def generate_zone_messages_off_thread(
+    game_state: GameState,
+    player_names: dict[int, str],
+) -> list[tuple[str, Optional[discord.File]]]:
+    """Run generate_zone_messages in a worker thread so the event loop stays responsive."""
+    return await asyncio.to_thread(generate_zone_messages, game_state, player_names)

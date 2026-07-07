@@ -13,7 +13,7 @@ from zutomayo.data.deck_storage_tcg import (
     update_tcg_deck,
 )
 from zutomayo.data.deck_validator_tcg import parse_tcg_deck_input
-from zutomayo.ui.embeds import build_deck_list_embed, create_deck_grid_image
+from zutomayo.ui.embeds import build_deck_list_embed, create_deck_grid_image_off_thread
 
 if TYPE_CHECKING:
     from zutomayo.engine.game_session import GameSession
@@ -89,10 +89,10 @@ class MakeDeckTcgModal(discord.ui.Modal):
             embeds=[embed, side_embed],
             ephemeral=True,
         )
-        grid = create_deck_grid_image(main_cards)
+        grid = await create_deck_grid_image_off_thread(main_cards)
         if grid:
             await interaction.followup.send(content='**Main Deck:**', file=grid, ephemeral=True)
-        side_grid = create_deck_grid_image(side_cards, columns=4)
+        side_grid = await create_deck_grid_image_off_thread(side_cards, columns=4)
         if side_grid:
             await interaction.followup.send(content='**Side Deck:**', file=side_grid, ephemeral=True)
 
@@ -163,10 +163,10 @@ class EditDeckTcgModal(discord.ui.Modal):
             embeds=[embed, side_embed],
             ephemeral=True,
         )
-        grid = create_deck_grid_image(main_cards)
+        grid = await create_deck_grid_image_off_thread(main_cards)
         if grid:
             await interaction.followup.send(content='**Main Deck:**', file=grid, ephemeral=True)
-        side_grid = create_deck_grid_image(side_cards, columns=4)
+        side_grid = await create_deck_grid_image_off_thread(side_cards, columns=4)
         if side_grid:
             await interaction.followup.send(content='**Side Deck:**', file=side_grid, ephemeral=True)
 
@@ -384,10 +384,10 @@ class ViewDeckTcgView(discord.ui.View):
         self._build_buttons()
         await interaction.response.edit_message(embeds=self.current_embeds(), view=self)
         main_cards, side_cards = self.current_cards()
-        grid = create_deck_grid_image(main_cards)
+        grid = await create_deck_grid_image_off_thread(main_cards)
         if grid:
             await interaction.followup.send(content='**Main Deck:**', file=grid, ephemeral=True)
-        side_grid = create_deck_grid_image(side_cards, columns=4)
+        side_grid = await create_deck_grid_image_off_thread(side_cards, columns=4)
         if side_grid:
             await interaction.followup.send(content='**Side Deck:**', file=side_grid, ephemeral=True)
 
@@ -397,10 +397,10 @@ class ViewDeckTcgView(discord.ui.View):
         self._build_buttons()
         await interaction.response.edit_message(embeds=self.current_embeds(), view=self)
         main_cards, side_cards = self.current_cards()
-        grid = create_deck_grid_image(main_cards)
+        grid = await create_deck_grid_image_off_thread(main_cards)
         if grid:
             await interaction.followup.send(content='**Main Deck:**', file=grid, ephemeral=True)
-        side_grid = create_deck_grid_image(side_cards, columns=4)
+        side_grid = await create_deck_grid_image_off_thread(side_cards, columns=4)
         if side_grid:
             await interaction.followup.send(content='**Side Deck:**', file=side_grid, ephemeral=True)
 
@@ -692,10 +692,10 @@ class TcgSavedDeckSelectView(discord.ui.View):
             view=view,
         )
         self.stop()
-        grid = create_deck_grid_image(main_cards)
+        grid = await create_deck_grid_image_off_thread(main_cards)
         if grid:
             await interaction.followup.send(content='**Main Deck:**', file=grid, ephemeral=True)
-        side_grid = create_deck_grid_image(side_cards, columns=4)
+        side_grid = await create_deck_grid_image_off_thread(side_cards, columns=4)
         if side_grid:
             await interaction.followup.send(content='**Side Deck:**', file=side_grid, ephemeral=True)
 

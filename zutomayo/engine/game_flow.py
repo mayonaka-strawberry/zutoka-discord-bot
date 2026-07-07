@@ -15,9 +15,9 @@ from zutomayo.ui.embeds import (
     build_field_embed,
     build_game_over_embed,
     build_hand_embed,
-    create_hand_image,
+    create_hand_image_off_thread,
 )
-from zutomayo.ui.board_renderer import generate_zone_messages, render_board_image
+from zutomayo.ui.board_renderer import generate_zone_messages_off_thread, render_board_image_off_thread
 from zutomayo.ui.deck_management_views import DeckSourceView
 from zutomayo.ui.views import CardSelectView, RedrawView, TwoStepCardSelectView
 from zutomayo.utils.discord_utils import send_with_retry
@@ -82,7 +82,7 @@ class GameFlow:
     ) -> set[int]:
         """Return indices (0-3) of zone messages that have changed.
 
-        Index mapping matches generate_zone_messages() output order:
+        Index mapping matches generate_zone_messages_off_thread() output order:
           0 = P0 Abyss, 1 = P0 Power Charger,
           2 = P1 Abyss, 3 = P1 Power Charger.
         """
@@ -108,7 +108,7 @@ class GameFlow:
 
         If changed_indices is provided, only send messages for those indices.
         """
-        zone_msgs = generate_zone_messages(session.game_state, names)
+        zone_msgs = await generate_zone_messages_off_thread(session.game_state, names)
         for i, (label, strip_file) in enumerate(zone_msgs):
             if changed_indices is not None and i not in changed_indices:
                 continue
@@ -176,7 +176,7 @@ class GameFlow:
         # Channel: zone messages (only changed) then DAY perspective board
         if changed_indices is None or changed_indices:
             await self._send_zone_messages(session, names, to_channel=True, changed_indices=changed_indices)
-        board_file = render_board_image(game_state, Chronos.DAY)
+        board_file = await render_board_image_off_thread(game_state, Chronos.DAY)
         await self._send_to_channel(session, content=content, embeds=embeds, files=[board_file])
 
         # Each player DM: zone messages (only changed) then their perspective board (no button)
@@ -184,7 +184,7 @@ class GameFlow:
             player = game_state.players[index]
             if changed_indices is None or changed_indices:
                 await self._send_zone_messages(session, names, player_index=index, changed_indices=changed_indices)
-            board_file = render_board_image(game_state, player.side)
+            board_file = await render_board_image_off_thread(game_state, player.side)
             await self._send_to_player(
                 session, index, content=content, embeds=embeds, files=[board_file],
             )
@@ -289,7 +289,7 @@ class GameFlow:
             player = game_state.players[index]
             embed = build_hand_embed(player)
             await self._send_to_player(session, index, embed=embed)
-            hand_file = create_hand_image(player.hand)
+            hand_file = await create_hand_image_off_thread(player.hand)
             if hand_file:
                 await self._send_to_player(session, index, files=[hand_file])
 
@@ -308,12 +308,12 @@ class GameFlow:
         start_content = f'**ゲームスタート: {names[0]} vs. {names[1]}**'
 
         await self._send_zone_messages(session, names, to_channel=True)
-        board_file = render_board_image(game_state, Chronos.DAY)
+        board_file = await render_board_image_off_thread(game_state, Chronos.DAY)
         await self._send_to_channel(session, content=start_content, embed=field_embed, files=[board_file])
         for index in range(2):
             player = game_state.players[index]
             await self._send_zone_messages(session, names, player_index=index)
-            board_file = render_board_image(game_state, player.side)
+            board_file = await render_board_image_off_thread(game_state, player.side)
             await self._send_to_player(session, index, content=start_content, embed=field_embed, files=[board_file])
 
         log.info('Game %s started: %s vs %s', session.game_id, names[0], names[1])
@@ -460,7 +460,7 @@ class GameFlow:
                 # Send updated hand
                 embed = build_hand_embed(player)
                 await self._send_to_player(session, index, content='New hand', embed=embed)
-                hand_file = create_hand_image(player.hand)
+                hand_file = await create_hand_image_off_thread(player.hand)
                 if hand_file:
                     await self._send_to_player(session, index, files=[hand_file])
             else:
@@ -537,7 +537,7 @@ class GameFlow:
                     status = 'Set 1 card'
 
             await self._send_to_player(session, index, content=status, embed=embed)
-            hand_file = create_hand_image(player.hand)
+            hand_file = await create_hand_image_off_thread(player.hand)
             if hand_file:
                 await self._send_to_player(session, index, files=[hand_file])
             await self._send_to_player(session, index, content='Select your cards:', view=view)
