@@ -24,7 +24,7 @@ async def effect_04_059(
     if len(power_charger_attributes) >= 3:
         player.hp = min(player.hp + 50, 100)
         log.debug('[%s] %s: HP +50 (now %d)', card_instance.card.effect, engine.player_label(player_index), player.hp)
-        attribute_names = ', '.join(attribute.value for attribute in power_charger_attributes)
+        attribute_names = ', '.join(sorted(attribute.value for attribute in power_charger_attributes))
         await engine._send_dm(player_index, content=f'**Effect (04-059):** Power Charger has {len(power_charger_attributes)} attributes ({attribute_names}). HP +50!')
         await engine._send_dm(opponent_index, content=f'**Effect (04-059):** Opponent has {len(power_charger_attributes)} attributes in Power Charger. HP +50.')
     else:
