@@ -249,3 +249,6 @@ coevolution_config.json
 coevolution_archive.json
 coevolution_progress/
 training_hyperparameters_v3.json
+
+# AlphaZero engine rewrite (engine_alpha) — fully local
+engine_alpha/
