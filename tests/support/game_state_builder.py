@@ -121,6 +121,15 @@ class GameStateBuilder:
         self._last_battle_winner = None if player_index is None else self._players[player_index].name
         return self
 
+    def with_previous_battle_character(self, player_index: int, card_identity: Optional[str]) -> 'GameStateBuilder':
+        """Set the Card (not CardInstance) used in this player's previous turn."""
+        if not hasattr(self, '_previous_battle_characters'):
+            self._previous_battle_characters = {0: None, 1: None}
+        self._previous_battle_characters[player_index] = (
+            None if card_identity is None else card_by_identity(card_identity)
+        )
+        return self
+
     def build(self) -> GameState:
         state = GameState(
             players=self._players,
@@ -130,4 +139,6 @@ class GameStateBuilder:
         state.turn = self._turn
         state.current_phase = self._phase
         state.last_battle_winner = self._last_battle_winner
+        if hasattr(self, '_previous_battle_characters'):
+            state.previous_battle_characters = dict(self._previous_battle_characters)
         return state
