@@ -9,6 +9,9 @@ from zutomayo.enums.phase import Phase
 from zutomayo.enums.result import Result
 from zutomayo.enums.zone import Zone
 from zutomayo.data.name_storage import resolve_display_name
+from zutomayo.engine.adapters.discord_adapter import DiscordDecisionAdapter
+from zutomayo.engine.decision_broker import DecisionBroker
+from zutomayo.engine.match_transport import DiscordMatchTransport
 from zutomayo.ui.embeds import (
     build_battle_result_embed,
     build_effect_resolution_embed,
@@ -34,6 +37,14 @@ log = logging.getLogger(__name__)
 class GameFlow:
     def __init__(self, bot: discord.Client) -> None:
         self.bot = bot
+
+    def _ensure_decision_runtime(self, session: GameSession) -> None:
+        """Install the session's transport and decision broker if not yet present."""
+        if session.transport is None:
+            session.transport = DiscordMatchTransport(self.bot)
+        if session.broker is None:
+            discord_adapter = DiscordDecisionAdapter(session.transport)
+            session.broker = DecisionBroker(session, {0: discord_adapter, 1: discord_adapter})
 
     def _player_names(self, session: GameSession) -> dict[int, str]:
         names = {}
@@ -236,6 +247,7 @@ class GameFlow:
 
     async def run_game(self, session: GameSession) -> None:
         try:
+            self._ensure_decision_runtime(session)
             deck_1_cards, deck_2_cards = await self._do_deck_building_phase(session)
             await self.run_single_match(session, deck_1_cards, deck_2_cards)
 
@@ -259,6 +271,7 @@ class GameFlow:
         Returns the winner player index (0 or 1), or None for a draw.
         Does NOT remove the session from the session manager.
         """
+        self._ensure_decision_runtime(session)
         session.initialize_game(
             deck_1_cards=deck_1_cards,
             deck_2_cards=deck_2_cards,

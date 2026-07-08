@@ -66,6 +66,21 @@ class SoloGameFlow(GameFlow):
         self.bot_agent = bot_agent if bot_agent is not None else create_bot_agent()
         self.use_easy_decks = use_easy_decks
 
+    def _ensure_decision_runtime(self, session: GameSession) -> None:
+        """Human decisions go through Discord views; bot decisions through the agent."""
+        from zutomayo.engine.adapters.bot_agent_adapter import BotAgentDecisionAdapter
+        from zutomayo.engine.adapters.discord_adapter import DiscordDecisionAdapter
+        from zutomayo.engine.decision_broker import DecisionBroker
+        from zutomayo.engine.match_transport import DiscordMatchTransport
+
+        if session.transport is None:
+            session.transport = DiscordMatchTransport(self.bot)
+        if session.broker is None:
+            session.broker = DecisionBroker(session, {
+                HUMAN_PLAYER_INDEX: DiscordDecisionAdapter(session.transport),
+                BOT_PLAYER_INDEX: BotAgentDecisionAdapter(self.bot_agent),
+            })
+
     def _update_bot_game_state(self, session: GameSession) -> None:
         """Set the current game state on the bot agent if it is model-driven."""
         if isinstance(self.bot_agent, ModelBotAgent):
@@ -544,6 +559,7 @@ class SoloGameFlow(GameFlow):
         deck_2_cards: list[Card] | None,
     ) -> int | None:
         """Run a single solo match. Mirrors run_single_match but uses solo overrides."""
+        self._ensure_decision_runtime(session)
         session.initialize_game(
             deck_1_cards=deck_1_cards,
             deck_2_cards=deck_2_cards,

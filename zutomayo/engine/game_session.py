@@ -1,5 +1,6 @@
 import asyncio
-from typing import Any, Optional
+import random
+from typing import TYPE_CHECKING, Any, Optional
 from uuid import uuid4
 from zutomayo.data.card_loader import load_cards
 from zutomayo.effects.effect_engine import EffectEngine
@@ -8,6 +9,10 @@ from zutomayo.engine.game_controller import GameController
 from zutomayo.engine.turn_manager import TurnManager
 from zutomayo.models.card import Card
 from zutomayo.models.game_state import GameState
+
+if TYPE_CHECKING:
+    from zutomayo.engine.decision_broker import DecisionBroker
+    from zutomayo.engine.match_transport import MatchTransport
 
 
 class GameSession:
@@ -18,6 +23,17 @@ class GameSession:
         self.game_state: Optional[GameState] = None
         self.turn_manager: Optional[TurnManager] = None
         self.effect_engine = EffectEngine()
+
+        # Per-game seeded RNG: every shuffle and the coin flip draw from this
+        # generator so a logged game can be replayed deterministically from the
+        # seed (restart resumability). The seed is persisted in the game
+        # manifest once persistence is wired.
+        self.random_seed: int = random.SystemRandom().getrandbits(64)
+        self.random_generator: random.Random = random.Random(self.random_seed)
+
+        # Decision-broker runtime, installed by the flow that runs this game.
+        self.broker: Optional['DecisionBroker'] = None
+        self.transport: Optional['MatchTransport'] = None
 
         # Track both players' Discord IDs
         self.player_discord_ids[creator_id] = 0
