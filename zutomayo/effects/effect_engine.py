@@ -6,8 +6,18 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Coroutine, Optional
 from constants import CHRONOS_SIZE, MIDNIGHT, NIGHT_END
 from zutomayo.data.name_storage import resolve_display_name
+from zutomayo.engine.decisions import (
+    KIND_EFFECT_CARD_SELECT,
+    KIND_EFFECT_NUMBER_SELECT,
+    KIND_EFFECT_TEXT_INPUT,
+    PAYLOAD_INDICES,
+    PAYLOAD_NUMBER,
+    PAYLOAD_TEXT,
+    PURPOSE_EFFECT_ORDER,
+    DecisionRequest,
+    build_card_options,
+)
 from zutomayo.enums.card_type import CardType
-from zutomayo.utils.discord_utils import send_with_retry
 from zutomayo.enums.chronos import Chronos
 from zutomayo.models.card_instance import CardInstance
 
@@ -94,6 +104,10 @@ class EffectEngine:
         self.bot: Optional[discord.Client] = None
         self.turn_state = TurnEffectState()
         self._player_name_cache: dict[int, str] = {}
+        # Transient routing context stamped on card-selection requests issued
+        # from composed prompts (currently only effect ordering); see
+        # BotAgentDecisionAdapter for why the purpose matters.
+        self._prompt_purpose: str = ''
 
     def bind(self, session: GameSession, bot: discord.Client) -> None:
         self.session = session
@@ -737,35 +751,39 @@ class EffectEngine:
         forced_first, remaining = self._partition_forced_first(eligible)
         ordered: list[CardInstance] = list(forced_first)
 
-        while len(remaining) > 1:
-            card_names = ', '.join(card_instance.card.name for card_instance in remaining)
-            step = len(ordered) + 1
-            total = len(eligible)
-            prompt_text = (
-                f'**Choose effect order ({step}/{total})** '
-                f'[効果の処理順を選んでください]\n'
-                f'Remaining effects: {card_names}\n'
-                f'Select which effect to resolve next:'
-            )
-
-            selected = await self._prompt_card_selection(
-                player_index,
-                remaining,
-                prompt_text,
-                placeholder='Select next effect to resolve...',
-            )
-
-            if selected is None:
-                log.info(
-                    '%s timed out during effect order selection; '
-                    'using default order for remaining %d effects',
-                    self.player_label(player_index), len(remaining),
+        self._prompt_purpose = PURPOSE_EFFECT_ORDER
+        try:
+            while len(remaining) > 1:
+                card_names = ', '.join(card_instance.card.name for card_instance in remaining)
+                step = len(ordered) + 1
+                total = len(eligible)
+                prompt_text = (
+                    f'**Choose effect order ({step}/{total})** '
+                    f'[効果の処理順を選んでください]\n'
+                    f'Remaining effects: {card_names}\n'
+                    f'Select which effect to resolve next:'
                 )
-                ordered.extend(remaining)
-                return ordered
 
-            ordered.append(selected)
-            remaining.remove(selected)
+                selected = await self._prompt_card_selection(
+                    player_index,
+                    remaining,
+                    prompt_text,
+                    placeholder='Select next effect to resolve...',
+                )
+
+                if selected is None:
+                    log.info(
+                        '%s timed out during effect order selection; '
+                        'using default order for remaining %d effects',
+                        self.player_label(player_index), len(remaining),
+                    )
+                    ordered.extend(remaining)
+                    return ordered
+
+                ordered.append(selected)
+                remaining.remove(selected)
+        finally:
+            self._prompt_purpose = ''
 
         # Last remaining card — no choice needed
         if remaining:
@@ -796,24 +814,14 @@ class EffectEngine:
 
 
     async def _send_dm(self, player_index: int, **kwargs: Any) -> Optional[discord.Message]:
-        if self.session is None or self.bot is None:
+        if self.session is None or self.session.transport is None:
             return None
-        discord_id = self.session.get_discord_id(player_index)
-        if discord_id is None:
-            return None
-        user = self.bot.get_user(discord_id)
-        if user is None:
-            user = await send_with_retry(lambda: self.bot.fetch_user(discord_id), label='fetch_user')
-        dm_channel = await send_with_retry(lambda: user.create_dm(), label='create_dm')
-        return await send_with_retry(lambda: dm_channel.send(**kwargs), label='DM send')
+        return await self.session.transport.send_to_player(self.session, player_index, **kwargs)
 
     async def _send_to_channel(self, **kwargs: Any) -> Optional[discord.Message]:
-        if self.session is None or self.bot is None:
+        if self.session is None or self.session.transport is None:
             return None
-        channel = self.bot.get_channel(self.session.channel_id)
-        if channel is None:
-            return None
-        return await send_with_retry(lambda: channel.send(**kwargs), label='channel send')
+        return await self.session.transport.send_to_channel(self.session, **kwargs)
 
     async def notify_draw(self, game_state: GameState, player_index: int, count: int) -> None:
         """Broadcast a draw notification to the channel and both player DMs."""
@@ -837,21 +845,26 @@ class EffectEngine:
         prompt_text: str,
         placeholder: str = 'Select a card...',
     ) -> Optional[CardInstance]:
-        """Send a dropdown to a player's DM and wait for selection. Returns selected CardInstance or None."""
-        if not cards or self.session is None:
+        """Prompt a player to choose one card. Returns the selected CardInstance or None on timeout."""
+        if not cards or self.session is None or self.session.broker is None:
             return None
 
-        from zutomayo.ui.views import EffectCardSelectView
-
-        self.session.clear_pending_player(player_index)
-        view = EffectCardSelectView(self.session, player_index, cards, placeholder=placeholder)
-        await self._send_dm(player_index, content=prompt_text, view=view)
-
-        received = await self.session.wait_for_player(player_index, timeout=300.0)
-        if not received:
+        request = DecisionRequest(
+            kind=KIND_EFFECT_CARD_SELECT,
+            player_index=player_index,
+            prompt_text=prompt_text,
+            placeholder=placeholder,
+            options=build_card_options(cards),
+            minimum_selections=1,
+            maximum_selections=1,
+            timeout_seconds=300.0,
+            purpose=self._prompt_purpose,
+            live_objects=cards,
+        )
+        response = await self.session.broker.request(request)
+        if response.payload_type != PAYLOAD_INDICES or not response.payload:
             return None
-
-        return self.session.pending_actions.get(player_index)
+        return cards[response.payload[0]]
 
     async def _prompt_card_multiselect(
         self,
@@ -909,24 +922,24 @@ class EffectEngine:
         placeholder: str = 'Select a number...',
         label_prefix: str | None = None,
     ) -> int | None:
-        """Send a numeric dropdown to a player's DM and wait for selection. Returns selected int or None."""
-        if self.session is None:
+        """Prompt a player to choose a number. Returns the selected int or None on timeout."""
+        if self.session is None or self.session.broker is None:
             return None
 
-        from zutomayo.ui.views import EffectNumberSelectView
-
-        self.session.clear_pending_player(player_index)
-        view = EffectNumberSelectView(
-            self.session, player_index, min_value, max_value,
-            placeholder=placeholder, label_prefix=label_prefix,
+        request = DecisionRequest(
+            kind=KIND_EFFECT_NUMBER_SELECT,
+            player_index=player_index,
+            prompt_text=prompt_text,
+            placeholder=placeholder,
+            minimum_value=min_value,
+            maximum_value=max_value,
+            label_prefix=label_prefix,
+            timeout_seconds=300.0,
         )
-        await self._send_dm(player_index, content=prompt_text, view=view)
-
-        received = await self.session.wait_for_player(player_index, timeout=300.0)
-        if not received:
+        response = await self.session.broker.request(request)
+        if response.payload_type != PAYLOAD_NUMBER or response.payload is None:
             return None
-
-        return self.session.pending_actions.get(player_index)
+        return response.payload
 
     async def _prompt_text_input(
         self,
@@ -938,29 +951,25 @@ class EffectEngine:
         input_placeholder: str | None = None,
         validator: Callable[[str], str | None] | None = None,
     ) -> str | None:
-        """Send a button that opens a text input modal. Returns the entered text or None on timeout."""
-        if self.session is None:
+        """Prompt a player to type a value. Returns the entered text or None on timeout."""
+        if self.session is None or self.session.broker is None:
             return None
 
-        from zutomayo.ui.views import EffectTextInputView
-
-        self.session.clear_pending_player(player_index)
-        view = EffectTextInputView(
-            self.session, player_index,
+        request = DecisionRequest(
+            kind=KIND_EFFECT_TEXT_INPUT,
+            player_index=player_index,
+            prompt_text=prompt_text,
             modal_title=modal_title,
             button_label=button_label,
-            label=input_label,
-            placeholder=input_placeholder,
+            input_label=input_label,
+            input_placeholder=input_placeholder,
             validator=validator,
-            prompt_text=prompt_text,
+            timeout_seconds=300.0,
         )
-        await self._send_dm(player_index, content=prompt_text, view=view)
-
-        received = await self.session.wait_for_player(player_index, timeout=300.0)
-        if not received:
+        response = await self.session.broker.request(request)
+        if response.payload_type != PAYLOAD_TEXT or response.payload is None:
             return None
-
-        return self.session.pending_actions.get(player_index)
+        return response.payload
 
 
 # ======================================================================
