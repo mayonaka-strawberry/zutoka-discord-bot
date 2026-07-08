@@ -1,14 +1,17 @@
 """UI views for the card switching phase between TCG matches."""
 
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 import discord
+from zutomayo.engine.decisions import PAYLOAD_CARD_KEYS
 from zutomayo.enums.card_type import CardType
 from zutomayo.ui.embeds import ATTRIBUTE_EN, ATTRIBUTE_JP, CARD_TYPE_LABEL
 
 if TYPE_CHECKING:
     from zutomayo.engine.game_session import GameSession
     from zutomayo.models.card import Card
+
+SubmitCallback = Callable[[str, object], None]
 
 
 def _card_option(card: Card, index: int) -> discord.SelectOption:
@@ -36,7 +39,35 @@ def _card_option(card: Card, index: int) -> discord.SelectOption:
     return discord.SelectOption(label=label, description=description, value=str(index))
 
 
-class SwitchCardsView(discord.ui.View):
+class _SwitchViewBase(discord.ui.View):
+    """Shared submit and timeout handling for the switch view chain."""
+
+    session: GameSession
+    player_index: int
+    submit_callback: SubmitCallback | None
+
+    def _submit_swap(self, removed_cards: list[Card], added_cards: list[Card]) -> None:
+        if self.submit_callback is not None:
+            self.submit_callback(PAYLOAD_CARD_KEYS, {
+                'removed': [[card.pack, card.id] for card in removed_cards],
+                'added': [[card.pack, card.id] for card in added_cards],
+            })
+        else:
+            self.session.submit_action(self.player_index, {
+                'removed': removed_cards,
+                'added': added_cards,
+            })
+
+    async def on_timeout(self) -> None:
+        if self.submit_callback is not None:
+            # The broker owns the authoritative timeout; a late empty submit
+            # is either the same empty-swap default or ignored.
+            self._submit_swap([], [])
+        elif self.player_index not in self.session.pending_actions:
+            self.session.submit_action(self.player_index, {'removed': [], 'added': []})
+
+
+class SwitchCardsView(_SwitchViewBase):
     """Initial view: choose to switch cards or keep current deck."""
 
     def __init__(
@@ -46,6 +77,7 @@ class SwitchCardsView(discord.ui.View):
         main_deck: list[Card],
         side_deck: list[Card],
         opponent_name: str = 'opponent',
+        submit_callback: SubmitCallback | None = None,
     ):
         super().__init__(timeout=750)
         self.session = session
@@ -53,6 +85,7 @@ class SwitchCardsView(discord.ui.View):
         self.main_deck = main_deck
         self.side_deck = side_deck
         self.opponent_name = opponent_name
+        self.submit_callback = submit_callback
 
     @discord.ui.button(label='Switch Cards', style=discord.ButtonStyle.primary, row=0)
     async def switch_cards(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -62,6 +95,7 @@ class SwitchCardsView(discord.ui.View):
             main_deck=self.main_deck,
             side_deck=self.side_deck,
             opponent_name=self.opponent_name,
+            submit_callback=self.submit_callback,
         )
         await interaction.response.edit_message(
             content='**Select cards to remove from your main deck** (1-8 cards):',
@@ -77,6 +111,7 @@ class SwitchCardsView(discord.ui.View):
             main_deck=self.main_deck,
             side_deck=self.side_deck,
             opponent_name=self.opponent_name,
+            submit_callback=self.submit_callback,
         )
         await interaction.response.edit_message(
             content='**No Changes** — Are you sure?',
@@ -84,12 +119,8 @@ class SwitchCardsView(discord.ui.View):
         )
         self.stop()
 
-    async def on_timeout(self) -> None:
-        if self.player_index not in self.session.pending_actions:
-            self.session.submit_action(self.player_index, {'removed': [], 'added': []})
 
-
-class NoChangeConfirmView(discord.ui.View):
+class NoChangeConfirmView(_SwitchViewBase):
     """Confirm or go back when choosing no changes."""
 
     def __init__(
@@ -99,6 +130,7 @@ class NoChangeConfirmView(discord.ui.View):
         main_deck: list[Card],
         side_deck: list[Card],
         opponent_name: str = 'opponent',
+        submit_callback: SubmitCallback | None = None,
     ):
         super().__init__(timeout=750)
         self.session = session
@@ -106,10 +138,11 @@ class NoChangeConfirmView(discord.ui.View):
         self.main_deck = main_deck
         self.side_deck = side_deck
         self.opponent_name = opponent_name
+        self.submit_callback = submit_callback
 
     @discord.ui.button(label='Confirm', style=discord.ButtonStyle.green)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.session.submit_action(self.player_index, {'removed': [], 'added': []})
+        self._submit_swap([], [])
         await interaction.response.edit_message(
             content=f'No changes made. Waiting for {self.opponent_name}...',
             view=None,
@@ -124,6 +157,7 @@ class NoChangeConfirmView(discord.ui.View):
             main_deck=self.main_deck,
             side_deck=self.side_deck,
             opponent_name=self.opponent_name,
+            submit_callback=self.submit_callback,
         )
         await interaction.response.edit_message(
             content='**Switch Cards [サイドデッキの入れ替え]**\nSwap cards between your main deck and side deck.',
@@ -131,12 +165,8 @@ class NoChangeConfirmView(discord.ui.View):
         )
         self.stop()
 
-    async def on_timeout(self) -> None:
-        if self.player_index not in self.session.pending_actions:
-            self.session.submit_action(self.player_index, {'removed': [], 'added': []})
 
-
-class RemoveCardsView(discord.ui.View):
+class RemoveCardsView(_SwitchViewBase):
     """Select 1-8 cards from main deck to remove."""
 
     def __init__(
@@ -146,6 +176,7 @@ class RemoveCardsView(discord.ui.View):
         main_deck: list[Card],
         side_deck: list[Card],
         opponent_name: str = 'opponent',
+        submit_callback: SubmitCallback | None = None,
     ):
         super().__init__(timeout=750)
         self.session = session
@@ -153,6 +184,7 @@ class RemoveCardsView(discord.ui.View):
         self.main_deck = main_deck
         self.side_deck = side_deck
         self.opponent_name = opponent_name
+        self.submit_callback = submit_callback
         self.selected_remove_indices: list[int] = []
         self._build_select()
 
@@ -194,10 +226,7 @@ class RemoveCardsView(discord.ui.View):
 
         if count == 8:
             # All side deck cards added automatically
-            self.session.submit_action(self.player_index, {
-                'removed': removed_cards,
-                'added': list(self.side_deck),
-            })
+            self._submit_swap(removed_cards, list(self.side_deck))
             await interaction.response.edit_message(
                 content=f'Removed {count} cards and added all 8 side deck cards. Waiting for {self.opponent_name}...',
                 view=None,
@@ -214,6 +243,7 @@ class RemoveCardsView(discord.ui.View):
                 removed_indices=self.selected_remove_indices,
                 count_needed=count,
                 opponent_name=self.opponent_name,
+                submit_callback=self.submit_callback,
             )
             await interaction.response.edit_message(
                 content=f'**Select {count} card(s) from your side deck to add:**',
@@ -228,6 +258,7 @@ class RemoveCardsView(discord.ui.View):
             main_deck=self.main_deck,
             side_deck=self.side_deck,
             opponent_name=self.opponent_name,
+            submit_callback=self.submit_callback,
         )
         await interaction.response.edit_message(
             content='**Switch Cards [サイドデッキの入れ替え]**\nSwap cards between your main deck and side deck.',
@@ -235,12 +266,8 @@ class RemoveCardsView(discord.ui.View):
         )
         self.stop()
 
-    async def on_timeout(self) -> None:
-        if self.player_index not in self.session.pending_actions:
-            self.session.submit_action(self.player_index, {'removed': [], 'added': []})
 
-
-class AddCardsView(discord.ui.View):
+class AddCardsView(_SwitchViewBase):
     """Select N cards from side deck to add to main deck."""
 
     def __init__(
@@ -253,6 +280,7 @@ class AddCardsView(discord.ui.View):
         removed_indices: list[int],
         count_needed: int,
         opponent_name: str = 'opponent',
+        submit_callback: SubmitCallback | None = None,
     ):
         super().__init__(timeout=750)
         self.session = session
@@ -263,6 +291,7 @@ class AddCardsView(discord.ui.View):
         self.removed_indices = removed_indices
         self.count_needed = count_needed
         self.opponent_name = opponent_name
+        self.submit_callback = submit_callback
         self.selected_add_indices: list[int] = []
         self._build_select()
 
@@ -299,10 +328,7 @@ class AddCardsView(discord.ui.View):
 
     async def _confirm(self, interaction: discord.Interaction):
         added_cards = [self.side_deck[i] for i in self.selected_add_indices]
-        self.session.submit_action(self.player_index, {
-            'removed': self.removed_cards,
-            'added': added_cards,
-        })
+        self._submit_swap(self.removed_cards, added_cards)
         await interaction.response.edit_message(
             content=f'Switched {len(self.removed_cards)} card(s). Waiting for {self.opponent_name}...',
             view=None,
@@ -316,13 +342,10 @@ class AddCardsView(discord.ui.View):
             main_deck=self.main_deck,
             side_deck=self.side_deck,
             opponent_name=self.opponent_name,
+            submit_callback=self.submit_callback,
         )
         await interaction.response.edit_message(
             content='**Select cards to remove from your main deck** (1-8 cards):',
             view=view,
         )
         self.stop()
-
-    async def on_timeout(self) -> None:
-        if self.player_index not in self.session.pending_actions:
-            self.session.submit_action(self.player_index, {'removed': [], 'added': []})

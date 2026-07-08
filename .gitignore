@@ -225,3 +225,6 @@ zutomayo/progress/*
 
 # AlphaZero engine rewrite (engine_alpha) — fully local
 engine_alpha/
+
+# In-flight game persistence (runtime state, recreated on demand)
+zutomayo/active_games/

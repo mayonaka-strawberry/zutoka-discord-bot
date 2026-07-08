@@ -72,3 +72,48 @@ class ScriptedVarietyAgent(BotAgent):
     def choose_effect_text(self) -> Optional[str]:
         # Deterministic None exercises every text-input fallback branch.
         return None
+
+
+class StatelessScriptedAgent(BotAgent):
+    """
+    Agent whose every choice is a pure function of the request inputs, with no
+    internal counter. Required by the resume tests: a resumed game consults
+    the agent only for decisions past the replay log, and the answers must
+    match what the original (uninterrupted) run chose at the same game states.
+    """
+
+    def choose_redraw(self, hand: list['CardInstance']) -> list['CardInstance']:
+        if not hand or len(hand) % 2 != 0:
+            return []
+        return hand[: len(hand) % 4]
+
+    def choose_initial_battle_card(self, hand: list['CardInstance']) -> 'CardInstance':
+        return hand[(len(hand) - 1) % len(hand)]
+
+    def choose_cards_to_set(
+        self, hand: list['CardInstance'], max_cards: int,
+    ) -> list['CardInstance']:
+        if not hand or max_cards <= 0:
+            return []
+        count = min(1 + (len(hand) % max_cards), len(hand))
+        return hand[:count]
+
+    def choose_effect_order(
+        self, eligible: list['CardInstance'],
+    ) -> list['CardInstance']:
+        return list(reversed(eligible))
+
+    def choose_effect_card(
+        self, cards: list['CardInstance'],
+    ) -> Optional['CardInstance']:
+        if not cards:
+            return None
+        return cards[len(cards) // 2]
+
+    def choose_effect_number(self, min_value: int, max_value: int) -> int:
+        if max_value < min_value:
+            return min_value
+        return min_value + (max_value - min_value) // 2
+
+    def choose_effect_text(self) -> Optional[str]:
+        return None

@@ -19,6 +19,7 @@ from zutomayo.engine.decisions import (
     KIND_EFFECT_NUMBER_SELECT,
     KIND_EFFECT_TEXT_INPUT,
     KIND_REDRAW,
+    KIND_TCG_SWITCH,
     KIND_TWO_STEP_CARD_SELECT,
     DecisionRequest,
 )
@@ -103,6 +104,17 @@ class DiscordDecisionAdapter:
             return TwoStepCardSelectView(
                 session, request.player_index, request.live_objects,
                 embed=request.display_embed,
+                opponent_name=request.opponent_name,
+                submit_callback=submit_callback,
+            )
+        if request.kind == KIND_TCG_SWITCH:
+            from zutomayo.ui.tcg_switch_views import SwitchCardsView
+
+            return SwitchCardsView(
+                session=session,
+                player_index=request.player_index,
+                main_deck=request.live_objects['main_deck'],
+                side_deck=request.live_objects['side_deck'],
                 opponent_name=request.opponent_name,
                 submit_callback=submit_callback,
             )

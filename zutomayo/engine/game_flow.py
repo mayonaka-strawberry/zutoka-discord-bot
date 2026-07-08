@@ -276,6 +276,18 @@ class GameFlow:
             deck_1_cards=deck_1_cards,
             deck_2_cards=deck_2_cards,
         )
+
+        # Persistence starts here: decks are final, and the only session RNG
+        # consumed so far is the coin flip inside initialize_game, which replay
+        # regenerates from the seed. A TCG series creates its persistence
+        # before match 1, so this only fires for standalone matches. Solo
+        # matches are excluded until Stage 6 routes the bot's decisions
+        # through the broker (unlogged decisions cannot be replayed).
+        if session.persistence is None and not session.is_solo:
+            from zutomayo.engine.game_persistence import GamePersistence
+            session.persistence = GamePersistence.create_for_session(session, 'standard')
+            session.broker.persistence = session.persistence
+
         game_state = session.game_state
         turn_manager = session.turn_manager
         names = self._player_names(session)
@@ -747,6 +759,11 @@ class GameFlow:
         """
         from zutomayo.data.player_storage import record_match_result
         from zutomayo.enums.result import Result
+
+        # A match completing during restart replay was already recorded before
+        # the crash; recording it again would double-count Elo and stats.
+        if session.broker is not None and session.broker.replaying:
+            return
 
         try:
             game_state = session.game_state

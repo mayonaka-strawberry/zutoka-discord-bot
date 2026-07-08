@@ -558,7 +558,15 @@ class SoloGameFlow(GameFlow):
         deck_1_cards: list[Card] | None,
         deck_2_cards: list[Card] | None,
     ) -> int | None:
-        """Run a single solo match. Mirrors run_single_match but uses solo overrides."""
+        """Run a single solo match. Mirrors run_single_match but uses solo overrides.
+
+        Solo matches are not yet persisted for restart resume: the bot's
+        effect and flow decisions still bypass the decision broker (via
+        BotEffectEngine and the inline bot branches below), so they never
+        reach the decision log and a replay could not reproduce them. Solo
+        persistence turns on in Stage 6 when solo runs through the merged
+        flow and the BotAgentDecisionAdapter.
+        """
         self._ensure_decision_runtime(session)
         session.initialize_game(
             deck_1_cards=deck_1_cards,

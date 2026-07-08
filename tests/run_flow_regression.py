@@ -113,11 +113,15 @@ def _make_render_stub(function_name: str, returns_zone_list: bool = False):
 
 
 def _install_patches(temporary_data_directory: Path) -> None:
-    # Never write real player profiles or the username cache from tests.
+    # Never write real player profiles, the username cache, or live game
+    # persistence from tests.
+    import zutomayo.engine.game_persistence as game_persistence_module
+
     player_storage_module.PLAYERS_DIRECTORY = temporary_data_directory / 'players'
     name_storage_module.USERNAMES_FILE = temporary_data_directory / 'players' / 'usernames.json'
     if hasattr(name_storage_module, '_names_cache'):
         name_storage_module._names_cache = None
+    game_persistence_module.ACTIVE_GAMES_DIRECTORY = temporary_data_directory / 'active_games'
 
     # Digest hooks: GameSession resolves TurnManager from its module namespace.
     game_session_module.TurnManager = RecordingFlowTurnManager
