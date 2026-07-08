@@ -4,6 +4,7 @@ from __future__ import annotations
 import random
 from typing import TYPE_CHECKING
 import discord
+from zutomayo.ui.deck_management_common import DECKS_PER_PAGE, DeckNamePaginationMixin
 from zutomayo.data.deck_storage import (
     add_deck,
     delete_deck,
@@ -21,7 +22,6 @@ if TYPE_CHECKING:
     from zutomayo.models.card import Card
 
 
-DECKS_PER_PAGE = 25
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ class EditDeckModal(discord.ui.Modal):
             await interaction.followup.send(file=grid, ephemeral=True)
 
 
-class ManageDecksView(discord.ui.View):
+class ManageDecksView(DeckNamePaginationMixin, discord.ui.View):
     """Paginated dropdown to select a deck, then Edit or Delete."""
 
     def __init__(
@@ -159,13 +159,6 @@ class ManageDecksView(discord.ui.View):
         self._build_page()
 
     @property
-    def total_pages(self) -> int:
-        return max(1, -(-len(self.all_deck_names) // DECKS_PER_PAGE))
-
-    def _page_slice(self) -> list[str]:
-        start = self.page * DECKS_PER_PAGE
-        return self.all_deck_names[start : start + DECKS_PER_PAGE]
-
     def _build_page(self) -> None:
         names = self._page_slice()
         options = [
@@ -487,7 +480,7 @@ class DeckSourceView(discord.ui.View):
             self.session.submit_action(self.player_index, _random_deck(self.all_cards))
 
 
-class SavedDeckSelectView(discord.ui.View):
+class SavedDeckSelectView(DeckNamePaginationMixin, discord.ui.View):
     """Paginated dropdown of saved decks during game start."""
 
     def __init__(
@@ -513,13 +506,6 @@ class SavedDeckSelectView(discord.ui.View):
         self._build_page()
 
     @property
-    def total_pages(self) -> int:
-        return max(1, -(-len(self.all_deck_names) // DECKS_PER_PAGE))
-
-    def _page_slice(self) -> list[str]:
-        start = self.page * DECKS_PER_PAGE
-        return self.all_deck_names[start : start + DECKS_PER_PAGE]
-
     def _build_page(self) -> None:
         names = self._page_slice()
         options = [

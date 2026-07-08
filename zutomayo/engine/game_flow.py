@@ -221,11 +221,9 @@ class GameFlow:
         Returns (player_0_cards, player_1_cards). None for a player means
         they timed out and should receive a random deck.
         """
-        from zutomayo.data.card_loader import load_cards
-        from zutomayo.data.deck_validator import build_card_index
+        from zutomayo.data.deck_validator import get_card_index
 
-        all_cards = load_cards()
-        card_index = build_card_index(all_cards)
+        all_cards, card_index = get_card_index()
         session.clear_pending()
         names = self._player_names(session)
 

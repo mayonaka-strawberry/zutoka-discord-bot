@@ -85,11 +85,9 @@ class SoloGameFlow(GameFlow):
         self, session: GameSession,
     ) -> tuple[list[Card] | None, list[Card] | None]:
         """Human selects deck normally; bot picks a random saved deck."""
-        from zutomayo.data.card_loader import load_cards
-        from zutomayo.data.deck_validator import build_card_index
+        from zutomayo.data.deck_validator import get_card_index
 
-        all_cards = load_cards()
-        card_index = build_card_index(all_cards)
+        all_cards, card_index = get_card_index()
         session.clear_pending()
         names = self._player_names(session)
 
