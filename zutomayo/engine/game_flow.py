@@ -8,7 +8,6 @@ from zutomayo.enums.chronos import Chronos
 from zutomayo.enums.phase import Phase
 from zutomayo.enums.result import Result
 from zutomayo.enums.zone import Zone
-from zutomayo.data.name_storage import resolve_display_name
 from zutomayo.engine.adapters.discord_adapter import DiscordDecisionAdapter
 from zutomayo.engine.decision_broker import DecisionBroker
 from zutomayo.engine.decisions import (
@@ -32,7 +31,6 @@ from zutomayo.ui.embeds import (
 )
 from zutomayo.ui.board_renderer import generate_zone_messages_off_thread, render_board_image_off_thread
 from zutomayo.ui.deck_management_views import DeckSourceView
-from zutomayo.utils.discord_utils import send_with_retry
 
 if TYPE_CHECKING:
     from zutomayo.effects.effect_engine import EffectResolutionResult
@@ -56,30 +54,23 @@ class GameFlow:
             session.broker = DecisionBroker(session, {0: discord_adapter, 1: discord_adapter})
 
     def _player_names(self, session: GameSession) -> dict[int, str]:
+        self._ensure_decision_runtime(session)
         names = {}
         for discord_id, index in session.player_discord_ids.items():
-            names[index] = resolve_display_name(self.bot, discord_id)
+            names[index] = session.transport.display_name(session, index) or f'Player {index + 1}'
         return names
 
-    async def _get_dm_channel(self, discord_id: int) -> discord.DMChannel:
-        user = self.bot.get_user(discord_id)
-        if user is None:
-            user = await send_with_retry(lambda: self.bot.fetch_user(discord_id), label='fetch_user')
-        return await send_with_retry(lambda: user.create_dm(), label='create_dm')
-
-    async def _send_to_player(self, session: GameSession, player_index: int, **kwargs) -> discord.Message:
-        discord_id = session.get_discord_id(player_index)
-        dm_channel = await self._get_dm_channel(discord_id)
-        return await send_with_retry(lambda: dm_channel.send(**kwargs), label='DM send')
+    async def _send_to_player(self, session: GameSession, player_index: int, **kwargs) -> discord.Message | None:
+        self._ensure_decision_runtime(session)
+        return await session.transport.send_to_player(session, player_index, **kwargs)
 
     async def _send_to_both(self, session: GameSession, **kwargs) -> None:
         for index in range(2):
             await self._send_to_player(session, index, **kwargs)
 
     async def _send_to_channel(self, session: GameSession, **kwargs) -> None:
-        channel = self.bot.get_channel(session.channel_id)
-        if channel:
-            await send_with_retry(lambda: channel.send(**kwargs), label='channel send')
+        self._ensure_decision_runtime(session)
+        await session.transport.send_to_channel(session, **kwargs)
 
     @staticmethod
     def _take_zone_snapshots(game_state: GameState) -> dict[str, frozenset[str]]:
@@ -209,7 +200,7 @@ class GameFlow:
                 session, index, content=content, embeds=embeds, files=[board_file],
             )
 
-        if delay > 0:
+        if delay > 0 and not getattr(session.transport, 'suppress_phase_delays', False):
             await asyncio.sleep(delay)
 
     async def _do_deck_building_phase(

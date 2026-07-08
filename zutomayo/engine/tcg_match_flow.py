@@ -46,6 +46,7 @@ class TcgMatchFlow:
     async def run_tcg(self, session: GameSession) -> None:
         """Main TCG best-of-N match loop."""
         try:
+            self.game_flow._ensure_decision_runtime(session)
             wins = {0: 0, 1: 0}
             match_number = 0
             names = self._player_names(session)
