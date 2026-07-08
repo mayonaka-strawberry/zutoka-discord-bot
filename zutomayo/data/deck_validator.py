@@ -9,6 +9,7 @@ or a list of human-readable error messages.
 from __future__ import annotations
 import re
 from collections import Counter
+from typing import Optional
 from zutomayo.models.card import Card
 
 
@@ -22,6 +23,57 @@ MAX_COPIES = 2
 def build_card_index(all_cards: list[Card]) -> dict[tuple[int, int], Card]:
     """Build a lookup dict from (pack, id) -> Card for O(1) validation."""
     return {(card.pack, card.id): card for card in all_cards}
+
+
+# The full catalog and its index never change within a process; memoize the
+# pair so command handlers stop rebuilding them per invocation.
+_CARD_INDEX_CACHE: Optional[tuple[list[Card], dict[tuple[int, int], Card]]] = None
+
+
+def get_card_index() -> tuple[list[Card], dict[tuple[int, int], Card]]:
+    """Return (all_cards, card_index) for the full catalog, memoized."""
+    global _CARD_INDEX_CACHE
+    if _CARD_INDEX_CACHE is None:
+        from zutomayo.data.card_loader import load_cards
+
+        all_cards = load_cards()
+        _CARD_INDEX_CACHE = (all_cards, build_card_index(all_cards))
+    cached_cards, cached_index = _CARD_INDEX_CACHE
+    return list(cached_cards), cached_index
+
+
+def resolve_card_tokens(
+    tokens: list[str],
+    card_index: dict[tuple[int, int], Card],
+) -> tuple[list[Card], list[str], list[str]]:
+    """
+    Resolve XX-YYY tokens against the card index.
+
+    Returns (resolved_cards, bad_format_lines, not_found_lines); the error
+    lines are pre-formatted per position, headers are the caller's business.
+    """
+    resolved_cards: list[Card] = []
+    bad_format: list[str] = []
+    not_found: list[str] = []
+
+    for i, token in enumerate(tokens):
+        if not _TOKEN_RE.match(token):
+            bad_format.append(f"  Position {i + 1}: '{token}' - must be XX-YYY format")
+            continue
+
+        pack_string, id_string = token.split('-')
+        pack = int(pack_string)
+        card_id = int(id_string)
+
+        card = card_index.get((pack, card_id))
+        if card is None:
+            not_found.append(
+                f"  Position {i + 1}: '{token}' - no card with pack={pack}, id={card_id}"
+            )
+        else:
+            resolved_cards.append(card)
+
+    return resolved_cards, bad_format, not_found
 
 
 def parse_deck_input(
@@ -51,26 +103,7 @@ def parse_deck_input(
     if len(tokens) != DECK_SIZE:
         errors.append(f'Expected exactly {DECK_SIZE} cards, got {len(tokens)}.')
 
-    resolved_cards: list[Card] = []
-    bad_format: list[str] = []
-    not_found: list[str] = []
-
-    for i, token in enumerate(tokens):
-        if not _TOKEN_RE.match(token):
-            bad_format.append(f"  Position {i + 1}: '{token}' - must be XX-YYY format")
-            continue
-
-        pack_string, id_string = token.split('-')
-        pack = int(pack_string)
-        card_id = int(id_string)
-
-        card = card_index.get((pack, card_id))
-        if card is None:
-            not_found.append(
-                f"  Position {i + 1}: '{token}' - no card with pack={pack}, id={card_id}"
-            )
-        else:
-            resolved_cards.append(card)
+    resolved_cards, bad_format, not_found = resolve_card_tokens(tokens, card_index)
 
     if bad_format:
         errors.append('Invalid format:\n' + '\n'.join(bad_format))

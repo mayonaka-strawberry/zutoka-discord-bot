@@ -224,68 +224,84 @@ class GameCog(commands.Cog):
             f'**{interaction.user.display_name}** ended game `{game_id}`.'
         )
 
-    @group.command(name='makedeck', description='Create and save a new deck')
-    @app_commands.describe(name='A unique name for this deck (max 50 characters)')
-    async def make_deck(self, interaction: discord.Interaction, name: str):
+    async def _start_make_deck(
+        self,
+        interaction: discord.Interaction,
+        name: str,
+        load_deck_names,
+        duplicate_message: str,
+        modal_class,
+    ) -> None:
+        """Shared body of the makedeck / makedecktcg commands."""
+        from zutomayo.data.deck_validator import get_card_index
+
         if len(name) > 50:
             await interaction.response.send_message(
                 'Deck name must be 50 characters or fewer.', ephemeral=True,
             )
             return
 
-        from zutomayo.data.card_loader import load_cards
-        from zutomayo.data.deck_storage import get_deck_names
-        from zutomayo.data.deck_validator import build_card_index
-
-        existing_names = get_deck_names(interaction.user.id)
+        existing_names = load_deck_names(interaction.user.id)
         if name in existing_names:
-            await interaction.response.send_message(
-                f'A deck named **{name}** already exists. Please choose a different name.',
-                ephemeral=True,
-            )
+            await interaction.response.send_message(duplicate_message, ephemeral=True)
             return
 
-        all_cards = load_cards()
-        card_index = build_card_index(all_cards)
-
-        from zutomayo.ui.deck_management_views import MakeDeckModal
-        modal = MakeDeckModal(deck_name=name, user_id=interaction.user.id, card_index=card_index)
+        _, card_index = get_card_index()
+        modal = modal_class(deck_name=name, user_id=interaction.user.id, card_index=card_index)
         await interaction.response.send_modal(modal)
 
-    @group.command(name='managedecks', description='Edit or delete your saved decks')
-    async def manage_decks(self, interaction: discord.Interaction):
-        from zutomayo.data.card_loader import load_cards
-        from zutomayo.data.deck_storage import get_deck_names
-        from zutomayo.data.deck_validator import build_card_index
+    async def _open_manage_decks(
+        self,
+        interaction: discord.Interaction,
+        load_deck_names,
+        empty_message: str,
+        view_class,
+        prompt_text: str,
+    ) -> None:
+        """Shared body of the managedecks / managedeckstcg commands."""
+        from zutomayo.data.deck_validator import get_card_index
 
-        deck_names = get_deck_names(interaction.user.id)
+        deck_names = load_deck_names(interaction.user.id)
         if not deck_names:
-            await interaction.response.send_message(
-                'You have no saved decks. Use `/zutomayo makedeck` to create one.',
-                ephemeral=True,
-            )
+            await interaction.response.send_message(empty_message, ephemeral=True)
             return
 
-        all_cards = load_cards()
-        card_index = build_card_index(all_cards)
-
-        from zutomayo.ui.deck_management_views import ManageDecksView
-        view = ManageDecksView(
+        _, card_index = get_card_index()
+        view = view_class(
             user_id=interaction.user.id,
             deck_names=deck_names,
             card_index=card_index,
         )
-        await interaction.response.send_message(
+        await interaction.response.send_message(prompt_text, view=view, ephemeral=True)
+
+    @group.command(name='makedeck', description='Create and save a new deck')
+    @app_commands.describe(name='A unique name for this deck (max 50 characters)')
+    async def make_deck(self, interaction: discord.Interaction, name: str):
+        from zutomayo.data.deck_storage import get_deck_names
+        from zutomayo.ui.deck_management_views import MakeDeckModal
+
+        await self._start_make_deck(
+            interaction, name, get_deck_names,
+            f'A deck named **{name}** already exists. Please choose a different name.',
+            MakeDeckModal,
+        )
+
+    @group.command(name='managedecks', description='Edit or delete your saved decks')
+    async def manage_decks(self, interaction: discord.Interaction):
+        from zutomayo.data.deck_storage import get_deck_names
+        from zutomayo.ui.deck_management_views import ManageDecksView
+
+        await self._open_manage_decks(
+            interaction, get_deck_names,
+            'You have no saved decks. Use `/zutomayo makedeck` to create one.',
+            ManageDecksView,
             'Select a deck to manage:',
-            view=view,
-            ephemeral=True,
         )
 
     @group.command(name='viewdeck', description='View your saved decks')
     async def view_deck(self, interaction: discord.Interaction):
-        from zutomayo.data.card_loader import load_cards
         from zutomayo.data.deck_storage import load_user_decks
-        from zutomayo.data.deck_validator import build_card_index
+        from zutomayo.data.deck_validator import get_card_index
 
         decks = load_user_decks(interaction.user.id)
         if not decks:
@@ -295,8 +311,7 @@ class GameCog(commands.Cog):
             )
             return
 
-        all_cards = load_cards()
-        card_index = build_card_index(all_cards)
+        _, card_index = get_card_index()
 
         from zutomayo.ui.deck_management_views import ViewDeckView
         from zutomayo.ui.embeds import create_deck_grid_image_off_thread
@@ -318,36 +333,19 @@ class GameCog(commands.Cog):
     @group.command(name='makedecktcg', description='Create and save a new TCG deck (20 main + 8 side)')
     @app_commands.describe(name='A unique name for this deck (max 50 characters)')
     async def make_deck_tcg(self, interaction: discord.Interaction, name: str):
-        if len(name) > 50:
-            await interaction.response.send_message(
-                'Deck name must be 50 characters or fewer.', ephemeral=True,
-            )
-            return
-
-        from zutomayo.data.card_loader import load_cards
         from zutomayo.data.deck_storage_tcg import get_tcg_deck_names
-        from zutomayo.data.deck_validator import build_card_index
-
-        existing_names = get_tcg_deck_names(interaction.user.id)
-        if name in existing_names:
-            await interaction.response.send_message(
-                f'A TCG deck named **{name}** already exists. Please choose a different name.',
-                ephemeral=True,
-            )
-            return
-
-        all_cards = load_cards()
-        card_index = build_card_index(all_cards)
-
         from zutomayo.ui.deck_management_views_tcg import MakeDeckTcgModal
-        modal = MakeDeckTcgModal(deck_name=name, user_id=interaction.user.id, card_index=card_index)
-        await interaction.response.send_modal(modal)
+
+        await self._start_make_deck(
+            interaction, name, get_tcg_deck_names,
+            f'A TCG deck named **{name}** already exists. Please choose a different name.',
+            MakeDeckTcgModal,
+        )
 
     @group.command(name='viewdecktcg', description='View your saved TCG decks')
     async def view_deck_tcg(self, interaction: discord.Interaction):
-        from zutomayo.data.card_loader import load_cards
         from zutomayo.data.deck_storage_tcg import load_user_tcg_decks
-        from zutomayo.data.deck_validator import build_card_index
+        from zutomayo.data.deck_validator import get_card_index
 
         decks = load_user_tcg_decks(interaction.user.id)
         if not decks:
@@ -357,8 +355,7 @@ class GameCog(commands.Cog):
             )
             return
 
-        all_cards = load_cards()
-        card_index = build_card_index(all_cards)
+        _, card_index = get_card_index()
 
         from zutomayo.ui.deck_management_views_tcg import ViewDeckTcgView
         from zutomayo.ui.embeds import create_deck_grid_image_off_thread
@@ -383,31 +380,14 @@ class GameCog(commands.Cog):
 
     @group.command(name='managedeckstcg', description='Edit or delete your saved TCG decks')
     async def manage_decks_tcg(self, interaction: discord.Interaction):
-        from zutomayo.data.card_loader import load_cards
         from zutomayo.data.deck_storage_tcg import get_tcg_deck_names
-        from zutomayo.data.deck_validator import build_card_index
-
-        deck_names = get_tcg_deck_names(interaction.user.id)
-        if not deck_names:
-            await interaction.response.send_message(
-                'You have no saved TCG decks. Use `/zutomayo makedecktcg` to create one.',
-                ephemeral=True,
-            )
-            return
-
-        all_cards = load_cards()
-        card_index = build_card_index(all_cards)
-
         from zutomayo.ui.deck_management_views_tcg import ManageDecksTcgView
-        view = ManageDecksTcgView(
-            user_id=interaction.user.id,
-            deck_names=deck_names,
-            card_index=card_index,
-        )
-        await interaction.response.send_message(
+
+        await self._open_manage_decks(
+            interaction, get_tcg_deck_names,
+            'You have no saved TCG decks. Use `/zutomayo makedecktcg` to create one.',
+            ManageDecksTcgView,
             'Select a TCG deck to manage:',
-            view=view,
-            ephemeral=True,
         )
 
     @group.command(name='gacha', description='Open a card pack and draw 5 cards')

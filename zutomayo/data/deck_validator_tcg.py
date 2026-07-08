@@ -7,12 +7,10 @@ Validates max 2 copies of any card across both decks combined.
 """
 
 from __future__ import annotations
-import re
 from collections import Counter
+from zutomayo.data.deck_validator import resolve_card_tokens
 from zutomayo.models.card import Card
 
-
-_TOKEN_RE = re.compile(r'^\d{2}-\d{3}$')
 
 TCG_DECK_SIZE = 20
 TCG_SIDE_DECK_SIZE = 8
@@ -36,26 +34,7 @@ def _parse_tokens(
     if len(tokens) != expected_count:
         errors.append(f'{label}: Expected exactly {expected_count} cards, got {len(tokens)}.')
 
-    resolved_cards: list[Card] = []
-    bad_format: list[str] = []
-    not_found: list[str] = []
-
-    for i, token in enumerate(tokens):
-        if not _TOKEN_RE.match(token):
-            bad_format.append(f"  Position {i + 1}: '{token}' - must be XX-YYY format")
-            continue
-
-        pack_string, id_string = token.split('-')
-        pack = int(pack_string)
-        card_id = int(id_string)
-
-        card = card_index.get((pack, card_id))
-        if card is None:
-            not_found.append(
-                f"  Position {i + 1}: '{token}' - no card with pack={pack}, id={card_id}"
-            )
-        else:
-            resolved_cards.append(card)
+    resolved_cards, bad_format, not_found = resolve_card_tokens(tokens, card_index)
 
     if bad_format:
         errors.append(f'{label} invalid format:\n' + '\n'.join(bad_format))

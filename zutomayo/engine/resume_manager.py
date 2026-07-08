@@ -110,10 +110,9 @@ def _rebuild_session(manifest: dict[str, Any]) -> GameSession:
 def _build_flow_and_entry(bot: 'discord.Client', session: GameSession, manifest: dict[str, Any]):
     """Create the mode-appropriate flow (installing its decision runtime) and
     the coroutine that re-enters the match with the manifest's decks."""
-    from zutomayo.data.card_loader import load_cards
-    from zutomayo.data.deck_validator import build_card_index
+    from zutomayo.data.deck_validator import get_card_index
 
-    card_index = build_card_index(load_cards())
+    _, card_index = get_card_index()
     mode = manifest['mode']
 
     if mode == 'tcg':

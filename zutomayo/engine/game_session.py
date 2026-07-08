@@ -2,7 +2,6 @@ import asyncio
 import random
 from typing import TYPE_CHECKING, Any, Optional
 from uuid import uuid4
-from zutomayo.data.card_loader import load_cards
 from zutomayo.effects.effect_engine import EffectEngine
 from zutomayo.engine.deck_builder import build_deck_from_cards
 from zutomayo.engine.game_controller import GameController
@@ -79,11 +78,10 @@ class GameSession:
         deck_1_cards: list[Card] | None = None,
         deck_2_cards: list[Card] | None = None,
     ) -> GameState:
-        from zutomayo.data.deck_validator import build_card_index
+        from zutomayo.data.deck_validator import get_card_index
         from zutomayo.engine.bot_agent import load_random_saved_deck
 
-        all_cards = load_cards()
-        card_index = build_card_index(all_cards)
+        all_cards, card_index = get_card_index()
 
         discord_ids = list(self.player_discord_ids.keys())
         name_1 = str(discord_ids[0])
