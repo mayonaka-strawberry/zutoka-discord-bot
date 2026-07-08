@@ -7,14 +7,16 @@ the required number of wins.
 """
 
 from __future__ import annotations
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 import discord
+from zutomayo.engine.decision_broker import ResumeDivergenceError
+from zutomayo.engine.decisions import KIND_TCG_SWITCH, PAYLOAD_CARD_KEYS, DecisionRequest
 from zutomayo.engine.game_flow import GameFlow
 from zutomayo.engine.game_session import session_manager
 from zutomayo.ui.deck_management_views_tcg import TcgDeckSourceView, _random_tcg_deck
 from zutomayo.ui.embeds import create_deck_grid_image_off_thread
-from zutomayo.ui.tcg_switch_views import SwitchCardsView
 
 if TYPE_CHECKING:
     from zutomayo.engine.game_session import GameSession
@@ -43,8 +45,17 @@ class TcgMatchFlow:
     async def _send_to_both(self, session: GameSession, **kwargs) -> None:
         await self.game_flow._send_to_both(session, **kwargs)
 
-    async def run_tcg(self, session: GameSession) -> None:
-        """Main TCG best-of-N match loop."""
+    async def run_tcg(
+        self,
+        session: GameSession,
+        resumed_decks: tuple[list[Card], list[Card], list[Card], list[Card]] | None = None,
+    ) -> None:
+        """Main TCG best-of-N match loop.
+
+        resumed_decks skips deck selection when the series is being replayed
+        after a bot restart (initial decks come from the persisted manifest;
+        switch decisions replay from the decision log).
+        """
         try:
             self.game_flow._ensure_decision_runtime(session)
             wins = {0: 0, 1: 0}
@@ -52,8 +63,23 @@ class TcgMatchFlow:
             names = self._player_names(session)
 
             # Phase 1: TCG deck selection
-            decks = await self._do_tcg_deck_selection(session)
-            deck_0, side_0, deck_1, side_1 = decks
+            if resumed_decks is not None:
+                deck_0, side_0, deck_1, side_1 = resumed_decks
+            else:
+                decks = await self._do_tcg_deck_selection(session)
+                deck_0, side_0, deck_1, side_1 = decks
+
+            # Persistence covers the whole series: initial decks and sides in
+            # the manifest, every match and switch decision in one log.
+            if session.persistence is None:
+                from zutomayo.engine.game_persistence import GamePersistence, card_keys
+                session.persistence = GamePersistence.create_for_session(session, 'tcg', extra_fields={
+                    'deck_0': card_keys(deck_0),
+                    'deck_1': card_keys(deck_1),
+                    'side_0': card_keys(side_0),
+                    'side_1': card_keys(side_1),
+                })
+                session.broker.persistence = session.persistence
 
             while wins[0] < self.wins_needed and wins[1] < self.wins_needed:
                 match_number += 1
@@ -89,16 +115,36 @@ class TcgMatchFlow:
             self._record_series_stats(session, wins)
             session_manager.remove_game(session.game_id)
 
+        except ResumeDivergenceError:
+            # Handled by the resume manager (apology message, no forfeit).
+            raise
         except Exception:
             log.exception('Error in TCG match flow')
             await self._send_to_channel(session, content='An error occurred. TCG series ended.')
             session_manager.remove_game(session.game_id)
+
+    @staticmethod
+    def _cards_for_keys(pool: list[Card], keys: list[list[int]]) -> list[Card]:
+        """Resolve [pack, id] pairs against a card pool, honoring duplicates."""
+        remaining = list(pool)
+        chosen: list[Card] = []
+        for pack, card_id in keys:
+            for card in remaining:
+                if card.pack == pack and card.id == card_id:
+                    chosen.append(card)
+                    remaining.remove(card)
+                    break
+        return chosen
 
     def _record_series_stats(self, session: GameSession, wins: dict[int, int]) -> None:
         """Persist series-level tcg_series win/loss into both player profiles. Per-match Elo and
         per-match stats were already written during the series by GameFlow._end_game.
         """
         from zutomayo.data.player_storage import record_tcg_series
+
+        # See GameFlow._record_match_stats: never re-record during restart replay.
+        if session.broker is not None and session.broker.replaying:
+            return
 
         try:
             player_zero_id = session.get_discord_id(0)
@@ -180,45 +226,48 @@ class TcgMatchFlow:
         """Run card switching phase for both players between matches."""
         session.clear_pending()
 
-        for index, (deck, side) in enumerate([(deck_0, side_0), (deck_1, side_1)]):
+        all_decks = [(deck_0, side_0), (deck_1, side_1)]
+        requests = []
+        for index, (deck, side) in enumerate(all_decks):
             # Send current deck images before switching
             await self._send_deck_images(session, index, deck, side)
 
-            view = SwitchCardsView(
-                session=session,
+            requests.append(DecisionRequest(
+                kind=KIND_TCG_SWITCH,
                 player_index=index,
-                main_deck=list(deck),
-                side_deck=list(side),
+                prompt_text='**Switch Cards [サイドデッキの入れ替え]**\nSwap cards between your main deck and side deck.',
+                timeout_seconds=750.0,
                 opponent_name=names[1 - index],
-            )
-            await self._send_to_player(
-                session, index,
-                content='**Switch Cards [サイドデッキの入れ替え]**\nSwap cards between your main deck and side deck.',
-                view=view,
-            )
+                live_objects={'main_deck': list(deck), 'side_deck': list(side)},
+            ))
 
-        await session.wait_for_both_players(timeout=750.0)
+        responses = await asyncio.gather(
+            *(session.broker.request(request) for request in requests)
+        )
 
         # Apply swaps for each player
-        all_decks = [(deck_0, side_0), (deck_1, side_1)]
         swap_counts = []
 
         for index in range(2):
             deck, side = all_decks[index]
-            action = session.pending_actions.get(index, {'removed': [], 'added': []})
-            removed = action['removed']
-            added = action['added']
+            response = responses[index]
+            if response.payload_type == PAYLOAD_CARD_KEYS and response.payload:
+                removed_keys = response.payload.get('removed', [])
+                added_keys = response.payload.get('added', [])
+            else:
+                removed_keys, added_keys = [], []
 
             # Remove cards from main deck, add to side
-            for card in removed:
+            for card in self._cards_for_keys(deck, removed_keys):
                 deck.remove(card)
                 side.append(card)
             # Remove cards from side, add to main
+            added = self._cards_for_keys(side, added_keys)
             for card in added:
                 side.remove(card)
                 deck.append(card)
 
-            swap_counts.append(len(removed))
+            swap_counts.append(len(removed_keys))
 
         # Send updated deck images after switching
         for index, (deck, side) in enumerate([(deck_0, side_0), (deck_1, side_1)]):

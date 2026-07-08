@@ -12,6 +12,7 @@ from zutomayo.models.game_state import GameState
 
 if TYPE_CHECKING:
     from zutomayo.engine.decision_broker import DecisionBroker
+    from zutomayo.engine.game_persistence import GamePersistence
     from zutomayo.engine.match_transport import MatchTransport
 
 
@@ -34,6 +35,10 @@ class GameSession:
         # Decision-broker runtime, installed by the flow that runs this game.
         self.broker: Optional['DecisionBroker'] = None
         self.transport: Optional['MatchTransport'] = None
+
+        # Restart persistence, created when the match is initialized and
+        # deleted when the session is removed from the session manager.
+        self.persistence: Optional['GamePersistence'] = None
 
         # Track both players' Discord IDs
         self.player_discord_ids[creator_id] = 0
@@ -226,6 +231,9 @@ class GameSessionManager:
         if session:
             for discord_id in session.player_discord_ids:
                 self.player_to_game.pop(discord_id, None)
+            if session.persistence is not None:
+                session.persistence.delete()
+                session.persistence = None
 
 
 # Singleton instance
