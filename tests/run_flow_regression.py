@@ -126,31 +126,44 @@ def _install_patches(temporary_data_directory: Path) -> None:
     # Digest hooks: GameSession resolves TurnManager from its module namespace.
     game_session_module.TurnManager = RecordingFlowTurnManager
 
-    # Rendering stubs: game_flow bound these names at import time.
+    # Rendering stubs: the flow modules bound these names at import time.
+    import zutomayo.engine.tcg_match_flow as tcg_match_flow_module
+
     game_flow_module.render_board_image_off_thread = _make_render_stub('render_board_image')
     game_flow_module.create_hand_image_off_thread = _make_render_stub('create_hand_image')
     game_flow_module.generate_zone_messages_off_thread = _make_render_stub('generate_zone_messages', returns_zone_list=True)
+    tcg_match_flow_module.create_deck_grid_image_off_thread = _make_render_stub('create_deck_grid_image')
 
 
-def play_recorded_match(deck_cards_0, deck_cards_1, seed: int) -> TranscriptRecorder:
+def _build_recorded_session(recorder: TranscriptRecorder, seed: int, *, solo: bool, tcg: bool, game_id: str) -> GameSession:
+    opponent_discord_id = 0 if solo else PLAYER_ONE_DISCORD_ID
+    session = GameSession(game_id=game_id, channel_id=987654, creator_id=PLAYER_ZERO_DISCORD_ID)
+    session.add_player(opponent_discord_id)
+    session.is_solo = solo
+    session.is_tcg = tcg
+    session.best_of = 3 if tcg else 0
+    session.random_seed = seed
+    session.random_generator = random.Random(seed)
+    session.effect_engine = RecordingFlowEffectEngine()
+
+    session.transport = RecordingTransport(recorder)
+    agent_0 = ScriptedVarietyAgent(seed_offset=seed * 2 + 1)
+    agent_1 = ScriptedVarietyAgent(seed_offset=seed * 3 + 2)
+    session.broker = DecisionBroker(session, {
+        0: ScriptedDecisionAdapter(agent_0, recorder),
+        1: ScriptedDecisionAdapter(agent_1, recorder),
+    })
+    return session
+
+
+def play_recorded_match(deck_cards_0, deck_cards_1, seed: int, *, solo: bool = False) -> TranscriptRecorder:
     global _ACTIVE_RECORDER
     recorder = TranscriptRecorder()
     _ACTIVE_RECORDER = recorder
     try:
-        session = GameSession(game_id=f'flow-seed-{seed}', channel_id=987654, creator_id=PLAYER_ZERO_DISCORD_ID)
-        session.add_player(PLAYER_ONE_DISCORD_ID)
-        session.random_seed = seed
-        session.random_generator = random.Random(seed)
-        session.effect_engine = RecordingFlowEffectEngine()
-
-        session.transport = RecordingTransport(recorder)
-        agent_0 = ScriptedVarietyAgent(seed_offset=seed * 2 + 1)
-        agent_1 = ScriptedVarietyAgent(seed_offset=seed * 3 + 2)
-        session.broker = DecisionBroker(session, {
-            0: ScriptedDecisionAdapter(agent_0, recorder),
-            1: ScriptedDecisionAdapter(agent_1, recorder),
-        })
-
+        session = _build_recorded_session(
+            recorder, seed, solo=solo, tcg=False, game_id=f'flow-seed-{seed}',
+        )
         flow = GameFlow(bot=None)
         winner = asyncio.run(flow.run_single_match(session, deck_cards_0, deck_cards_1))
         recorder.record_state_digest(session.game_state, 'final')
@@ -172,8 +185,37 @@ def play_recorded_match(deck_cards_0, deck_cards_1, seed: int) -> TranscriptReco
     return recorder
 
 
-def build_match_matrix() -> list[tuple[str, str, str, int]]:
-    """2-player matches: default decks round-robin plus a few synthetic pairs."""
+def play_recorded_tcg_series(deck_0, side_0, deck_1, side_1, seed: int) -> TranscriptRecorder:
+    from zutomayo.engine.tcg_match_flow import TcgMatchFlow
+
+    global _ACTIVE_RECORDER
+    recorder = TranscriptRecorder()
+    _ACTIVE_RECORDER = recorder
+    try:
+        session = _build_recorded_session(
+            recorder, seed, solo=False, tcg=True, game_id=f'tcg-seed-{seed}',
+        )
+        flow = TcgMatchFlow(bot=None, best_of=3)
+        asyncio.run(flow.run_tcg(
+            session,
+            resumed_decks=(list(deck_0), list(side_0), list(deck_1), list(side_1)),
+        ))
+        recorder.record_state_digest(session.game_state, 'final')
+    except Exception as error:
+        import traceback
+        traceback.print_exc()
+        recorder.record({
+            'event': 'game_error',
+            'error_type': type(error).__name__,
+            'error_message': str(error),
+        })
+    finally:
+        _ACTIVE_RECORDER = None
+    return recorder
+
+
+def build_match_matrix() -> list[tuple[str, str, str, int, str]]:
+    """Entries: (file_stem, slug_0, slug_1, seed, game_kind)."""
     from tests.run_engine_regression import build_synthetic_deck_definitions
 
     named = [slug for slug, _ in load_deck_definitions() if slug.startswith('default')]
@@ -182,16 +224,38 @@ def build_match_matrix() -> list[tuple[str, str, str, int]]:
     for first in range(len(named)):
         for second in range(first, len(named)):
             seed = 50_000 + pair_index * 37
-            matrix.append((f'{named[first]}_vs_{named[second]}_seed{seed}', named[first], named[second], seed))
+            matrix.append((f'{named[first]}_vs_{named[second]}_seed{seed}', named[first], named[second], seed, 'standard'))
             pair_index += 1
     synthetic = [slug for slug, _ in build_synthetic_deck_definitions()][:8]
     for index in range(0, len(synthetic) - 1, 2):
         seed = 70_000 + index * 53
         matrix.append((
             f'{synthetic[index]}_vs_{synthetic[index + 1]}_seed{seed}',
-            synthetic[index], synthetic[index + 1], seed,
+            synthetic[index], synthetic[index + 1], seed, 'standard',
         ))
+
+    # Solo matches through the merged flow (bot answers via the production
+    # BotAgentDecisionAdapter routing; transport skips the bot's DMs/renders).
+    for solo_number in range(6):
+        slug_0 = named[solo_number % len(named)]
+        slug_1 = named[(solo_number + 2) % len(named)]
+        seed = 80_000 + solo_number * 61
+        matrix.append((f'solo_{slug_0}_vs_{slug_1}_seed{seed}', slug_0, slug_1, seed, 'solo'))
+
+    # TCG best-of-3 series with scripted switch phases. The side deck is the
+    # first eight cards of a third deck.
+    for series_number in range(3):
+        slug_0 = named[series_number % len(named)]
+        slug_1 = named[(series_number + 3) % len(named)]
+        seed = 90_000 + series_number * 71
+        matrix.append((f'tcg_{slug_0}_vs_{slug_1}_seed{seed}', slug_0, slug_1, seed, 'tcg'))
     return matrix
+
+
+def _side_deck_for(slug: str, deck_entries_by_slug, card_index) -> list:
+    """Deterministic 8-card side deck: first 8 entries of the named deck."""
+    entries = deck_entries_by_slug[slug][:8]
+    return [card_index[(entry['pack'], entry['id'])] for entry in entries]
 
 
 def run(mode: str, baseline_directory: Path, limit: int | None) -> int:
@@ -218,10 +282,17 @@ def run(mode: str, baseline_directory: Path, limit: int | None) -> int:
             for stale in baseline_directory.glob('*.jsonl.gz'):
                 stale.unlink()
 
-        for match_number, (file_stem, slug_0, slug_1, seed) in enumerate(matrix, start=1):
+        for match_number, (file_stem, slug_0, slug_1, seed, game_kind) in enumerate(matrix, start=1):
             deck_cards_0 = [card_index[(entry['pack'], entry['id'])] for entry in deck_entries_by_slug[slug_0]]
             deck_cards_1 = [card_index[(entry['pack'], entry['id'])] for entry in deck_entries_by_slug[slug_1]]
-            recorder = play_recorded_match(deck_cards_0, deck_cards_1, seed)
+            if game_kind == 'tcg':
+                side_0 = _side_deck_for('default05', deck_entries_by_slug, card_index)
+                side_1 = _side_deck_for('default06', deck_entries_by_slug, card_index)
+                recorder = play_recorded_tcg_series(deck_cards_0, side_0, deck_cards_1, side_1, seed)
+            else:
+                recorder = play_recorded_match(
+                    deck_cards_0, deck_cards_1, seed, solo=(game_kind == 'solo'),
+                )
             transcript_text = recorder.to_jsonl()
             file_name = f'{file_stem}.jsonl.gz'
             generated_names.add(file_name)

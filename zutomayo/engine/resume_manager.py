@@ -133,9 +133,17 @@ def _build_flow_and_entry(bot: 'discord.Client', session: GameSession, manifest:
     deck_1 = resolve_card_keys(manifest['deck_1'], card_index)
 
     if mode == 'solo':
-        # Solo matches are not persisted until Stage 6 (bot decisions do not
-        # reach the decision log yet), so a solo manifest is unexpected.
-        raise ValueError('Solo game manifests are not resumable yet')
+        from zutomayo.engine.bot_agent import create_bot_agent, create_bot_agent_easy
+        from zutomayo.engine.solo_game_flow import SoloGameFlow
+
+        # Past bot decisions replay from the log; the agent is only consulted
+        # for decisions after the game goes live again.
+        if session.solo_difficulty == 'easy':
+            flow = SoloGameFlow(bot, bot_agent=create_bot_agent_easy(), use_easy_decks=True)
+        else:
+            flow = SoloGameFlow(bot)
+        flow._ensure_decision_runtime(session)
+        return flow, _resume_single_match(flow, session, deck_0, deck_1)
 
     from zutomayo.engine.game_flow import GameFlow
 

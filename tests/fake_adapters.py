@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Optional
 
 from zutomayo.engine.adapters.bot_agent_adapter import BotAgentDecisionAdapter
+from zutomayo.engine.decisions import KIND_TCG_SWITCH, PAYLOAD_CARD_KEYS
 
 from tests.transcript import TranscriptRecorder
 
@@ -35,7 +36,20 @@ class ScriptedDecisionAdapter(BotAgentDecisionAdapter):
         return function(*arguments)
 
     async def _decide(self, request: 'DecisionRequest') -> tuple[str, Any]:
-        payload_type, payload = await super()._decide(request)
+        if request.kind == KIND_TCG_SWITCH:
+            # The bot never plays TCG, so the production adapter has no route
+            # for this kind; script a deterministic swap through the agent's
+            # number chooser instead (0-3 cards, front of each pile).
+            main_deck = request.live_objects['main_deck']
+            side_deck = request.live_objects['side_deck']
+            swap_limit = min(3, len(side_deck), len(main_deck))
+            swap_count = self.bot_agent.choose_effect_number(0, swap_limit)
+            payload_type, payload = PAYLOAD_CARD_KEYS, {
+                'removed': [[card.pack, card.id] for card in main_deck[:swap_count]],
+                'added': [[card.pack, card.id] for card in side_deck[:swap_count]],
+            }
+        else:
+            payload_type, payload = await super()._decide(request)
         self.recorder.record_prompt(
             request.kind,
             request.player_index,
@@ -69,6 +83,13 @@ class RecordingTransport:
 
     def display_name(self, session: Any, player_index: int) -> Optional[str]:
         return self.player_names[player_index]
+
+    def delivers_to_player(self, session: Any, player_index: int) -> bool:
+        if self.muted:
+            return False
+        # Mirror the Discord transport: the solo-mode bot (sentinel id 0)
+        # receives nothing, so flows skip its renders.
+        return session.get_discord_id(player_index) != 0
 
     def _record(self, target: str, kwargs: dict[str, Any]) -> None:
         embeds = kwargs.get('embeds')

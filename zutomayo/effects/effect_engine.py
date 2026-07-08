@@ -845,8 +845,13 @@ class EffectEngine:
         player_name = game_state.players[player_index].name
         if self.session is not None:
             discord_id = self.session.get_discord_id(player_index)
-            if discord_id:  # falsy 0 is the solo-mode bot sentinel
+            if discord_id:
                 player_name = resolve_display_name(self.bot, discord_id)
+            elif discord_id == 0 and self.session.transport is not None:
+                # Solo-mode bot sentinel: the transport knows the bot's name.
+                resolved_name = self.session.transport.display_name(self.session, player_index)
+                if resolved_name:
+                    player_name = resolved_name
         card_word = 'card' if count == 1 else 'cards'
         msg = f'**{player_name}** drew **{count}** {card_word}.'
         await self._send_to_channel(content=msg)

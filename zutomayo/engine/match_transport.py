@@ -35,6 +35,12 @@ class MatchTransport(Protocol):
     def display_name(self, session: 'GameSession', player_index: int) -> Optional[str]:
         ...
 
+    def delivers_to_player(self, session: 'GameSession', player_index: int) -> bool:
+        """Whether a DM to this player would actually be delivered. Flows use
+        this to skip rendering board and hand images no one will receive
+        (the solo-mode bot, or everything while muted during replay)."""
+        ...
+
 
 class DiscordMatchTransport:
     """Sends over Discord DMs and the match's channel, exactly as the flows and
@@ -84,3 +90,9 @@ class DiscordMatchTransport:
         if discord_id == BOT_SENTINEL_DISCORD_ID:
             return BOT_NAME
         return resolve_display_name(self.bot, discord_id)
+
+    def delivers_to_player(self, session: 'GameSession', player_index: int) -> bool:
+        if self.muted:
+            return False
+        discord_id = session.get_discord_id(player_index)
+        return discord_id is not None and discord_id != BOT_SENTINEL_DISCORD_ID
