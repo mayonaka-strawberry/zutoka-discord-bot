@@ -104,6 +104,7 @@ class GameSession:
             deck_1=deck_1,
             deck_2=deck_2,
             effect_engine=self.effect_engine,
+            random_generator=self.random_generator,
         )
 
         self.game_state = controller.game_state

@@ -1,5 +1,4 @@
 from __future__ import annotations
-import random
 from typing import TYPE_CHECKING
 from zutomayo.enums.card_type import CardType
 from zutomayo.enums.zone import Zone
@@ -79,7 +78,7 @@ async def effect_04_006(
         player.abyss.remove(selected_card)
 
     # Shuffle the 4 cards face down and place at the bottom of the deck
-    random.shuffle(selected_cards)
+    engine.random_generator.shuffle(selected_cards)
     log.debug('[%s] %s: shuffled selected cards', card_instance.card.effect, engine.player_label(player_index))
     for selected_card in selected_cards:
         selected_card.zone = Zone.DECK

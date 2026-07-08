@@ -1,4 +1,6 @@
+import random
 from random import randint, shuffle
+from typing import Optional
 from constants import MIDNIGHT
 from zutomayo.effects.effect_engine import EffectEngine
 from zutomayo.enums.chronos import Chronos
@@ -14,11 +16,19 @@ class GameController:
             name_2: str,
             deck_1: list[CardInstance],
             deck_2: list[CardInstance],
-            effect_engine: EffectEngine
+            effect_engine: EffectEngine,
+            random_generator: Optional[random.Random] = None
     ) -> None:
         self.effect_engine = effect_engine
 
-        coin_flip = randint(0, 1)
+        # Default None keeps the module-level random stream (headless training
+        # environments and engine_alpha drivers seed and consume it directly);
+        # live game sessions pass their per-game seeded generator so the coin
+        # flip is reproducible from the persisted seed.
+        if random_generator is None:
+            coin_flip = randint(0, 1)
+        else:
+            coin_flip = random_generator.randint(0, 1)
         side_1 = Chronos.DAY
         side_2 = Chronos.NIGHT
         if coin_flip == 0:

@@ -297,9 +297,8 @@ class GameFlow:
         game_state.turn = 0
 
         # Shuffle decks
-        import random
         for player in game_state.players:
-            random.shuffle(player.deck)
+            session.random_generator.shuffle(player.deck)
 
         # Draw initial 5 cards
         for i, player in enumerate(game_state.players):
@@ -487,8 +486,7 @@ class GameFlow:
                 for card_instance in cards_to_redraw:
                     card_instance.zone = Zone.DECK
                     player.deck.append(card_instance)
-                import random
-                random.shuffle(player.deck)
+                session.random_generator.shuffle(player.deck)
 
                 # Send updated hand
                 embed = build_hand_embed(player)

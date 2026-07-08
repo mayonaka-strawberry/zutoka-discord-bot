@@ -282,7 +282,7 @@ class SoloGameFlow(GameFlow):
                 for card_instance in cards_to_redraw:
                     card_instance.zone = Zone.DECK
                     player.deck.append(card_instance)
-                random.shuffle(player.deck)
+                session.random_generator.shuffle(player.deck)
 
                 if index == HUMAN_PLAYER_INDEX:
                     embed = build_hand_embed(player)
@@ -579,7 +579,7 @@ class SoloGameFlow(GameFlow):
 
         # Shuffle decks
         for player in game_state.players:
-            random.shuffle(player.deck)
+            session.random_generator.shuffle(player.deck)
 
         # Draw initial 5 cards
         for player_index, player in enumerate(game_state.players):
