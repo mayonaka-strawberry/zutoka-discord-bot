@@ -178,7 +178,7 @@ class SoloGameFlow(GameFlow):
             content=content, embeds=embeds, files=[board_file],
         )
 
-        if delay > 0:
+        if delay > 0 and not getattr(session.transport, 'suppress_phase_delays', False):
             await asyncio.sleep(delay)
 
     async def _do_deck_building_phase(
