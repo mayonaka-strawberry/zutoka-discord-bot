@@ -119,6 +119,8 @@ class GameFlow:
 
         If changed_indices is provided, only send messages for those indices.
         """
+        if player_index is not None and not session.transport.delivers_to_player(session, player_index):
+            return
         zone_msgs = await generate_zone_messages_off_thread(session.game_state, names)
         for i, (label, strip_file) in enumerate(zone_msgs):
             if changed_indices is not None and i not in changed_indices:
@@ -178,6 +180,12 @@ class GameFlow:
             )
         session._zone_snapshots = new_snapshots
 
+        # Replay fast path: keep the zone-snapshot bookkeeping above (it must
+        # track exactly as in the original run) but skip all rendering, sends,
+        # and pacing delays while the transport is muted.
+        if getattr(session.transport, 'muted', False):
+            return
+
         field_embed = build_field_embed(game_state, names)
         embeds = list(extra_embeds) if extra_embeds else []
         embeds.append(field_embed)
@@ -192,6 +200,8 @@ class GameFlow:
 
         # Each player DM: zone messages (only changed) then their perspective board (no button)
         for index in range(2):
+            if not session.transport.delivers_to_player(session, index):
+                continue
             player = game_state.players[index]
             if changed_indices is None or changed_indices:
                 await self._send_zone_messages(session, names, player_index=index, changed_indices=changed_indices)
@@ -281,11 +291,12 @@ class GameFlow:
         # consumed so far is the coin flip inside initialize_game, which replay
         # regenerates from the seed. A TCG series creates its persistence
         # before match 1, so this only fires for standalone matches. Solo
-        # matches are excluded until Stage 6 routes the bot's decisions
-        # through the broker (unlogged decisions cannot be replayed).
-        if session.persistence is None and not session.is_solo:
+        # matches persist too: every bot decision flows through the broker
+        # (BotAgentDecisionAdapter), so the log replays them exactly.
+        if session.persistence is None:
             from zutomayo.engine.game_persistence import GamePersistence
-            session.persistence = GamePersistence.create_for_session(session, 'standard')
+            mode = 'solo' if session.is_solo else 'standard'
+            session.persistence = GamePersistence.create_for_session(session, mode)
             session.broker.persistence = session.persistence
 
         game_state = session.game_state
@@ -310,6 +321,8 @@ class GameFlow:
 
         # Send hands to both players
         for index in range(2):
+            if not session.transport.delivers_to_player(session, index):
+                continue
             player = game_state.players[index]
             embed = build_hand_embed(player)
             await self._send_to_player(session, index, embed=embed)
@@ -335,6 +348,8 @@ class GameFlow:
         board_file = await render_board_image_off_thread(game_state, Chronos.DAY)
         await self._send_to_channel(session, content=start_content, embed=field_embed, files=[board_file])
         for index in range(2):
+            if not session.transport.delivers_to_player(session, index):
+                continue
             player = game_state.players[index]
             await self._send_zone_messages(session, names, player_index=index)
             board_file = await render_board_image_off_thread(game_state, player.side)
@@ -492,11 +507,12 @@ class GameFlow:
                 session.random_generator.shuffle(player.deck)
 
                 # Send updated hand
-                embed = build_hand_embed(player)
-                await self._send_to_player(session, index, content='New hand', embed=embed)
-                hand_file = await create_hand_image_off_thread(player.hand)
-                if hand_file:
-                    await self._send_to_player(session, index, files=[hand_file])
+                if session.transport.delivers_to_player(session, index):
+                    embed = build_hand_embed(player)
+                    await self._send_to_player(session, index, content='New hand', embed=embed)
+                    hand_file = await create_hand_image_off_thread(player.hand)
+                    if hand_file:
+                        await self._send_to_player(session, index, files=[hand_file])
             else:
                 await self._send_to_player(session, index, content='No change')
 
@@ -594,10 +610,11 @@ class GameFlow:
                 else:
                     status = 'Set 1 card'
 
-            await self._send_to_player(session, index, content=status, embed=embed)
-            hand_file = await create_hand_image_off_thread(player.hand)
-            if hand_file:
-                await self._send_to_player(session, index, files=[hand_file])
+            if session.transport.delivers_to_player(session, index):
+                await self._send_to_player(session, index, content=status, embed=embed)
+                hand_file = await create_hand_image_off_thread(player.hand)
+                if hand_file:
+                    await self._send_to_player(session, index, files=[hand_file])
 
         prompted_indices = sorted(requests.keys())
         responses = await asyncio.gather(
