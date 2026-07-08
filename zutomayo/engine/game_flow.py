@@ -11,6 +11,16 @@ from zutomayo.enums.zone import Zone
 from zutomayo.data.name_storage import resolve_display_name
 from zutomayo.engine.adapters.discord_adapter import DiscordDecisionAdapter
 from zutomayo.engine.decision_broker import DecisionBroker
+from zutomayo.engine.decisions import (
+    KIND_CARD_SELECT,
+    KIND_REDRAW,
+    KIND_TWO_STEP_CARD_SELECT,
+    PAYLOAD_INDICES,
+    PURPOSE_INITIAL_BATTLE_CARD,
+    PURPOSE_SET_CARDS,
+    DecisionRequest,
+    build_card_options,
+)
 from zutomayo.engine.match_transport import DiscordMatchTransport
 from zutomayo.ui.embeds import (
     build_battle_result_embed,
@@ -22,7 +32,6 @@ from zutomayo.ui.embeds import (
 )
 from zutomayo.ui.board_renderer import generate_zone_messages_off_thread, render_board_image_off_thread
 from zutomayo.ui.deck_management_views import DeckSourceView
-from zutomayo.ui.views import CardSelectView, RedrawView, TwoStepCardSelectView
 from zutomayo.utils.discord_utils import send_with_retry
 
 if TYPE_CHECKING:
@@ -435,22 +444,33 @@ class GameFlow:
         session.clear_pending()
 
         names = self._player_names(session)
+        hand_snapshots: dict[int, list] = {}
+        requests = []
         for index in range(2):
             player = game_state.players[index]
-            view = RedrawView(session, index, player.hand[:], opponent_name=names[1 - index])
-            await self._send_to_player(
-                session, index,
-                content='Select the cards you want to redraw [最初の手札を引いたとき、一度だけ引き直しができます。]',
-                view=view,
-            )
+            hand_snapshots[index] = player.hand[:]
+            requests.append(DecisionRequest(
+                kind=KIND_REDRAW,
+                player_index=index,
+                prompt_text='Select the cards you want to redraw [最初の手札を引いたとき、一度だけ引き直しができます。]',
+                options=build_card_options(hand_snapshots[index]),
+                timeout_seconds=300.0,
+                opponent_name=names[1 - index],
+                live_objects=hand_snapshots[index],
+            ))
 
-        await session.wait_for_both_players()
+        responses = await asyncio.gather(
+            *(session.broker.request(request) for request in requests)
+        )
 
         # Process redraws
         for index in range(2):
             player = game_state.players[index]
-            action = session.pending_actions.get(index, {'redraw': []})
-            cards_to_redraw = action.get('redraw', [])
+            response = responses[index]
+            if response.payload_type == PAYLOAD_INDICES and response.payload:
+                cards_to_redraw = [hand_snapshots[index][i] for i in response.payload]
+            else:
+                cards_to_redraw = []
 
             if cards_to_redraw:
                 count = len(cards_to_redraw)
@@ -485,27 +505,34 @@ class GameFlow:
         session.clear_pending()
         names = self._player_names(session)
 
+        hand_snapshots: dict[int, list] = {}
+        requests = []
         for index in range(2):
             player = game_state.players[index]
-            view = CardSelectView(
-                session, index, player.hand[:],
-                min_cards=1, max_cards=1,
+            hand_snapshots[index] = player.hand[:]
+            requests.append(DecisionRequest(
+                kind=KIND_CARD_SELECT,
+                player_index=index,
+                prompt_text='Choose one card to place face-down in the Battle Zone [手札からカードを１枚選びバトルゾーンに裏向きにして置きます。]',
                 placeholder='Choose a card for the Battle Zone...',
+                options=build_card_options(hand_snapshots[index]),
+                minimum_selections=1,
+                maximum_selections=1,
+                timeout_seconds=300.0,
+                purpose=PURPOSE_INITIAL_BATTLE_CARD,
                 opponent_name=names[1 - index],
-            )
-            await self._send_to_player(
-                session, index,
-                content='Choose one card to place face-down in the Battle Zone [手札からカードを１枚選びバトルゾーンに裏向きにして置きます。]',
-                view=view,
-            )
+                live_objects=hand_snapshots[index],
+            ))
 
-        await session.wait_for_both_players()
+        responses = await asyncio.gather(
+            *(session.broker.request(request) for request in requests)
+        )
 
         for index in range(2):
             player = game_state.players[index]
-            selected = session.pending_actions.get(index, [])
-            if selected:
-                turn_manager.set_initial_battle_card(player, selected[0])
+            response = responses[index]
+            if response.payload_type == PAYLOAD_INDICES and response.payload:
+                turn_manager.set_initial_battle_card(player, hand_snapshots[index][response.payload[0]])
 
     async def _do_turn(self, session: GameSession, names: dict[int, str]) -> None:
         game_state = session.game_state
@@ -515,32 +542,49 @@ class GameFlow:
         game_state.current_phase = Phase.SET_CARDS
         session.clear_pending()
 
+        hand_snapshots: dict[int, list] = {}
+        requests: dict[int, DecisionRequest] = {}
         for index in range(2):
             player = game_state.players[index]
             max_cards = turn_manager.get_max_cards_to_set(player)
             max_cards = min(max_cards, len(player.hand))
 
             if max_cards == 0:
-                session.submit_action(index, [])
                 await self._send_to_player(session, index, content='You have no cards to set this turn.')
                 continue
 
             embed = build_hand_embed(player)
+            hand_snapshots[index] = player.hand[:]
 
             if max_cards > 1:
-                view = TwoStepCardSelectView(
-                    session, index, player.hand[:],
-                    embed=embed,
+                requests[index] = DecisionRequest(
+                    kind=KIND_TWO_STEP_CARD_SELECT,
+                    player_index=index,
+                    prompt_text='Select your cards:',
+                    options=build_card_options(hand_snapshots[index]),
+                    minimum_selections=1,
+                    maximum_selections=2,
+                    timeout_seconds=300.0,
+                    purpose=PURPOSE_SET_CARDS,
                     opponent_name=names[1 - index],
+                    display_embed=embed,
+                    live_objects=hand_snapshots[index],
                 )
                 status = f'Last Turn Result: LOSE | Set up to {max_cards} cards'
             else:
-                view = CardSelectView(
-                    session, index, player.hand[:],
-                    min_cards=1, max_cards=1,
+                requests[index] = DecisionRequest(
+                    kind=KIND_CARD_SELECT,
+                    player_index=index,
+                    prompt_text='Select your cards:',
                     placeholder='Select a card to set...',
-                    embed=embed,
+                    options=build_card_options(hand_snapshots[index]),
+                    minimum_selections=1,
+                    maximum_selections=1,
+                    timeout_seconds=300.0,
+                    purpose=PURPOSE_SET_CARDS,
                     opponent_name=names[1 - index],
+                    display_embed=embed,
+                    live_objects=hand_snapshots[index],
                 )
                 if game_state.last_battle_winner == player.name:
                     status = 'Last Turn Result: WIN | Set 1 card'
@@ -553,14 +597,20 @@ class GameFlow:
             hand_file = await create_hand_image_off_thread(player.hand)
             if hand_file:
                 await self._send_to_player(session, index, files=[hand_file])
-            await self._send_to_player(session, index, content='Select your cards:', view=view)
 
-        await session.wait_for_both_players()
+        prompted_indices = sorted(requests.keys())
+        responses = await asyncio.gather(
+            *(session.broker.request(requests[index]) for index in prompted_indices)
+        )
+        responses_by_player = dict(zip(prompted_indices, responses))
 
         # Place selected cards in set zones
         for index in range(2):
             player = game_state.players[index]
-            selected = session.pending_actions.get(index, [])
+            response = responses_by_player.get(index)
+            if response is None or response.payload_type != PAYLOAD_INDICES or not response.payload:
+                continue
+            selected = [hand_snapshots[index][i] for i in response.payload]
             if len(selected) >= 1:
                 turn_manager.set_card(player, selected[0], Zone.SET_ZONE_A)
             if len(selected) >= 2:
