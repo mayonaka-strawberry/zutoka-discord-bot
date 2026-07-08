@@ -2,6 +2,7 @@ from __future__ import annotations
 import logging
 import importlib
 import pkgutil
+import random
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Coroutine, Optional
 from constants import CHRONOS_SIZE, MIDNIGHT, NIGHT_END
@@ -114,6 +115,20 @@ class EffectEngine:
         self.bot = bot
         self.turn_state = TurnEffectState()
         self._player_name_cache.clear()
+
+    @property
+    def random_generator(self) -> Any:
+        """
+        The generator all effect randomness must draw from. Bound sessions
+        provide a seeded per-game random.Random (replay determinism); unbound
+        engines (headless V2 training, tests) fall back to the module random
+        functions, preserving the historical stream for seeded harness runs.
+        """
+        if self.session is not None:
+            generator = getattr(self.session, 'random_generator', None)
+            if generator is not None:
+                return generator
+        return random
 
     def player_label(self, player_index: int) -> str:
         """Return 'P0 (DisplayName)' or just 'P0' if name unavailable."""
