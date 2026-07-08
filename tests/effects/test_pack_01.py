@@ -21,7 +21,7 @@ import pytest  # noqa: E402
 from zutomayo.enums.chronos import Chronos  # noqa: E402
 
 from tests.support.game_state_builder import GameStateBuilder  # noqa: E402
-from tests.support.effect_harness import run_effect  # noqa: E402
+from tests.support.effect_harness import EffectHarness, ScriptedAnswer, run_effect  # noqa: E402
 
 # Effectless fixture characters, one per attribute:
 DARKNESS_CHARACTER = '01-001'       # power cost 5
@@ -304,6 +304,151 @@ def test_01_008_resets_chronos_to_turn_start():
     state.chronos = 11
     run_effect(state, '01-008', 0)
     assert state.chronos == 6
+
+
+class TestEffect01006:
+    """Use one enchant from the own Abyss this turn (it stays in the Abyss)."""
+
+    def test_dispatches_selected_abyss_enchant(self):
+        # 01-030 is an enchant granting a flat +30; using it via 01-006 must
+        # apply its effect while the card stays in the Abyss.
+        state = (GameStateBuilder()
+                 .with_battle_card(0, '01-006')
+                 .with_abyss(0, ['01-030'])
+                 .build())
+        result = run_effect(state, '01-006', 0, scripted_answers=[
+            ScriptedAnswer.card_indices([0]),
+        ])
+        assert result.engine.turn_state.attack_bonus[0] == 30
+        assert [ci.card.effect for ci in state.players[0].abyss] == ['01-030']
+
+    def test_fizzles_without_abyss_enchants(self):
+        state = (GameStateBuilder()
+                 .with_battle_card(0, '01-006')
+                 .with_abyss(0, [DARKNESS_CHARACTER])
+                 .build())
+        result = run_effect(state, '01-006', 0)
+        assert any('No enchantment cards in your Abyss. Effect fizzles.' in text
+                   for text in result.message_texts())
+
+    def test_timeout_does_nothing(self):
+        state = (GameStateBuilder()
+                 .with_battle_card(0, '01-006')
+                 .with_abyss(0, ['01-030'])
+                 .build())
+        result = run_effect(state, '01-006', 0, scripted_answers=[
+            ScriptedAnswer.timeout('effect_card_select'),
+        ])
+        assert result.engine.turn_state.attack_bonus[0] == 0
+        assert any('No effect.' in text for text in result.message_texts())
+
+
+def test_01_026_rewinds_by_opponent_clock():
+    state = GameStateBuilder().with_battle_card(0, '01-026').with_chronos(6).build()
+    state.chronos = 10
+    harness = EffectHarness(state)
+    harness.engine.turn_state.chronos_advanced[1] = 3
+    harness.run_effect('01-026', 0)
+    assert state.chronos == 3, 'turn-start chronos 6 minus opponent clock 3'
+
+    state = GameStateBuilder().with_battle_card(0, '01-026').with_chronos(6).build()
+    harness = EffectHarness(state)
+    harness.run_effect('01-026', 0)
+    assert state.chronos == 6, 'no opponent clock recorded: nothing happens'
+
+
+class TestEffect01086:
+    """Swap a hand card with an Abyss card of choice."""
+
+    def test_happy_path_swaps(self):
+        state = (GameStateBuilder()
+                 .with_battle_card(0, '01-086')
+                 .with_hand(0, [DARKNESS_CHARACTER])
+                 .with_abyss(0, [FLAME_CHARACTER])
+                 .build())
+        run_effect(state, '01-086', 0, scripted_answers=[
+            ScriptedAnswer.card_indices([0]),
+            ScriptedAnswer.card_indices([0]),
+        ])
+        player = state.players[0]
+        assert [ci.card.pack * 1000 + ci.card.id for ci in player.hand] == [1002]
+        assert [ci.card.pack * 1000 + ci.card.id for ci in player.abyss] == [1001]
+        assert not player.hand[0].face_up
+
+    def test_fizzles_without_hand_or_abyss(self):
+        state = (GameStateBuilder()
+                 .with_battle_card(0, '01-086')
+                 .with_hand(0, [DARKNESS_CHARACTER])
+                 .build())
+        result = run_effect(state, '01-086', 0)
+        assert any('Effect fizzles.' in text for text in result.message_texts())
+
+    def test_timeout_on_either_step_changes_nothing(self):
+        state = (GameStateBuilder()
+                 .with_battle_card(0, '01-086')
+                 .with_hand(0, [DARKNESS_CHARACTER])
+                 .with_abyss(0, [FLAME_CHARACTER])
+                 .build())
+        run_effect(state, '01-086', 0, scripted_answers=[
+            ScriptedAnswer.timeout('effect_card_select'),
+        ])
+        assert len(state.players[0].hand) == 1 and len(state.players[0].abyss) == 1
+
+        state = (GameStateBuilder()
+                 .with_battle_card(0, '01-086')
+                 .with_hand(0, [DARKNESS_CHARACTER])
+                 .with_abyss(0, [FLAME_CHARACTER])
+                 .build())
+        run_effect(state, '01-086', 0, scripted_answers=[
+            ScriptedAnswer.card_indices([0]),
+            ScriptedAnswer.timeout('effect_card_select'),
+        ])
+        assert len(state.players[0].hand) == 1 and len(state.players[0].abyss) == 1
+
+
+class TestEffect01103:
+    """Bottom-deck a chosen card from the opponent's Abyss."""
+
+    def test_happy_path(self):
+        state = (GameStateBuilder()
+                 .with_battle_card(0, '01-103')
+                 .with_abyss(1, [FLAME_CHARACTER, WIND_CHARACTER])
+                 .with_deck(1, [DARKNESS_CHARACTER])
+                 .build())
+        run_effect(state, '01-103', 0, scripted_answers=[ScriptedAnswer.card_indices([1])])
+        opponent = state.players[1]
+        assert [ci.card.id for ci in opponent.abyss] == [2]
+        assert [ci.card.id for ci in opponent.deck] == [1, 4]
+
+    def test_fizzles_on_empty_abyss(self):
+        state = GameStateBuilder().with_battle_card(0, '01-103').build()
+        result = run_effect(state, '01-103', 0)
+        assert any("Opponent's Abyss is empty. Effect fizzles." in text
+                   for text in result.message_texts())
+
+    def test_timeout_changes_nothing(self):
+        state = (GameStateBuilder()
+                 .with_battle_card(0, '01-103')
+                 .with_abyss(1, [FLAME_CHARACTER])
+                 .build())
+        run_effect(state, '01-103', 0,
+                   scripted_answers=[ScriptedAnswer.timeout('effect_card_select')])
+        assert len(state.players[1].abyss) == 1
+
+
+def test_01_104_mills_opponent_top_card_to_abyss():
+    state = (GameStateBuilder()
+             .with_battle_card(0, '01-104')
+             .with_deck(1, [FLAME_CHARACTER, WIND_CHARACTER])
+             .build())
+    run_effect(state, '01-104', 0)
+    opponent = state.players[1]
+    assert [ci.card.id for ci in opponent.abyss] == [2]
+    assert [ci.card.id for ci in opponent.deck] == [4]
+
+    state = GameStateBuilder().with_battle_card(0, '01-104').build()
+    run_effect(state, '01-104', 0)
+    assert state.players[1].abyss == []
 
 
 def test_01_092_draws_a_card_and_raises_hand_size():
