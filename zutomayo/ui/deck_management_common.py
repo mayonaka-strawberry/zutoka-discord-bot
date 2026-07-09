@@ -16,6 +16,7 @@ class DeckNamePaginationMixin:
     all_deck_names: list[str]
     page: int
 
+    @property
     def total_pages(self) -> int:
         return max(1, -(-len(self.all_deck_names) // DECKS_PER_PAGE))
 

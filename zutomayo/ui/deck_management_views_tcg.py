@@ -189,7 +189,6 @@ class ManageDecksTcgView(DeckNamePaginationMixin, discord.ui.View):
         self.selected_deck_name: str | None = None
         self._build_page()
 
-    @property
     def _build_page(self) -> None:
         names = self._page_slice()
         options = [
@@ -619,7 +618,6 @@ class TcgSavedDeckSelectView(DeckNamePaginationMixin, discord.ui.View):
         self.page = page
         self._build_page()
 
-    @property
     def _build_page(self) -> None:
         names = self._page_slice()
         options = [
