@@ -431,6 +431,91 @@ class TestEngineHelpers:
         battle_card.power_cost_reduction = 5   # cost 3 - 5
         assert harness.engine.get_effective_power_cost(battle_card, state.players[0]) == 0
 
+    def test_opponent_of(self):
+        state = GameStateBuilder().build()
+        harness = EffectHarness(state)
+        assert harness.engine.opponent_of(state, 0) is state.players[1]
+        assert harness.engine.opponent_of(state, 1) is state.players[0]
+
+    def test_heal_clamps_at_hundred_and_reports_actual_amount(self):
+        state = GameStateBuilder().with_hp(0, 95).build()
+        harness = EffectHarness(state)
+        assert harness.engine.heal(state, 0, 10, source='test') == 5
+        assert state.players[0].hp == 100
+
+        assert harness.engine.heal(state, 0, 10) == 0, 'healing at full HP is a no-op'
+        assert harness.engine.heal(state, 1, 0) == 0, 'zero healing is a no-op'
+        assert state.players[1].hp == 100
+        assert harness.engine.turn_state.damage_taken_this_turn[0] == 0, \
+            'healing never touches damage_taken_this_turn'
+
+    def test_lose_game_sets_hp_zero_without_counting_as_damage(self):
+        state = GameStateBuilder().with_hp(1, 60).build()
+        harness = EffectHarness(state)
+        harness.engine.lose_game(state, 1, source='test')
+        assert state.players[1].hp == 0
+        assert harness.engine.turn_state.damage_taken_this_turn[1] == 0, \
+            'losing is not damage: 03-058/03-085 must not count it'
+
+    def test_return_to_deck_bottom_and_top(self):
+        from tests.support.game_state_builder import card_by_identity
+        from zutomayo.models.card_instance import CardInstance
+
+        state = GameStateBuilder().build()
+        harness = EffectHarness(state)
+        player = state.players[0]
+        existing_card = CardInstance(card=card_by_identity(WIND_CHARACTER))
+        player.deck.append(existing_card)
+
+        bottom_card = CardInstance(card=card_by_identity(DARKNESS_CHARACTER))
+        bottom_card.face_up = True
+        bottom_card.effects_disabled = True
+        harness.engine.return_to_deck_bottom(bottom_card, player)
+        assert player.deck[-1] is bottom_card, 'append means bottom (index 0 is the top)'
+        assert bottom_card.zone == Zone.DECK and bottom_card.face_up is False
+        assert bottom_card.effects_disabled is True, \
+            'deck moves must not reset negation; Player.draw clears it on redraw'
+
+        top_card = CardInstance(card=card_by_identity(FLAME_CHARACTER))
+        harness.engine.return_to_deck_top(top_card, player)
+        assert player.deck[0] is top_card
+        assert top_card.zone == Zone.DECK and top_card.face_up is False
+
+    def test_mill_deck_top_to_abyss_stops_at_empty_deck(self):
+        from tests.support.game_state_builder import card_by_identity
+        from zutomayo.models.card_instance import CardInstance
+
+        state = GameStateBuilder().build()
+        harness = EffectHarness(state)
+        opponent = state.players[1]
+        first_card = CardInstance(card=card_by_identity(WIND_CHARACTER))
+        second_card = CardInstance(card=card_by_identity(FLAME_CHARACTER))
+        opponent.deck.extend([first_card, second_card])
+
+        milled = harness.engine.mill_deck_top_to_abyss(opponent, 3, actor_index=0)
+        assert milled == [first_card, second_card], 'mills top-first, stops at empty deck'
+        assert opponent.deck == []
+        assert opponent.abyss == [first_card, second_card]
+        assert harness.engine.turn_state.abyss_received_card[1] is True
+        assert harness.engine.turn_state.opponent_card_to_abyss[1] is True, \
+            'actor 0 caused the placement, so the flag keys the victim side'
+
+    def test_is_effect_affordable_counts_power_bonus_for_non_area_only(self):
+        # Area enchant 02-064 costs 2: power_bonus must not help it.
+        state = GameStateBuilder().with_single_card(0, 'set_zone_c', '02-064').build()
+        harness = EffectHarness(state)
+        area_enchant = state.players[0].set_zone_c
+        harness.engine.turn_state.power_bonus[0] = 5
+        assert harness.engine.is_effect_affordable(area_enchant, state.players[0]) is False
+
+        # A character's cost can be met by power_bonus alone.
+        state = GameStateBuilder().with_battle_card(0, WIND_CHARACTER).build()   # cost 3
+        harness = EffectHarness(state)
+        battle_card = state.players[0].battle_zone
+        assert harness.engine.is_effect_affordable(battle_card, state.players[0]) is False
+        harness.engine.turn_state.power_bonus[0] = 3
+        assert harness.engine.is_effect_affordable(battle_card, state.players[0]) is True
+
 
 class TestEffectCollectionAndCostGate:
     def test_collection_order_and_filters(self):

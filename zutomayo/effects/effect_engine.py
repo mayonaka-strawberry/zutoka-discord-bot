@@ -142,6 +142,10 @@ class EffectEngine:
         self._player_name_cache[player_index] = label
         return label
 
+    def opponent_of(self, game_state: GameState, player_index: int) -> Player:
+        """Return the opponent of the given player."""
+        return game_state.players[1 - player_index]
+
     def set_chronos(self, game_state: GameState, new_value: int) -> None:
         """Set chronos to a new value and track any day/night transition."""
         old_is_night = 0 <= game_state.chronos <= NIGHT_END
@@ -171,6 +175,40 @@ class EffectEngine:
             '%s%s: damage %d (HP %d -> %d)',
             f'[{source}] ' if source else '', self.player_label(player_index),
             amount, old_hp, player.hp,
+        )
+
+    def heal(self, game_state: GameState, player_index: int, amount: int, *, source: str = '') -> int:
+        """
+        Heal a player's HP, clamped to 100. Returns the amount actually healed.
+
+        Healing is not damage: it never touches damage_taken_this_turn.
+        """
+        if amount <= 0:
+            return 0
+        player = game_state.players[player_index]
+        old_hp = player.hp
+        player.hp = min(100, player.hp + amount)
+        healed_amount = player.hp - old_hp
+        log.debug(
+            '%s%s: healed %d (HP %d -> %d)',
+            f'[{source}] ' if source else '', self.player_label(player_index),
+            healed_amount, old_hp, player.hp,
+        )
+        return healed_amount
+
+    def lose_game(self, game_state: GameState, player_index: int, *, source: str = '') -> None:
+        """
+        Make a player lose the game immediately by setting their HP to 0.
+
+        Losing is not damage: it must not route through deal_damage, so it
+        never counts toward 03-058/03-085's damage_taken_this_turn.
+        """
+        player = game_state.players[player_index]
+        old_hp = player.hp
+        player.hp = 0
+        log.debug(
+            '%s%s: loses the game (HP %d -> 0)',
+            f'[{source}] ' if source else '', self.player_label(player_index), old_hp,
         )
 
     def place_in_abyss(self, card_instance: CardInstance, abyss_owner: Player, actor_index: int) -> None:
@@ -214,6 +252,44 @@ class EffectEngine:
             self.turn_state.card_to_power_this_turn[charger_owner.index] = True
             if card_instance.card.card_type == CardType.CHARACTER:
                 self.turn_state.character_to_power_this_turn[charger_owner.index] = True
+
+    def return_to_deck_bottom(self, card_instance: CardInstance, deck_owner: Player) -> None:
+        """
+        Place a card face-down on the bottom of a player's deck (index 0 is
+        the top). The caller removes the card from its source zone first,
+        the same contract as place_in_abyss. Deliberately does not reset
+        attribute_override/effects_disabled: Player.draw clears lingering
+        negation when the card is drawn again.
+        """
+        from zutomayo.enums.zone import Zone
+        card_instance.zone = Zone.DECK
+        card_instance.face_up = False
+        deck_owner.deck.append(card_instance)
+
+    def return_to_deck_top(self, card_instance: CardInstance, deck_owner: Player) -> None:
+        """
+        Place a card face-down on top of a player's deck (index 0 is the
+        top). Same caller contract as return_to_deck_bottom.
+        """
+        from zutomayo.enums.zone import Zone
+        card_instance.zone = Zone.DECK
+        card_instance.face_up = False
+        deck_owner.deck.insert(0, card_instance)
+
+    def mill_deck_top_to_abyss(self, deck_owner: Player, count: int, actor_index: int) -> list[CardInstance]:
+        """
+        Move up to count cards from the top of a player's deck into their
+        own Abyss via place_in_abyss, so the placement triggers fire.
+        Returns the moved cards in the order they were milled.
+        """
+        milled_cards: list[CardInstance] = []
+        for _ in range(count):
+            if not deck_owner.deck:
+                break
+            card_instance = deck_owner.deck.pop(0)
+            self.place_in_abyss(card_instance, deck_owner, actor_index)
+            milled_cards.append(card_instance)
+        return milled_cards
 
     def on_area_enchant_leaves_play(self, game_state: GameState, area_enchant: CardInstance, owner_index: int) -> None:
         """
@@ -286,9 +362,6 @@ class EffectEngine:
 
         return result
 
-    def apply_attack_modifier(self, game_state: GameState, player_index: int) -> int:
-        return self.turn_state.attack_bonus.get(player_index, 0)
-
     def get_effective_attack(self, game_state: GameState, player: Player) -> int:
         """
         Compute a battle character's effective attack power.
@@ -308,9 +381,7 @@ class EffectEngine:
             return override
 
         card = player.battle_zone.card
-        effective_cost = self.get_effective_power_cost(player.battle_zone, player)
-        total_power = player.total_power + self.turn_state.power_bonus.get(player.index, 0)
-        if total_power < effective_cost:
+        if not self.is_effect_affordable(player.battle_zone, player):
             return 0
 
         force_day = self.should_force_day_attack(game_state, player.index)
@@ -331,7 +402,7 @@ class EffectEngine:
             else:
                 base = card.attack_day
 
-        modifier = self.apply_attack_modifier(game_state, player.index)
+        modifier = self.turn_state.attack_bonus.get(player.index, 0)
         return max(0, base + modifier)
 
     def apply_damage_reduction(self, game_state: GameState, player_index: int) -> int:
@@ -346,8 +417,7 @@ class EffectEngine:
         area_enchant = player.set_zone_c
         if area_enchant is None or area_enchant.card.effect != '02-007':
             return False
-        effective_cost = self.get_effective_power_cost(area_enchant, player)
-        return player.total_power >= effective_cost
+        return self.is_effect_affordable(area_enchant, player)
 
     def is_opponent_clock_disabled(self, game_state: GameState, player_index: int) -> bool:
         """
@@ -360,8 +430,7 @@ class EffectEngine:
         area_enchant = opponent.set_zone_c
         if area_enchant is None or area_enchant.card.effect != '02-005':
             return False
-        effective_cost = self.get_effective_power_cost(area_enchant, opponent)
-        return opponent.total_power >= effective_cost
+        return self.is_effect_affordable(area_enchant, opponent)
 
     def is_effectively_midnight(self, game_state: GameState) -> bool:
         """
@@ -385,8 +454,7 @@ class EffectEngine:
         for player in game_state.players:
             area_enchant = player.set_zone_c
             if area_enchant is not None and area_enchant.card.effect == '03-061':
-                effective_cost = self.get_effective_power_cost(area_enchant, player)
-                if player.total_power >= effective_cost:
+                if self.is_effect_affordable(area_enchant, player):
                     return True
         return False
 
@@ -417,7 +485,7 @@ class EffectEngine:
             area_enchant = player.set_zone_c
             if area_enchant is None or area_enchant.card.effect != '03-085':
                 continue
-            if player.total_power < self.get_effective_power_cost(area_enchant, player):
+            if not self.is_effect_affordable(area_enchant, player):
                 continue
             damage = self.turn_state.damage_taken_this_turn.get(player.index, 0)
             if damage >= 30:
@@ -436,7 +504,7 @@ class EffectEngine:
             area_enchant = player.set_zone_c
             if area_enchant is None or area_enchant.card.effect != '03-058':
                 continue
-            if player.total_power < self.get_effective_power_cost(area_enchant, player):
+            if not self.is_effect_affordable(area_enchant, player):
                 continue
             damage = self.turn_state.damage_taken_this_turn.get(player.index, 0)
             if damage >= 30:
@@ -456,6 +524,20 @@ class EffectEngine:
     def get_effective_power_cost(self, card_instance: CardInstance, player: Player) -> int:
         cost = card_instance.card.power_cost - card_instance.power_cost_reduction
         return max(0, cost)
+
+    def is_effect_affordable(self, card_instance: CardInstance, player: Player) -> bool:
+        """
+        Whether the player currently meets the card's power cost (checked at
+        the moment the effect is processed, per the rule guide).
+
+        Area enchants count Power Charger power only; enchants and characters
+        also add turn_state.power_bonus.
+        """
+        effective_cost = self.get_effective_power_cost(card_instance, player)
+        total_power = player.total_power
+        if card_instance.card.card_type != CardType.AREA_ENCHANT:
+            total_power += self.turn_state.power_bonus.get(player.index, 0)
+        return total_power >= effective_cost
 
     def check_area_enchant_removal(
         self, game_state: GameState, turn_manager: Any, *, end_of_turn: bool = False,
@@ -477,8 +559,7 @@ class EffectEngine:
 
             # Area enchants with insufficient power cost are not removed even
             # when their removal conditions are met (Q&A rule).
-            effective_cost = self.get_effective_power_cost(area_enchant, player)
-            if player.total_power < effective_cost:
+            if not self.is_effect_affordable(area_enchant, player):
                 continue
 
             should_remove = False
@@ -709,26 +790,23 @@ class EffectEngine:
         Returns True if the effect was dispatched, False if skipped due to cost.
         """
         player = game_state.players[player_index]
-        effective_cost = self.get_effective_power_cost(card_instance, player)
 
-        if card_instance.card.card_type == CardType.AREA_ENCHANT:
-            if player.total_power < effective_cost:
+        if not self.is_effect_affordable(card_instance, player):
+            effective_cost = self.get_effective_power_cost(card_instance, player)
+            if card_instance.card.card_type == CardType.AREA_ENCHANT:
                 log.debug(
                     '%s: skipping %s (%s) — insufficient power (have %d, need %d)',
                     self.player_label(player_index), card_instance.card.effect, card_instance.card.name,
                     player.total_power, effective_cost,
                 )
-                return False
-        else:
-            total_power = player.total_power + self.turn_state.power_bonus.get(player_index, 0)
-            if total_power < effective_cost:
+            else:
                 log.debug(
                     '%s: skipping %s (%s) — insufficient power (have %d+%d bonus, need %d)',
                     self.player_label(player_index), card_instance.card.effect, card_instance.card.name,
                     player.total_power, self.turn_state.power_bonus.get(player_index, 0),
                     effective_cost,
                 )
-                return False
+            return False
 
         await self._dispatch(game_state, player_index, card_instance)
         return True
