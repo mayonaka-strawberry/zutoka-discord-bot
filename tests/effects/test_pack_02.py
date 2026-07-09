@@ -1181,3 +1181,49 @@ def test_02_042_previous_darkness_bonus():
              .with_previous_battle_character(0, FLAME_CHARACTER)
              .build())
     assert run_effect(state, '02-042', 0).engine.turn_state.attack_bonus[0] == 0
+
+
+# --- branch gap fills -------------------------------------------------------
+
+def test_02_015_enchant_use_with_empty_deck_skips_the_draw():
+    enchant_identity = _affordable_effect_enchant_identity()
+    state = (GameStateBuilder()
+             .with_battle_card(0, '02-015')
+             .with_previous_battle_character(0, DARKNESS_CHARACTER)
+             .with_chronos(13)
+             .with_hand(0, [enchant_identity])
+             .build())
+    run_effect(state, '02-015', 0, scripted_answers=[ScriptedAnswer.card_indices([0])])
+    player = state.players[0]
+    assert player.deck == [] and enchant_identity not in card_identities(player.hand)
+
+
+@pytest.mark.parametrize('effect_id, setup', [
+    ('02-019', 'previous_wind'),
+    ('02-024', 'previous_electric_night'),
+])
+def test_bounce_effect_selection_timeouts(effect_id, setup):
+    builder = (GameStateBuilder()
+               .with_battle_card(0, effect_id)
+               .with_power_charger(1, [STP_ONE_CARD]))
+    if setup == 'previous_wind':
+        builder = builder.with_previous_battle_character(0, WIND_CHARACTER)
+    else:
+        builder = builder.with_previous_battle_character(0, ELECTRICITY_CHARACTER).with_chronos(4)
+    state = builder.build()
+    result = run_effect(state, effect_id, 0,
+                        scripted_answers=[ScriptedAnswer.timeout('effect_card_select')])
+    assert card_identities(state.players[1].power_charger) == [STP_ONE_CARD]
+    assert any('No effect.' in text for text in result.message_texts())
+
+
+def test_02_031_timeout_on_second_selection_changes_nothing():
+    state = (GameStateBuilder()
+             .with_battle_card(0, '02-031')
+             .with_hand(0, [DARKNESS_CHARACTER, FLAME_CHARACTER])
+             .build())
+    run_effect(state, '02-031', 0, scripted_answers=[
+        ScriptedAnswer.card_indices([0]),
+        ScriptedAnswer.timeout('effect_card_select'),
+    ])
+    assert len(state.players[0].hand) == 2 and state.players[0].deck == []
