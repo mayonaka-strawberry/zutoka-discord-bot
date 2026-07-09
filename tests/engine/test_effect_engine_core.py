@@ -226,6 +226,19 @@ class TestAreaEnchantRemoval:
         _run_removal(state, end_of_turn=False)
         _assert_removed(state)
 
+    def test_removal_evaluates_player_zero_before_player_one(self):
+        # Both players field 04-032 ("remove when the opponent has any area
+        # enchant"). Player 0 is evaluated first: their enchant sees the
+        # opponent's and is removed; player 1 then sees an empty set_zone_c
+        # and keeps theirs. Pins the order-sensitive interaction.
+        state = (_powered_builder('04-032', owner_index=0)
+                 .with_single_card(1, 'set_zone_c', '04-032')
+                 .with_power_charger(1, [STP_TWO_CARD] * 4)
+                 .build())
+        _run_removal(state, end_of_turn=False)
+        _assert_removed(state, 0)
+        _assert_kept(state, 1)
+
     def test_04_033_removes_on_own_power_charger_placement(self):
         def flag(harness):
             harness.engine.turn_state.card_to_power_this_turn[0] = True
@@ -292,6 +305,27 @@ class TestAreaEnchantRemoval:
         state = _powered_builder('04-095').build()
         _run_removal(state, end_of_turn=False)
         _assert_kept(state)
+
+
+class TestAreaEnchantRemovalTable:
+    def test_rule_table_covers_exactly_the_known_removal_effects(self):
+        from zutomayo.effects.effect_engine import (
+            _AREA_ENCHANT_REMOVAL_RULES,
+            AreaEnchantRemovalDestination,
+        )
+        expected_effect_identifiers = {
+            '02-005', '02-007', '02-058', '02-064', '02-086', '02-092', '02-098', '02-104',
+            '03-055', '03-061', '03-064', '03-086', '03-091', '03-092', '03-098', '03-104',
+            '04-030', '04-032', '04-033', '04-065', '04-091', '04-094', '04-095',
+        }
+        assert set(_AREA_ENCHANT_REMOVAL_RULES) == expected_effect_identifiers
+        abyss_destinations = [
+            effect_identifier
+            for effect_identifier, rule in _AREA_ENCHANT_REMOVAL_RULES.items()
+            if rule.destination is AreaEnchantRemovalDestination.ABYSS
+        ]
+        assert abyss_destinations == ['04-030'], \
+            '04-030 is the only card whose text overrides its SEND TO POWER routing'
 
 
 class TestEndOfTurnEffects:

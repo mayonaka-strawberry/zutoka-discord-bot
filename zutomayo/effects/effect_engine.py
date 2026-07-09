@@ -4,6 +4,7 @@ import importlib
 import pkgutil
 import random
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Callable, Coroutine, Optional
 from constants import CHRONOS_SIZE, MIDNIGHT, NIGHT_END
 from zutomayo.data.name_storage import resolve_display_name
@@ -20,6 +21,7 @@ from zutomayo.engine.decisions import (
 )
 from zutomayo.enums.card_type import CardType
 from zutomayo.enums.chronos import Chronos
+from zutomayo.enums.song import Song
 from zutomayo.models.card_instance import CardInstance
 
 if TYPE_CHECKING:
@@ -97,6 +99,168 @@ class EffectResolutionResult:
     """Summary of which effects were processed for a player."""
     resolved: list[CardInstance] = field(default_factory=list)
     skipped_cost: list[CardInstance] = field(default_factory=list)
+
+
+# ======================================================================
+# Area-enchant removal rules
+# ======================================================================
+#
+# Each area enchant with a printed removal condition has one entry in
+# _AREA_ENCHANT_REMOVAL_RULES. check_area_enchant_removal evaluates the
+# table per player (player 0 first), gating on power cost BEFORE the
+# condition (Q&A rule: an unaffordable enchant is never removed even when
+# its condition is met).
+
+
+class AreaEnchantRemovalDestination(Enum):
+    # Default routing: TurnManager.move_to_power_or_abyss decides by the
+    # card's SEND TO POWER value.
+    POWER_OR_ABYSS = auto()
+    # 04-030 only: the card text sends it to the Abyss despite its
+    # SEND TO POWER star, bypassing the send_to_power routing.
+    ABYSS = auto()
+
+
+@dataclass(frozen=True)
+class AreaEnchantRemovalRule:
+    # Some removal conditions (HP thresholds, placement flags) only apply
+    # at end of turn per Q&A rules; others are checked at every removal
+    # window.
+    end_of_turn_only: bool
+    condition: Callable[['EffectEngine', 'GameState', 'Player'], bool]
+    destination: AreaEnchantRemovalDestination = AreaEnchantRemovalDestination.POWER_OR_ABYSS
+
+
+def _any_day_night_transition_occurred(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    return engine.turn_state.day_to_night_occurred or engine.turn_state.night_to_day_occurred
+
+
+def _opponent_played_area_enchant(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    opponent_area_enchant = game_state.players[1 - player.index].set_zone_c
+    return opponent_area_enchant is not None and opponent_area_enchant.played_this_turn
+
+
+def _own_character_reached_power_charger(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    return engine.turn_state.character_to_power_this_turn.get(player.index, False)
+
+
+def _opponent_hp_at_most(threshold: int) -> Callable[['EffectEngine', 'GameState', 'Player'], bool]:
+    def condition(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+        return game_state.players[1 - player.index].hp <= threshold
+    return condition
+
+
+def _not_night_now(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    # Either a night-to-day transition occurred or it was already day.
+    return engine.turn_state.night_to_day_occurred or game_state.day_night != Chronos.NIGHT
+
+
+def _not_day_now(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    # Either a day-to-night transition occurred or it was already night.
+    return engine.turn_state.day_to_night_occurred or game_state.day_night != Chronos.DAY
+
+
+def _battle_character_power_cost_at_least_four(
+    *, use_opponent: bool,
+) -> Callable[['EffectEngine', 'GameState', 'Player'], bool]:
+    def condition(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+        target = game_state.players[1 - player.index] if use_opponent else player
+        return target.battle_zone is not None and target.battle_zone.card.power_cost >= 4
+    return condition
+
+
+def _opponent_placed_card_in_abyss(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    # Agent-based trigger (03-055, 03-091): keyed by the watcher, true when
+    # the watcher's opponent performed an Abyss placement this turn.
+    return engine.turn_state.opponent_card_to_abyss.get(player.index, False)
+
+
+def _opponent_fields_area_enchant(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    return game_state.players[1 - player.index].set_zone_c is not None
+
+
+def _abyss_has_four_or_more_cards(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    return len(player.abyss) >= 4
+
+
+def _opponent_abyss_received_card(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    # Location-based trigger (04-030, JP: 置かれた, passive): fires no
+    # matter who caused the placement into the opponent's Abyss.
+    return engine.turn_state.abyss_received_card.get(1 - player.index, False)
+
+
+def _own_card_reached_power_charger(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    return engine.turn_state.card_to_power_this_turn.get(player.index, False)
+
+
+def _swapped_to_non_study_me_character(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    swapped_songs = engine.turn_state.swapped_from_songs.get(player.index, set())
+    if not swapped_songs:   # No swap happened this turn
+        return False
+    return (player.battle_zone is None
+            or player.battle_zone.card.song != Song.STUDY_ME)
+
+
+def _own_hp_at_most(threshold: int) -> Callable[['EffectEngine', 'GameState', 'Player'], bool]:
+    def condition(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+        return player.hp <= threshold
+    return condition
+
+
+def _power_charger_has_five_or_more_cards(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    return len(player.power_charger) >= 5
+
+
+def _lost_battle_this_turn(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    # Keyed on the loss itself, not battle damage: damage reduction can
+    # bring the damage to 0 while the battle is still lost (04-095).
+    return engine.turn_state.battle_lost.get(player.index, False)
+
+
+_AREA_ENCHANT_REMOVAL_RULES: dict[str, AreaEnchantRemovalRule] = {
+    # Remove when any day/night transition occurred this turn.
+    '02-005': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_any_day_night_transition_occurred),
+    # Remove when the opponent plays an area enchant this turn.
+    '02-007': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_opponent_played_area_enchant),
+    # Remove when your character card is placed on your Power Charger.
+    '02-058': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_own_character_reached_power_charger),
+    # Remove when the opponent's HP falls to the threshold or below
+    # (end of turn only per Q&A).
+    '02-064': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_opponent_hp_at_most(30)),
+    '03-064': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_opponent_hp_at_most(40)),
+    # Remove when it is not night / not day.
+    '02-086': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_not_night_now),
+    '02-098': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_not_day_now),
+    # Remove when the opponent's / your own character card costs 4 or more.
+    '02-092': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_battle_character_power_cost_at_least_four(use_opponent=True)),
+    '02-104': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_battle_character_power_cost_at_least_four(use_opponent=False)),
+    # Remove when the opponent places a card in the Abyss.
+    '03-055': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_opponent_placed_card_in_abyss),
+    '03-091': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_opponent_placed_card_in_abyss),
+    # Remove (routed to own Power Charger via send_to_power) when the
+    # opponent has any area enchant on the field at end of turn.
+    '03-061': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_opponent_fields_area_enchant),
+    # Remove if 4 or more total cards are in the player's Abyss.
+    '03-086': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_abyss_has_four_or_more_cards),
+    '03-092': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_abyss_has_four_or_more_cards),
+    '03-098': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_abyss_has_four_or_more_cards),
+    '03-104': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_abyss_has_four_or_more_cards),
+    # Remove when a card is placed in the opponent's Abyss; goes to the
+    # Abyss despite its SEND TO POWER star (card text).
+    '04-030': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_opponent_abyss_received_card, destination=AreaEnchantRemovalDestination.ABYSS),
+    # Remove immediately when the opponent has any area enchant fielded.
+    '04-032': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_opponent_fields_area_enchant),
+    # Remove when a card is placed into your Power Charger.
+    '04-033': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_own_card_reached_power_charger),
+    # Remove when the battle character is swapped to a non-(STUDY ME) one.
+    '04-065': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_swapped_to_non_study_me_character),
+    # Remove when the player's own HP becomes 50 or less.
+    '04-091': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_own_hp_at_most(50)),
+    # Remove when 5 or more cards are in the player's Power Charger.
+    '04-094': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_power_charger_has_five_or_more_cards),
+    # Remove immediately when the player loses a battle.
+    '04-095': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_lost_battle_this_turn),
+}
 
 
 class EffectEngine:
@@ -465,22 +629,31 @@ class EffectEngine:
         # End-of-turn effect damage is applied FIRST so it counts toward the
         # 03-058/03-085 ">=30 damage taken" self-removal threshold (together
         # with the battle damage already accumulated during combat).
+        self._apply_end_of_turn_damage(game_state)
+        self._apply_reflected_reduction_damage(game_state)
+        self._process_03_085_end_of_turn(game_state)
+        self._process_03_058_end_of_turn(game_state)
 
-        # Effect 03-027: end-of-turn damage
+    def _apply_end_of_turn_damage(self, game_state: GameState) -> None:
+        """Effect 03-027: end-of-turn damage."""
         for player_index in (0, 1):
             damage = self.turn_state.end_of_turn_damage.get(player_index, 0)
             self.deal_damage(game_state, player_index, damage, source='03-027')
 
-        # Effect 04-100: reflect reduced damage to opponent
+    def _apply_reflected_reduction_damage(self, game_state: GameState) -> None:
+        """Effect 04-100: reflect this turn's reduced damage to the opponent."""
         for player_index in (0, 1):
             if self.turn_state.reflect_reduction.get(player_index, False):
                 reflected_damage = self.turn_state.damage_reduced_this_turn.get(player_index, 0)
                 self.deal_damage(game_state, 1 - player_index, reflected_damage, source='04-100')
 
-        # Effect 03-085: remove if >=30 total damage taken this turn (battle +
-        # effect), otherwise advance the clock by 2 if daytime. Gated on power
-        # cost like every other area enchant; removal routes through
-        # place_in_abyss so its placement triggers (04-030/03-055/03-091) fire.
+    def _process_03_085_end_of_turn(self, game_state: GameState) -> None:
+        """
+        Effect 03-085: remove if >=30 total damage taken this turn (battle +
+        effect), otherwise advance the clock by 2 if daytime. Gated on power
+        cost like every other area enchant; removal routes through
+        place_in_abyss so its placement triggers (04-030/03-055/03-091) fire.
+        """
         for player in game_state.players:
             area_enchant = player.set_zone_c
             if area_enchant is None or area_enchant.card.effect != '03-085':
@@ -496,9 +669,12 @@ class EffectEngine:
                 log.debug('[03-085] %s: daytime — advancing clock by 2', self.player_label(player.index))
                 self.set_chronos(game_state, (game_state.chronos + 2) % CHRONOS_SIZE)
 
-        # Effect 03-058: remove if >=30 total damage taken this turn, otherwise
-        # (if still active) heal both players by 10. Gated on power cost;
-        # removal routes through place_in_abyss.
+    def _process_03_058_end_of_turn(self, game_state: GameState) -> None:
+        """
+        Effect 03-058: remove if >=30 total damage taken this turn, otherwise
+        (if still active) heal both players by 10. Gated on power cost;
+        removal routes through place_in_abyss.
+        """
         healed = False
         for player in game_state.players:
             area_enchant = player.set_zone_c
@@ -515,9 +691,7 @@ class EffectEngine:
                 # Only heal once even if both players somehow have 03-058
                 log.debug('[03-058] %s: still active — healing both players by 10', self.player_label(player.index))
                 for heal_index in (0, 1):
-                    old_hp = game_state.players[heal_index].hp
-                    game_state.players[heal_index].hp = min(100, game_state.players[heal_index].hp + 10)
-                    log.debug('[03-058] %s: HP %d -> %d', self.player_label(heal_index), old_hp, game_state.players[heal_index].hp)
+                    self.heal(game_state, heal_index, 10, source='03-058')
                 healed = True
 
 
@@ -549,9 +723,6 @@ class EffectEngine:
         end of turn per Q&A rules.  Pass ``end_of_turn=True`` when calling
         from the END_TURN phase.
         """
-        day_night_at_start = Chronos.NIGHT if 0 <= game_state.chronos_at_turn_start <= NIGHT_END else Chronos.DAY
-        day_night_now = game_state.day_night
-
         for player in game_state.players:
             area_enchant = player.set_zone_c
             if area_enchant is None:
@@ -562,159 +733,24 @@ class EffectEngine:
             if not self.is_effect_affordable(area_enchant, player):
                 continue
 
-            should_remove = False
+            rule = _AREA_ENCHANT_REMOVAL_RULES.get(area_enchant.card.effect)
+            if rule is None:
+                continue
+            if rule.end_of_turn_only and not end_of_turn:
+                continue
+            if not rule.condition(self, game_state, player):
+                continue
 
-            if area_enchant.card.effect == '02-005':
-                # Remove when any day/night transition occurred this turn (end of turn only)
-                if end_of_turn and (self.turn_state.day_to_night_occurred or self.turn_state.night_to_day_occurred):
-                    should_remove = True
-
-            elif area_enchant.card.effect == '02-007':
-                # Remove when opponent plays an area enchant this turn (end of turn only)
-                if end_of_turn:
-                    opponent = game_state.players[1 - player.index]
-                    opponent_area_enchant = opponent.set_zone_c
-                    if opponent_area_enchant is not None and opponent_area_enchant.played_this_turn:
-                        should_remove = True
-
-            elif area_enchant.card.effect == '02-058':
-                # Remove when your character card is placed on your Power charger (end of turn only)
-                if end_of_turn:
-                    if self.turn_state.character_to_power_this_turn.get(player.index, False):
-                        should_remove = True
-
-            elif area_enchant.card.effect == '02-064':
-                # Remove when opponent's HP falls to 30 or below (end of turn only per Q&A)
-                if end_of_turn:
-                    opponent = game_state.players[1 - player.index]
-                    if opponent.hp <= 30:
-                        should_remove = True
-
-            elif area_enchant.card.effect == '02-086':
-                # Remove when it's not night (either a transition occurred or it was already day)
-                if self.turn_state.night_to_day_occurred or game_state.day_night != Chronos.NIGHT:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '02-092':
-                # Remove when opponent's character card costs 4 or more
-                opponent = game_state.players[1 - player.index]
-                if opponent.battle_zone is not None and opponent.battle_zone.card.power_cost >= 4:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '02-098':
-                # Remove when it's not daytime (either a transition occurred or it was already night)
-                if self.turn_state.day_to_night_occurred or game_state.day_night != Chronos.DAY:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '02-104':
-                # Remove when your character card costs 4 or more
-                if player.battle_zone is not None and player.battle_zone.card.power_cost >= 4:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '03-055':
-                # Remove when opponent places a card in the Abyss (end of turn only)
-                if end_of_turn and self.turn_state.opponent_card_to_abyss.get(player.index, False):
-                    should_remove = True
-
-            elif area_enchant.card.effect == '03-064':
-                # Remove when opponent's HP falls to 40 or below (end of turn only)
-                if end_of_turn:
-                    opponent = game_state.players[1 - player.index]
-                    if opponent.hp <= 40:
-                        should_remove = True
-
-            elif area_enchant.card.effect == '03-061':
-                # Remove (and send to own Power Charger via send_to_power) when
-                # the opponent has any area enchantment card on the field at
-                # end of turn.
-                if end_of_turn:
-                    opponent = game_state.players[1 - player.index]
-                    if opponent.set_zone_c is not None:
-                        should_remove = True
-
-            elif area_enchant.card.effect == '03-086':
-                # Remove if 4 or more total cards in player's Abyss (end of turn only)
-                if end_of_turn and len(player.abyss) >= 4:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '03-091':
-                # Remove when opponent places a card in the Abyss (end of turn only)
-                if end_of_turn and self.turn_state.opponent_card_to_abyss.get(player.index, False):
-                    should_remove = True
-
-            elif area_enchant.card.effect == '03-092':
-                # Remove if 4 or more total cards in player's Abyss (end of turn only)
-                if end_of_turn and len(player.abyss) >= 4:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '03-098':
-                # Remove if 4 or more total cards in player's Abyss (end of turn only)
-                if end_of_turn and len(player.abyss) >= 4:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '03-104':
-                # Remove if 4 or more total cards in player's Abyss (end of turn only)
-                if end_of_turn and len(player.abyss) >= 4:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '04-030':
-                # Remove when a card is placed in the opponent's Abyss.
-                # Location-based trigger (JP: 置かれた, passive): fires no
-                # matter who caused the placement.
-                if self.turn_state.abyss_received_card.get(1 - player.index, False):
-                    should_remove = True
-
-            elif area_enchant.card.effect == '04-032':
-                # Remove (to own Abyss) immediately when the opponent has any
-                # area enchantment card on the field.
-                opponent = game_state.players[1 - player.index]
-                if opponent.set_zone_c is not None:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '04-033':
-                # Remove when a card is placed into your Power Charger
-                if self.turn_state.card_to_power_this_turn.get(player.index, False):
-                    should_remove = True
-
-            elif area_enchant.card.effect == '04-065':
-                # Remove when battle zone character is swapped to a non-(STUDY ME) character
-                from zutomayo.enums.song import Song
-                swapped_songs = self.turn_state.swapped_from_songs.get(player.index, set())
-                if swapped_songs:  # A swap happened this turn
-                    if (player.battle_zone is None
-                            or player.battle_zone.card.song != Song.STUDY_ME):
-                        should_remove = True
-
-            elif area_enchant.card.effect == '04-091':
-                # Remove when player's HP becomes 50 or less
-                if player.hp <= 50:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '04-094':
-                # Remove when 5 or more cards in player's Power Charger (goes to abyss)
-                if len(player.power_charger) >= 5:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '04-095':
-                # Remove when player loses a battle (immediately). Keyed on the
-                # loss itself, not battle damage: damage reduction can bring
-                # the damage to 0 while the battle is still lost.
-                if self.turn_state.battle_lost.get(player.index, False):
-                    should_remove = True
-
-            if should_remove:
-                log.debug(
-                    '%s: removing area enchant %s (%s) — removal condition met',
-                    self.player_label(player.index), area_enchant.card.effect, area_enchant.card.name,
-                )
-                player.set_zone_c = None
-                self.on_area_enchant_leaves_play(game_state, area_enchant, player.index)
-                if area_enchant.card.effect == '04-030':
-                    # Card text sends this card to the Abyss despite its
-                    # SEND TO POWER star, so bypass the send_to_power routing.
-                    self.place_in_abyss(area_enchant, player, player.index)
-                else:
-                    turn_manager.move_to_power_or_abyss(area_enchant, player)
+            log.debug(
+                '%s: removing area enchant %s (%s) — removal condition met',
+                self.player_label(player.index), area_enchant.card.effect, area_enchant.card.name,
+            )
+            player.set_zone_c = None
+            self.on_area_enchant_leaves_play(game_state, area_enchant, player.index)
+            if rule.destination is AreaEnchantRemovalDestination.ABYSS:
+                self.place_in_abyss(area_enchant, player, player.index)
+            else:
+                turn_manager.move_to_power_or_abyss(area_enchant, player)
 
     def save_battle_characters(self, game_state: GameState) -> None:
         """Snapshot current battle zone characters for next turn (used by effect 02-010)."""
