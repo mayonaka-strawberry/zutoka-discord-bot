@@ -15,5 +15,6 @@ def isolate_player_data(tmp_path, monkeypatch):
     import zutomayo.data.player_storage as player_storage_module
 
     monkeypatch.setattr(player_storage_module, 'PLAYERS_DIRECTORY', tmp_path / 'players')
+    monkeypatch.setattr(name_storage_module, 'PLAYERS_DIRECTORY', tmp_path / 'players')
     monkeypatch.setattr(name_storage_module, 'USERNAMES_FILE', tmp_path / 'players' / 'usernames.json')
     monkeypatch.setattr(name_storage_module, '_names_cache', None)

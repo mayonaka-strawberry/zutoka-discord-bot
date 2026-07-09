@@ -228,3 +228,7 @@ engine_alpha/
 
 # In-flight game persistence (runtime state, recreated on demand)
 zutomayo/active_games/
+
+# Coverage artifacts
+.coverage
+tests/coverage_summary.json
