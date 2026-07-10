@@ -6,6 +6,8 @@ import random
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Callable, Coroutine, Optional
+
+import zutomayo.effects.cards as cards_pkg
 from constants import CHRONOS_SIZE, MIDNIGHT, NIGHT_END
 from zutomayo.data.name_storage import resolve_display_name
 from zutomayo.engine.decisions import (
@@ -269,10 +271,6 @@ class EffectEngine:
         self.bot: Optional[discord.Client] = None
         self.turn_state = TurnEffectState()
         self._player_name_cache: dict[int, str] = {}
-        # Transient routing context stamped on card-selection requests issued
-        # from composed prompts (currently only effect ordering); see
-        # BotAgentDecisionAdapter for why the purpose matters.
-        self._prompt_purpose: str = ''
 
     def bind(self, session: GameSession, bot: discord.Client) -> None:
         self.session = session
@@ -880,39 +878,36 @@ class EffectEngine:
         forced_first, remaining = self._partition_forced_first(eligible)
         ordered: list[CardInstance] = list(forced_first)
 
-        self._prompt_purpose = PURPOSE_EFFECT_ORDER
-        try:
-            while len(remaining) > 1:
-                card_names = ', '.join(card_instance.card.name for card_instance in remaining)
-                step = len(ordered) + 1
-                total = len(eligible)
-                prompt_text = (
-                    f'**Choose effect order ({step}/{total})** '
-                    f'[効果の処理順を選んでください]\n'
-                    f'Remaining effects: {card_names}\n'
-                    f'Select which effect to resolve next:'
+        while len(remaining) > 1:
+            card_names = ', '.join(card_instance.card.name for card_instance in remaining)
+            step = len(ordered) + 1
+            total = len(eligible)
+            prompt_text = (
+                f'**Choose effect order ({step}/{total})** '
+                f'[効果の処理順を選んでください]\n'
+                f'Remaining effects: {card_names}\n'
+                f'Select which effect to resolve next:'
+            )
+
+            selected = await self._prompt_card_selection(
+                player_index,
+                remaining,
+                prompt_text,
+                placeholder='Select next effect to resolve...',
+                purpose=PURPOSE_EFFECT_ORDER,
+            )
+
+            if selected is None:
+                log.info(
+                    '%s timed out during effect order selection; '
+                    'using default order for remaining %d effects',
+                    self.player_label(player_index), len(remaining),
                 )
+                ordered.extend(remaining)
+                return ordered
 
-                selected = await self._prompt_card_selection(
-                    player_index,
-                    remaining,
-                    prompt_text,
-                    placeholder='Select next effect to resolve...',
-                )
-
-                if selected is None:
-                    log.info(
-                        '%s timed out during effect order selection; '
-                        'using default order for remaining %d effects',
-                        self.player_label(player_index), len(remaining),
-                    )
-                    ordered.extend(remaining)
-                    return ordered
-
-                ordered.append(selected)
-                remaining.remove(selected)
-        finally:
-            self._prompt_purpose = ''
+            ordered.append(selected)
+            remaining.remove(selected)
 
         # Last remaining card — no choice needed
         if remaining:
@@ -1018,8 +1013,15 @@ class EffectEngine:
         cards: list[CardInstance],
         prompt_text: str,
         placeholder: str = 'Select a card...',
+        *,
+        purpose: str = '',
     ) -> Optional[CardInstance]:
-        """Prompt a player to choose one card. Returns the selected CardInstance or None on timeout."""
+        """
+        Prompt a player to choose one card. Returns the selected
+        CardInstance or None on timeout. purpose is routing context for
+        composed prompts (currently only effect ordering); see
+        BotAgentDecisionAdapter for why it matters.
+        """
         if not cards or self.session is None or self.session.broker is None:
             return None
 
@@ -1032,7 +1034,7 @@ class EffectEngine:
             minimum_selections=1,
             maximum_selections=1,
             timeout_seconds=300.0,
-            purpose=self._prompt_purpose,
+            purpose=purpose,
             live_objects=cards,
         )
         response = await self.session.broker.request(request)
@@ -1150,23 +1152,31 @@ class EffectEngine:
 # Handler registry
 # ======================================================================
 
-_EFFECT_HANDLERS: dict[str, EffectHandler] = {}
-import zutomayo.effects.cards as cards_pkg
-
-# no-op effects that originally weren't imported
+# Modules whose behavior lives entirely inside the engine (removal table
+# and query hooks); their modules stay as documentation but register no
+# handler.
 _EXCLUDED_EFFECT_MODULES = {'effect_02_005', 'effect_02_007', 'effect_02_062'}
 
-for module_info in pkgutil.iter_modules(cards_pkg.__path__):
-    name = module_info.name
 
-    if name.startswith("effect_"):
+def _build_effect_handler_registry() -> dict[str, EffectHandler]:
+    """
+    Discover every effect_XX_YYY module under zutomayo/effects/cards and
+    register the same-named handler function under the key "XX-YYY".
+    """
+    handlers: dict[str, EffectHandler] = {}
+    for module_info in pkgutil.iter_modules(cards_pkg.__path__):
+        name = module_info.name
+        if not name.startswith('effect_'):
+            continue
         if name in _EXCLUDED_EFFECT_MODULES:
             continue
 
-        module = importlib.import_module(f"zutomayo.effects.cards.{name}")
-        handler = getattr(module, name) # assumes the handler has the same name as the module
-        
-        _, set_num, card_num = name.split("_", 2)
-        key = f"{set_num}-{card_num}"
-        
-        _EFFECT_HANDLERS[key] = handler
+        module = importlib.import_module(f'zutomayo.effects.cards.{name}')
+        handler = getattr(module, name)   # the handler has the same name as the module
+
+        _, set_number, card_number = name.split('_', 2)
+        handlers[f'{set_number}-{card_number}'] = handler
+    return handlers
+
+
+_EFFECT_HANDLERS: dict[str, EffectHandler] = _build_effect_handler_registry()

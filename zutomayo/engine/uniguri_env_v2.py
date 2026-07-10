@@ -462,7 +462,7 @@ class HeadlessEffectEngineV2(EffectEngine):
     async def _prompt_effect_order(self, player_index, eligible):
         return self.get_agent(player_index).choose_effect_order(eligible)
 
-    async def _prompt_card_selection(self, player_index, cards, prompt_text, placeholder=''):
+    async def _prompt_card_selection(self, player_index, cards, prompt_text, placeholder='', *, purpose=''):
         if not cards:
             return None
         return self.get_agent(player_index).choose_effect_card(cards)
