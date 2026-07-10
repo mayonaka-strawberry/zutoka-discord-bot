@@ -17,8 +17,5 @@ async def effect_04_062(
         engine, game_state, player_index, card_instance,
         candidate_matcher=lambda hand_card: hand_card.card.attribute == Attribute.DARKNESS,
         candidate_label='darkness card',
-        no_candidates_message='No darkness cards in hand. No effect.',
-        success_owner_template='**Effect (04-062):** Placed {count} card(s) into the Abyss: {names}.',
-        success_opponent_template='**Effect (04-062):** Opponent placed {count} darkness card(s) into their Abyss.',
         destination=PlacementDestination.ABYSS,
     )

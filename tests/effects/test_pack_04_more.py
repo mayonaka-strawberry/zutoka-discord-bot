@@ -1311,7 +1311,7 @@ def test_04_061_immediate_timeout_moves_nothing():
         ScriptedAnswer.timeout('effect_card_select'),
     ])
     assert len(state.players[0].hand) == 1 and state.players[0].deck == []
-    assert any('No cards selected. No effect.' in text for text in result.message_texts())
+    assert any('No cards placed. No effect.' in text for text in result.message_texts())
 
 
 @pytest.mark.parametrize('effect_id, attribute_name', ATTRIBUTE_MASS_DISCARD_EFFECTS)
@@ -1333,7 +1333,7 @@ def test_attribute_mass_discard_zero_and_timeout_fizzle(effect_id, attribute_nam
         ScriptedAnswer.timeout('effect_card_select'),
     ])
     assert len(state.players[0].hand) == 1
-    assert any('No cards selected. No effect.' in text for text in result.message_texts())
+    assert any('No cards placed. No effect.' in text for text in result.message_texts())
 
 
 @pytest.mark.parametrize('effect_id', ['04-084', '04-101'])

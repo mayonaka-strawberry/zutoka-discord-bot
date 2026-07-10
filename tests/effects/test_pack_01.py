@@ -202,16 +202,20 @@ DAY_NIGHT_BONUSES = [
 def test_day_night_bonus(effect_id, required_time, bonus):
     matching = NIGHT_CHRONOS if required_time == Chronos.NIGHT else DAY_CHRONOS
     other = DAY_CHRONOS if required_time == Chronos.NIGHT else NIGHT_CHRONOS
+    time_word = required_time.name.lower()
 
     state, result = run_battle_effect(
         GameStateBuilder().with_battle_card(0, effect_id).with_chronos(matching), effect_id,
     )
     assert result.engine.turn_state.attack_bonus[0] == bonus
+    # Unified narration: both players are told the outcome.
+    assert any(f'It is {time_word}. Attack +{bonus}!' in text for text in result.message_texts())
 
     state, result = run_battle_effect(
         GameStateBuilder().with_battle_card(0, effect_id).with_chronos(other), effect_id,
     )
     assert result.engine.turn_state.attack_bonus[0] == 0
+    assert any(f'It is not {time_word}. No effect.' in text for text in result.message_texts())
 
 
 TRANSITION_BONUSES = [
@@ -423,7 +427,7 @@ class TestEffect01103:
     def test_fizzles_on_empty_abyss(self):
         state = GameStateBuilder().with_battle_card(0, '01-103').build()
         result = run_effect(state, '01-103', 0)
-        assert any("Opponent's Abyss is empty. Effect fizzles." in text
+        assert any("Opponent's Abyss is empty. No effect." in text
                    for text in result.message_texts())
 
     def test_timeout_changes_nothing(self):
