@@ -261,6 +261,27 @@ class PostgresGameRecordBackend:
             row = await connection.fetchrow('SELECT * FROM games WHERE game_id = $1', game_id)
         return dict(row) if row is not None else None
 
+    async def list_saved_games_for_player(
+        self, discord_id: int, prefix: str = '', limit: int = 25,
+    ) -> list[dict[str, Any]]:
+        from zutomayo.data.database import get_pool
+
+        async with get_pool().acquire() as connection:
+            rows = await connection.fetch(
+                '''
+                SELECT games.game_id, games.mode, games.is_tcg, games.best_of, games.saved_at
+                FROM games
+                JOIN game_players ON game_players.game_id = games.game_id
+                WHERE game_players.discord_id = $1
+                  AND games.status = 'saved'
+                  AND games.game_id LIKE $2 || '%'
+                ORDER BY games.saved_at DESC
+                LIMIT $3
+                ''',
+                discord_id, prefix, limit,
+            )
+        return [dict(row) for row in rows]
+
 
 backend = PostgresGameRecordBackend()
 
@@ -414,6 +435,16 @@ async def list_game_ids_with_status(status: str) -> list[str]:
 
 async def next_event_index(game_id: str) -> int:
     return await backend.next_event_index(game_id)
+
+
+async def get_game_row(game_id: str) -> Optional[dict[str, Any]]:
+    return await backend.get_game_row(game_id)
+
+
+async def list_saved_games_for_player(
+    discord_id: int, prefix: str = '', limit: int = 25,
+) -> list[dict[str, Any]]:
+    return await backend.list_saved_games_for_player(discord_id, prefix, limit)
 
 
 async def load_events(game_id: str) -> list[dict[str, Any]]:

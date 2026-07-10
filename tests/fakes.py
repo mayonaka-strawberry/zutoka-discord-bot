@@ -256,6 +256,26 @@ class InMemoryGameRecordBackend:
         row = self.games.get(game_id)
         return copy.deepcopy(row) if row is not None else None
 
+    async def list_saved_games_for_player(
+        self, discord_id: int, prefix: str = '', limit: int = 25,
+    ) -> list[dict]:
+        matching = []
+        for row in self.games.values():
+            if row['status'] != 'saved' or not row['game_id'].startswith(prefix):
+                continue
+            player_ids = [pair[0] for pair in row['manifest'].get('player_discord_ids', [])]
+            if discord_id not in player_ids:
+                continue
+            matching.append({
+                'game_id': row['game_id'],
+                'mode': row['mode'],
+                'is_tcg': row['is_tcg'],
+                'best_of': row['best_of'],
+                'saved_at': row['saved_at'],
+            })
+        matching.sort(key=lambda row: (row['saved_at'] is None, row['saved_at']), reverse=True)
+        return matching[:limit]
+
     def truncate_decision_log(self, game_id: str, keep_first: int) -> None:
         """Test helper: simulate a crash after the first N decisions."""
         log_for_game = self.decisions.get(game_id, {})
