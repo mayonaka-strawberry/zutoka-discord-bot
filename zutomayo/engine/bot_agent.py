@@ -31,7 +31,6 @@ _MAX_CANDIDATES = 10
 _MAX_ACTION_SIZE = 20
 _MODEL_INFERENCE_MAX_ATTEMPTS = 3
 
-DECKS_DIR = Path(__file__).resolve().parent.parent / 'decks'
 BOT_DECKS_FILE = Path(__file__).resolve().parent.parent / 'bot_decks.json'
 BEST_DECKS_V2_FILE = Path(__file__).resolve().parent.parent / 'best_decks_v2.json'
 BEST_DECKS_V2_EASY_FILE = Path(__file__).resolve().parent.parent / 'best_decks_v2_easy.json'
@@ -594,38 +593,37 @@ def create_bot_agent_easy() -> BotAgent:
 
 def collect_and_save_bot_decks() -> int:
     """
-    Scan all user deck files and save unique decks to bot_decks.json.
+    Scan every user's saved decks and save unique ones to bot_decks.json.
 
-    Reads every deck from zutomayo/decks/*.json, deduplicates by card
-    composition (ignoring deck name), assigns each unique deck a random
-    GUID, and writes the result to bot_decks.json. Decks containing any
-    CHAOS attribute card are excluded.
+    Reads all decks from the database, deduplicates by card composition
+    (ignoring deck name), assigns each unique deck a random GUID, and writes
+    the result to bot_decks.json. Decks containing any CHAOS attribute card
+    are excluded.
 
-    Returns the number of unique decks saved.
+    Maintenance utility for the training pipeline; runs its own event loop
+    and database pool, so it keeps a synchronous signature for callers like
+    train_uniguri_v2.py. Returns the number of unique decks saved.
     """
+    import asyncio
+
     from zutomayo.data.card_loader import load_cards
     from zutomayo.enums.attribute import Attribute
 
-    deck_files = list(DECKS_DIR.glob('*.json'))
-    if not deck_files:
-        raise ValueError('No saved deck files found in decks folder.')
+    async def fetch_all_decks() -> list[dict]:
+        from zutomayo.data import database, deck_repository
+
+        await database.initialize_pool()
+        try:
+            return await deck_repository.STANDARD_DECK_REPOSITORY.list_all_decks()
+        finally:
+            await database.close_pool()
 
     card_list = load_cards()
     card_index = {(card.pack, card.id): card for card in card_list}
 
-    all_decks: list[dict] = []
-    for deck_file in deck_files:
-        try:
-            with open(deck_file, 'r', encoding='utf-8') as file_handle:
-                data = json.load(file_handle)
-            decks = data.get('decks', [])
-            all_decks.extend(decks)
-        except (json.JSONDecodeError, KeyError):
-            log.warning('Skipping invalid deck file: %s', deck_file)
-            continue
-
+    all_decks = asyncio.run(fetch_all_decks())
     if not all_decks:
-        raise ValueError('No valid decks found in any deck file.')
+        raise ValueError('No saved decks found in the database.')
 
     # Deduplicate by card composition (sorted tuples of pack/id), excluding CHAOS decks
     seen_signatures: set[tuple[tuple[int, int], ...]] = set()

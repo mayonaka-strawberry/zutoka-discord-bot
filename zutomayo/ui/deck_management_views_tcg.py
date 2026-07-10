@@ -77,7 +77,7 @@ class MakeDeckTcgModal(discord.ui.Modal):
 
         main_cards, side_cards = result
         try:
-            add_tcg_deck(self.user_id, self.deck_name, main_cards, side_cards)
+            await add_tcg_deck(self.user_id, self.deck_name, main_cards, side_cards)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
@@ -151,7 +151,7 @@ class EditDeckTcgModal(discord.ui.Modal):
 
         main_cards, side_cards = result
         try:
-            update_tcg_deck(self.user_id, self.deck_name, main_cards, side_cards)
+            await update_tcg_deck(self.user_id, self.deck_name, main_cards, side_cards)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
@@ -260,12 +260,12 @@ class ManageDecksTcgView(DeckNamePaginationMixin, discord.ui.View):
 
     async def _confirm_delete(self, interaction: discord.Interaction):
         try:
-            delete_tcg_deck(self.user_id, self.selected_deck_name)
+            await delete_tcg_deck(self.user_id, self.selected_deck_name)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
 
-        self.all_deck_names = get_tcg_deck_names(self.user_id)
+        self.all_deck_names = await get_tcg_deck_names(self.user_id)
         if not self.all_deck_names:
             await interaction.response.edit_message(
                 content=f'TCG Deck **{self.selected_deck_name}** deleted. You have no more saved TCG decks.',
@@ -563,7 +563,7 @@ class TcgDeckSourceView(discord.ui.View):
     @discord.ui.button(label='Select a Deck', style=discord.ButtonStyle.secondary, row=0)
     async def select_deck(self, interaction: discord.Interaction, button: discord.ui.Button):
         user_id = interaction.user.id
-        deck_names = get_tcg_deck_names(user_id)
+        deck_names = await get_tcg_deck_names(user_id)
         if not deck_names:
             await interaction.response.send_message(
                 'You have no saved TCG decks. Use `/zutomayo makedecktcg` to create one, or click **Build a Deck**.',
@@ -649,7 +649,7 @@ class TcgSavedDeckSelectView(DeckNamePaginationMixin, discord.ui.View):
 
     async def _deck_selected(self, interaction: discord.Interaction):
         deck_name = interaction.data['values'][0]
-        deck_data = get_tcg_deck_by_name(self.user_id, deck_name)
+        deck_data = await get_tcg_deck_by_name(self.user_id, deck_name)
         if deck_data is None:
             await interaction.response.send_message('Deck not found.', ephemeral=True)
             return

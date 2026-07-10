@@ -16,7 +16,6 @@ import random  # noqa: E402
 import pytest  # noqa: E402
 
 from zutomayo.data.card_loader import load_cards  # noqa: E402
-from zutomayo.data.deck_repository import DeckRepository  # noqa: E402
 from zutomayo.data.deck_validator import build_card_index, get_card_index, parse_deck_input  # noqa: E402
 from zutomayo.data.deck_validator_tcg import parse_tcg_deck_input  # noqa: E402
 
@@ -28,114 +27,140 @@ VALID_EIGHT = '02-005 02-005 02-007 02-007 02-011 02-011 02-014 02-014'
 
 
 @pytest.fixture()
-def repository(tmp_path):
-    return DeckRepository(tmp_path / 'decks', ('cards',))
+def repository():
+    from tests.fakes import InMemoryDeckRepository
+    return InMemoryDeckRepository(('cards',))
 
 
 @pytest.fixture()
-def tcg_repository(tmp_path):
-    return DeckRepository(tmp_path / 'decks_tcg', ('deck', 'side_deck'))
+def tcg_repository():
+    from tests.fakes import InMemoryDeckRepository
+    return InMemoryDeckRepository(('deck', 'side_deck'))
 
 
 class TestDeckRepository:
-    def test_missing_file_loads_empty(self, repository):
-        assert repository.load_user_decks(42) == []
-        assert repository.get_deck_names(42) == []
-        assert repository.get_deck_by_name(42, 'anything') is None
+    def test_unknown_user_loads_empty(self, repository):
+        async def run():
+            return (
+                await repository.load_user_decks(42),
+                await repository.get_deck_names(42),
+                await repository.get_deck_by_name(42, 'anything'),
+            )
+
+        decks, names, missing = asyncio.run(run())
+        assert decks == [] and names == [] and missing is None
 
     def test_add_get_update_delete_round_trip(self, repository):
-        cards = [card_by_identity('01-013'), card_by_identity('01-014')]
-        repository.add_deck(7, 'My Deck', {'cards': cards})
-        assert repository.get_deck_names(7) == ['My Deck']
+        async def run():
+            cards = [card_by_identity('01-013'), card_by_identity('01-014')]
+            await repository.add_deck(7, 'My Deck', {'cards': cards})
+            assert await repository.get_deck_names(7) == ['My Deck']
 
-        stored = repository.get_deck_by_name(7, 'My Deck')
-        assert stored['cards'] == [{'pack': 1, 'id': 13}, {'pack': 1, 'id': 14}]
+            stored = await repository.get_deck_by_name(7, 'My Deck')
+            assert stored['cards'] == [{'pack': 1, 'id': 13}, {'pack': 1, 'id': 14}]
 
-        repository.update_deck(7, 'My Deck', {'cards': [card_by_identity('01-017')]})
-        assert repository.get_deck_by_name(7, 'My Deck')['cards'] == [{'pack': 1, 'id': 17}]
+            await repository.update_deck(7, 'My Deck', {'cards': [card_by_identity('01-017')]})
+            updated = await repository.get_deck_by_name(7, 'My Deck')
+            assert updated['cards'] == [{'pack': 1, 'id': 17}]
 
-        repository.delete_deck(7, 'My Deck')
-        assert repository.get_deck_names(7) == []
+            await repository.delete_deck(7, 'My Deck')
+            assert await repository.get_deck_names(7) == []
+
+        asyncio.run(run())
 
     def test_duplicate_and_missing_names_raise(self, repository):
-        repository.add_deck(7, 'My Deck', {'cards': []})
-        with pytest.raises(ValueError):
-            repository.add_deck(7, 'My Deck', {'cards': []})
-        with pytest.raises(ValueError):
-            repository.update_deck(7, 'Missing', {'cards': []})
-        with pytest.raises(ValueError):
-            repository.delete_deck(7, 'Missing')
+        async def run():
+            await repository.add_deck(7, 'My Deck', {'cards': []})
+            with pytest.raises(ValueError):
+                await repository.add_deck(7, 'My Deck', {'cards': []})
+            with pytest.raises(ValueError):
+                await repository.update_deck(7, 'Missing', {'cards': []})
+            with pytest.raises(ValueError):
+                await repository.delete_deck(7, 'Missing')
 
-    def test_writes_are_atomic_files(self, repository, tmp_path):
-        repository.add_deck(7, 'My Deck', {'cards': []})
-        assert (tmp_path / 'decks' / '7.json').exists()
-        assert not (tmp_path / 'decks' / '7.json.tmp').exists()
+        asyncio.run(run())
+
+    def test_deck_names_are_listed_alphabetically_and_searchable(self, repository):
+        async def run():
+            for name in ('Zeta', 'alpha', 'Alto'):
+                await repository.add_deck(7, name, {'cards': []})
+            names = await repository.get_deck_names(7)
+            matches = await repository.search_deck_names(7, 'al')
+            return names, matches
+
+        names, matches = asyncio.run(run())
+        assert names == sorted(names)
+        assert set(matches) == {'alpha', 'Alto'}
 
     def test_tcg_repository_carries_both_card_lists(self, tcg_repository):
-        tcg_repository.add_deck(7, 'Series Deck', {
-            'deck': [card_by_identity('01-013')],
-            'side_deck': [card_by_identity('01-014')],
-        })
-        stored = tcg_repository.get_deck_by_name(7, 'Series Deck')
+        async def run():
+            await tcg_repository.add_deck(7, 'Series Deck', {
+                'deck': [card_by_identity('01-013')],
+                'side_deck': [card_by_identity('01-014')],
+            })
+            return await tcg_repository.get_deck_by_name(7, 'Series Deck')
+
+        stored = asyncio.run(run())
         assert stored['deck'] == [{'pack': 1, 'id': 13}]
         assert stored['side_deck'] == [{'pack': 1, 'id': 14}]
 
-    def test_resolve_card_list(self, repository):
+    def test_resolve_card_list(self):
+        from zutomayo.data.deck_repository import resolve_card_list
+
         _, card_index = get_card_index()
-        cards = DeckRepository.resolve_card_list(
+        cards = resolve_card_list(
             {'cards': [{'pack': 1, 'id': 13}, {'pack': 1, 'id': 13}]}, 'cards', card_index,
         )
         assert [card.id for card in cards] == [13, 13]
         with pytest.raises(ValueError):
-            DeckRepository.resolve_card_list({'cards': [{'pack': 99, 'id': 999}]}, 'cards', card_index)
+            resolve_card_list({'cards': [{'pack': 99, 'id': 999}]}, 'cards', card_index)
 
 
 class TestStorageShims:
-    """The deck_storage / deck_storage_tcg modules delegate to the repository;
-    exercise every public shim once against patched directories."""
+    """The deck_storage / deck_storage_tcg modules delegate to the repository
+    singletons (swapped for in-memory fakes by the autouse fixture); exercise
+    every public shim once."""
 
-    def test_standard_shims_round_trip(self, tmp_path, monkeypatch):
+    def test_standard_shims_round_trip(self):
         import zutomayo.data.deck_storage as deck_storage_module
-        from zutomayo.data.deck_repository import DeckRepository
 
-        monkeypatch.setattr(
-            deck_storage_module, 'STANDARD_DECK_REPOSITORY',
-            DeckRepository(tmp_path / 'decks', ('cards',)),
-        )
-        cards = [card_by_identity('01-013')]
-        deck_storage_module.add_deck(3, 'Shim Deck', cards)
-        assert deck_storage_module.get_deck_names(3) == ['Shim Deck']
-        deck_storage_module.update_deck(3, 'Shim Deck', cards + cards)
-        stored = deck_storage_module.get_deck_by_name(3, 'Shim Deck')
-        _, card_index = get_card_index()
-        assert len(deck_storage_module.resolve_deck_cards(stored, card_index)) == 2
-        decks = deck_storage_module.load_user_decks(3)
-        deck_storage_module.save_user_decks(3, decks)
-        deck_storage_module.delete_deck(3, 'Shim Deck')
-        assert deck_storage_module.load_user_decks(3) == []
-        assert deck_storage_module.load_default_decks(), 'default decks ship with the repo'
+        async def run():
+            cards = [card_by_identity('01-013')]
+            await deck_storage_module.add_deck(3, 'Shim Deck', cards)
+            assert await deck_storage_module.get_deck_names(3) == ['Shim Deck']
+            await deck_storage_module.update_deck(3, 'Shim Deck', cards + cards)
+            stored = await deck_storage_module.get_deck_by_name(3, 'Shim Deck')
+            _, card_index = get_card_index()
+            assert len(deck_storage_module.resolve_deck_cards(stored, card_index)) == 2
+            assert await deck_storage_module.search_deck_names(3, 'shim') == ['Shim Deck']
+            decks = await deck_storage_module.load_user_decks(3)
+            await deck_storage_module.save_user_decks(3, decks)
+            await deck_storage_module.delete_deck(3, 'Shim Deck')
+            assert await deck_storage_module.load_user_decks(3) == []
+            assert deck_storage_module.load_default_decks(), 'default decks ship with the repo'
 
-    def test_tcg_shims_round_trip(self, tmp_path, monkeypatch):
+        asyncio.run(run())
+
+    def test_tcg_shims_round_trip(self):
         import zutomayo.data.deck_storage_tcg as deck_storage_tcg_module
-        from zutomayo.data.deck_repository import DeckRepository
 
-        monkeypatch.setattr(
-            deck_storage_tcg_module, 'TCG_DECK_REPOSITORY',
-            DeckRepository(tmp_path / 'decks_tcg', ('deck', 'side_deck')),
-        )
-        main_cards = [card_by_identity('01-013')]
-        side_cards = [card_by_identity('01-014')]
-        deck_storage_tcg_module.add_tcg_deck(3, 'Shim TCG', main_cards, side_cards)
-        assert deck_storage_tcg_module.get_tcg_deck_names(3) == ['Shim TCG']
-        deck_storage_tcg_module.update_tcg_deck(3, 'Shim TCG', main_cards, side_cards + side_cards)
-        stored = deck_storage_tcg_module.get_tcg_deck_by_name(3, 'Shim TCG')
-        _, card_index = get_card_index()
-        resolved_main, resolved_side = deck_storage_tcg_module.resolve_tcg_deck_cards(stored, card_index)
-        assert len(resolved_main) == 1 and len(resolved_side) == 2
-        decks = deck_storage_tcg_module.load_user_tcg_decks(3)
-        deck_storage_tcg_module.save_user_tcg_decks(3, decks)
-        deck_storage_tcg_module.delete_tcg_deck(3, 'Shim TCG')
-        assert deck_storage_tcg_module.load_user_tcg_decks(3) == []
+        async def run():
+            main_cards = [card_by_identity('01-013')]
+            side_cards = [card_by_identity('01-014')]
+            await deck_storage_tcg_module.add_tcg_deck(3, 'Shim TCG', main_cards, side_cards)
+            assert await deck_storage_tcg_module.get_tcg_deck_names(3) == ['Shim TCG']
+            await deck_storage_tcg_module.update_tcg_deck(3, 'Shim TCG', main_cards, side_cards + side_cards)
+            stored = await deck_storage_tcg_module.get_tcg_deck_by_name(3, 'Shim TCG')
+            _, card_index = get_card_index()
+            resolved_main, resolved_side = deck_storage_tcg_module.resolve_tcg_deck_cards(stored, card_index)
+            assert len(resolved_main) == 1 and len(resolved_side) == 2
+            assert await deck_storage_tcg_module.search_tcg_deck_names(3, 'shim') == ['Shim TCG']
+            decks = await deck_storage_tcg_module.load_user_tcg_decks(3)
+            await deck_storage_tcg_module.save_user_tcg_decks(3, decks)
+            await deck_storage_tcg_module.delete_tcg_deck(3, 'Shim TCG')
+            assert await deck_storage_tcg_module.load_user_tcg_decks(3) == []
+
+        asyncio.run(run())
 
 
 class TestValidators:
