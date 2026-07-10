@@ -3,7 +3,6 @@ import logging
 from typing import TYPE_CHECKING
 from zutomayo.enums.attribute import Attribute
 from zutomayo.enums.chronos import Chronos
-from zutomayo.enums.zone import Zone
 
 if TYPE_CHECKING:
     from zutomayo.effects.effect_engine import EffectEngine
@@ -67,7 +66,5 @@ async def effect_02_024(engine: EffectEngine, game_state: GameState, player_inde
     # Move selected card from opponent's power charger to bottom of opponent's deck
     if selected in opponent.power_charger:
         opponent.power_charger.remove(selected)
-    selected.zone = Zone.DECK
-    selected.face_up = False
-    opponent.deck.append(selected)
+    engine.return_to_deck_bottom(selected, opponent)
     log.debug('[%s] %s: moved selected card %s from opponent power charger to bottom of opponent deck', card_instance.card.effect, engine.player_label(player_index), selected.card.effect)

@@ -22,7 +22,7 @@ async def effect_04_093(
     power_charger_attributes = {power_card.card.attribute for power_card in player.power_charger}
 
     if len(power_charger_attributes) >= 2:
-        player.hp = min(100, player.hp + 30)
+        engine.heal(game_state, player_index, 30, source=card_instance.card.effect)
         log.debug('[%s] %s: HP +30 (now %d)', card_instance.card.effect, engine.player_label(player_index), player.hp)
         attribute_names = ', '.join(sorted(attribute.value for attribute in power_charger_attributes))
         await engine._send_dm(

@@ -1,7 +1,6 @@
 from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
-from zutomayo.enums.zone import Zone
 
 if TYPE_CHECKING:
     from zutomayo.effects.effect_engine import EffectEngine
@@ -28,9 +27,7 @@ async def effect_03_055(engine: EffectEngine, game_state: GameState, player_inde
         area_enchant = opponent.set_zone_c
         log.debug('[%s] %s: returning opponent %s area enchant %s to bottom of deck', card_instance.card.effect, engine.player_label(player_index), engine.player_label(opponent_index), area_enchant.card.name)
         opponent.set_zone_c = None
-        area_enchant.zone = Zone.DECK
-        area_enchant.face_up = False
-        opponent.deck.append(area_enchant)
+        engine.return_to_deck_bottom(area_enchant, opponent)
         log.debug('[%s] %s: opponent area enchant moved to bottom of deck (deck size now %d)', card_instance.card.effect, engine.player_label(player_index), len(opponent.deck))
     else:
         log.debug('[%s] %s: opponent has no area enchantment to return', card_instance.card.effect, engine.player_label(player_index))

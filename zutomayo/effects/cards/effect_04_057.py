@@ -31,11 +31,7 @@ async def effect_04_057(
         log.debug('[%s] %s: early return, skipping effect', card_instance.card.effect, engine.player_label(player_index))
         return
 
-    moved_cards: list[CardInstance] = []
-    for _ in range(cards_to_move):
-        deck_card = opponent.deck.pop(0)
-        engine.place_in_abyss(deck_card, opponent, player_index)
-        moved_cards.append(deck_card)
+    moved_cards = engine.mill_deck_top_to_abyss(opponent, cards_to_move, player_index)
 
     moved_names = ', '.join(moved_card.card.name for moved_card in moved_cards)
     await engine._send_dm(

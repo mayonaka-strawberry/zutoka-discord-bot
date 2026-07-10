@@ -19,7 +19,7 @@ async def effect_01_081(
     player = game_state.players[player_index]
     if player.battle_zone is not None and player.battle_zone.effective_attribute == Attribute.DARKNESS:
         old_hp = player.hp
-        player.hp = min(player.hp + 10, 100)
+        engine.heal(game_state, player_index, 10, source=card_instance.card.effect)
         log.debug('[%s] %s: own attribute is DARKNESS, recovered 10 HP (%d -> %d)', card_instance.card.effect, engine.player_label(player_index), old_hp, player.hp)
     else:
         log.debug('[%s] %s: own attribute is not DARKNESS (battle_zone=%s), no recovery', card_instance.card.effect, engine.player_label(player_index), player.battle_zone.effective_attribute if player.battle_zone else None)

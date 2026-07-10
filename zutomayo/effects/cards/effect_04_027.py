@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from zutomayo.enums.zone import Zone
 import logging
 
 if TYPE_CHECKING:
@@ -23,12 +22,11 @@ async def effect_04_027(
     log.debug('[%s] %s: entering effect_04_027', card_instance.card.effect, engine.player_label(player_index))
     player = game_state.players[player_index]
     opponent_index = 1 - player_index
-    opponent = game_state.players[opponent_index]
+    opponent = engine.opponent_of(game_state, player_index)
 
     # Phase 1: Check if player has at least 1 card in Abyss
     if len(player.abyss) < 1:
-        player.hp = 0
-        log.debug('[%s] %s: HP set to 0, player loses', card_instance.card.effect, engine.player_label(player_index))
+        engine.lose_game(game_state, player_index, source=card_instance.card.effect)
         await engine._send_dm(
             player_index,
             content='**Effect (04-027):** No cards in Abyss. You lose the game!',
@@ -52,8 +50,7 @@ async def effect_04_027(
 
     if selection_count is None:
         # Timeout — player loses the game (mandatory action)
-        player.hp = 0
-        log.debug('[%s] %s: HP set to 0, player loses', card_instance.card.effect, engine.player_label(player_index))
+        engine.lose_game(game_state, player_index, source=card_instance.card.effect)
         await engine._send_dm(
             player_index,
             content='**Effect (04-027):** Failed to select. You lose the game!',
@@ -80,8 +77,7 @@ async def effect_04_027(
 
         if selected_card is None:
             # Timeout — player loses the game (mandatory action)
-            player.hp = 0
-            log.debug('[%s] %s: HP set to 0, player loses', card_instance.card.effect, engine.player_label(player_index))
+            engine.lose_game(game_state, player_index, source=card_instance.card.effect)
             await engine._send_dm(
                 player_index,
                 content='**Effect (04-027):** Failed to select cards. You lose the game!',
@@ -104,9 +100,7 @@ async def effect_04_027(
     engine.random_generator.shuffle(selected_cards)
     log.debug('[%s] %s: shuffled selected cards', card_instance.card.effect, engine.player_label(player_index))
     for selected_card in selected_cards:
-        selected_card.zone = Zone.DECK
-        selected_card.face_up = False
-        player.deck.append(selected_card)
+        engine.return_to_deck_bottom(selected_card, player)
 
     returned_names = ', '.join(selected_card.card.name for selected_card in selected_cards)
     await engine._send_dm(
@@ -128,11 +122,7 @@ async def effect_04_027(
         log.debug('[%s] %s: early return, skipping effect', card_instance.card.effect, engine.player_label(player_index))
         return
 
-    moved_cards: list[CardInstance] = []
-    for _ in range(cards_to_move):
-        deck_card = opponent.deck.pop(0)
-        engine.place_in_abyss(deck_card, opponent, player_index)
-        moved_cards.append(deck_card)
+    moved_cards = engine.mill_deck_top_to_abyss(opponent, cards_to_move, player_index)
 
     moved_names = ', '.join(moved_card.card.name for moved_card in moved_cards)
     await engine._send_dm(
