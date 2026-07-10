@@ -71,6 +71,7 @@ class SoloGameFlow(GameFlow):
             deck_1_cards, deck_2_cards = await self._do_deck_building_phase(session)
             await self.run_single_match(session, deck_1_cards, deck_2_cards)
 
+            await self.finalize_completed_game(session)
             from zutomayo.engine.game_session import session_manager
             session_manager.remove_game(session.game_id)
 
@@ -78,6 +79,7 @@ class SoloGameFlow(GameFlow):
             log.exception('Error in solo game flow')
             await self._send_to_channel(session, content='An error occurred. Game ended.')
             await self._send_to_player(session, HUMAN_PLAYER_INDEX, content='An error occurred. Game ended.')
+            await self.mark_game_abandoned(session)
             from zutomayo.engine.game_session import session_manager
             session_manager.remove_game(session.game_id)
 

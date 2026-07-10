@@ -1,5 +1,5 @@
-"""Unit tests for game persistence: manifest round-trip, decision log
-append/load, torn-line tolerance, and directory deletion."""
+"""Unit tests for the game record store: manifest round-trip, decision log
+append/load, status transitions, and idempotent inserts."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
-import zutomayo.engine.game_persistence as game_persistence_module  # noqa: E402
 from zutomayo.engine.decisions import (  # noqa: E402
     KIND_EFFECT_CARD_SELECT,
     KIND_EFFECT_NUMBER_SELECT,
@@ -24,38 +23,34 @@ from zutomayo.engine.decisions import (  # noqa: E402
     request_fingerprint,
 )
 from zutomayo.engine.game_persistence import (  # noqa: E402
-    GamePersistence,
+    GameRecordStore,
+    list_game_ids_with_status,
     load_decision_log,
     load_manifest,
 )
 from zutomayo.engine.game_session import GameSession  # noqa: E402
 
 
-def _point_active_games_at(tmp_path: Path) -> Path:
-    directory = tmp_path / 'active_games'
-    game_persistence_module.ACTIVE_GAMES_DIRECTORY = directory
-    return directory
-
-
 def _make_session() -> GameSession:
-    session = GameSession(game_id='persist-test', channel_id=42, creator_id=111)
+    session = GameSession(game_id='20260710-00000', channel_id=42, creator_id=111)
     session.add_player(222)
     session.random_seed = 987654321
     return session
 
 
-def test_manifest_round_trip(tmp_path):
-    _point_active_games_at(tmp_path)
+def test_manifest_round_trip(install_in_memory_backends):
     session = _make_session()
     session.player_deck_names = {0: 'My Deck', 1: None}
 
-    persistence = GamePersistence.create_for_session(session, 'standard', extra_fields={
-        'deck_0': [[1, 5], [2, 17]],
-        'deck_1': [[3, 8], [4, 2]],
-    })
-    manifest = load_manifest(persistence.game_directory)
+    async def create_and_load():
+        await GameRecordStore.create_for_session(session, 'standard', extra_fields={
+            'deck_0': [[1, 5], [2, 17]],
+            'deck_1': [[3, 8], [4, 2]],
+        })
+        return await load_manifest('20260710-00000')
 
-    assert manifest['game_id'] == 'persist-test'
+    manifest = asyncio.run(create_and_load())
+    assert manifest['game_id'] == '20260710-00000'
     assert manifest['channel_id'] == 42
     assert manifest['mode'] == 'standard'
     assert manifest['player_discord_ids'] == [[111, 0], [222, 1]]
@@ -64,11 +59,13 @@ def test_manifest_round_trip(tmp_path):
     assert manifest['deck_0'] == [[1, 5], [2, 17]]
     assert manifest['deck_1'] == [[3, 8], [4, 2]]
 
+    game_row = install_in_memory_backends['game_records'].games['20260710-00000']
+    assert game_row['status'] == 'active'
+    assert game_row['mode'] == 'standard'
 
-def test_decision_log_append_and_load(tmp_path):
-    _point_active_games_at(tmp_path)
+
+def test_decision_log_append_and_load():
     session = _make_session()
-    persistence = GamePersistence.create_for_session(session, 'standard')
 
     request_a = DecisionRequest(
         kind=KIND_EFFECT_CARD_SELECT, player_index=0, prompt_text='pick',
@@ -81,13 +78,13 @@ def test_decision_log_append_and_load(tmp_path):
     )
     request_b.sequence_number = 1
 
-    async def append_all():
-        await persistence.append_decision(request_a, DecisionResponse(0, PAYLOAD_INDICES, [1]))
-        await persistence.append_decision(request_b, DecisionResponse(1, PAYLOAD_TIMEOUT, None))
+    async def append_and_load():
+        store = await GameRecordStore.create_for_session(session, 'standard')
+        await store.append_decision(request_a, DecisionResponse(0, PAYLOAD_INDICES, [1]))
+        await store.append_decision(request_b, DecisionResponse(1, PAYLOAD_TIMEOUT, None))
+        return await load_decision_log(session.game_id)
 
-    asyncio.run(append_all())
-
-    replay_log = load_decision_log(persistence.game_directory)
+    replay_log = asyncio.run(append_and_load())
     assert set(replay_log.keys()) == {0, 1}
     fingerprint_a, response_a = replay_log[0]
     assert fingerprint_a == request_fingerprint(request_a)
@@ -98,31 +95,69 @@ def test_decision_log_append_and_load(tmp_path):
     assert response_b.payload is None
 
 
-def test_torn_final_line_is_dropped(tmp_path):
-    _point_active_games_at(tmp_path)
+def test_duplicate_decision_inserts_are_ignored():
     session = _make_session()
-    persistence = GamePersistence.create_for_session(session, 'standard')
-
     request = DecisionRequest(
         kind=KIND_EFFECT_NUMBER_SELECT, player_index=0, prompt_text='number',
         minimum_value=0, maximum_value=3,
     )
     request.sequence_number = 0
-    asyncio.run(persistence.append_decision(request, DecisionResponse(0, PAYLOAD_NUMBER, 2)))
 
-    decisions_path = persistence.game_directory / 'decisions.jsonl'
-    with open(decisions_path, 'a', encoding='utf-8', newline='\n') as decisions_file:
-        decisions_file.write('{"sequence_number": 1, "payload_ty')  # torn mid-crash
+    async def append_twice():
+        store = await GameRecordStore.create_for_session(session, 'standard')
+        await store.append_decision(request, DecisionResponse(0, PAYLOAD_NUMBER, 2))
+        await store.append_decision(request, DecisionResponse(0, PAYLOAD_NUMBER, 3))
+        return await load_decision_log(session.game_id)
 
-    replay_log = load_decision_log(persistence.game_directory)
-    assert set(replay_log.keys()) == {0}
-    assert replay_log[0][1].payload == 2
+    replay_log = asyncio.run(append_twice())
+    assert replay_log[0][1].payload == 2, 'the first write wins'
 
 
-def test_delete_removes_directory(tmp_path):
-    _point_active_games_at(tmp_path)
+def test_status_transitions_and_listing(install_in_memory_backends):
     session = _make_session()
-    persistence = GamePersistence.create_for_session(session, 'standard')
-    assert persistence.game_directory.exists()
-    persistence.delete()
-    assert not persistence.game_directory.exists()
+
+    async def transition():
+        store = await GameRecordStore.create_for_session(session, 'standard')
+        active_ids = await list_game_ids_with_status('active')
+        await store.set_status('saved')
+        saved_ids = await list_game_ids_with_status('saved')
+        await store.set_status(
+            'completed', winner_index=1,
+            result_summary={'result': 'PLAYER_2_WIN', 'turns': 9},
+        )
+        return active_ids, saved_ids
+
+    active_ids, saved_ids = asyncio.run(transition())
+    assert active_ids == ['20260710-00000']
+    assert saved_ids == ['20260710-00000']
+
+    game_row = install_in_memory_backends['game_records'].games['20260710-00000']
+    assert game_row['status'] == 'completed'
+    assert game_row['winner_index'] == 1
+    assert game_row['result_summary'] == {'result': 'PLAYER_2_WIN', 'turns': 9}
+    assert game_row['saved_at'] is not None
+    assert game_row['ended_at'] is not None
+
+
+def test_attach_for_resume_appends_to_the_same_log():
+    session = _make_session()
+    request = DecisionRequest(
+        kind=KIND_EFFECT_NUMBER_SELECT, player_index=0, prompt_text='number',
+        minimum_value=0, maximum_value=3,
+    )
+    request.sequence_number = 0
+    later_request = DecisionRequest(
+        kind=KIND_EFFECT_NUMBER_SELECT, player_index=1, prompt_text='number',
+        minimum_value=0, maximum_value=3,
+    )
+    later_request.sequence_number = 1
+
+    async def append_across_attach():
+        store = await GameRecordStore.create_for_session(session, 'standard')
+        await store.append_decision(request, DecisionResponse(0, PAYLOAD_NUMBER, 2))
+        reattached = GameRecordStore.attach_for_resume(session.game_id)
+        await reattached.append_decision(later_request, DecisionResponse(1, PAYLOAD_NUMBER, 1))
+        return await load_decision_log(session.game_id)
+
+    replay_log = asyncio.run(append_across_attach())
+    assert set(replay_log.keys()) == {0, 1}

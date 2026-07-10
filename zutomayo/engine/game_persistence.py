@@ -1,32 +1,28 @@
 """
-Per-game persistence for restart resumability.
+Per-game record store: permanent game records, decision logs, and status.
 
-Each in-flight match owns a directory under zutomayo/active_games/<game_id>/:
+Every game owns a row in the PostgreSQL games table (created once decks are
+final), player rows in game_players, and an append-only decision log in
+game_decisions written through the broker. The manifest JSONB column keeps
+the exact shape the file-based store used: session identity, mode, player
+ids, the RNG seed, and the pre-shuffle deck lists. Everything else about a
+game is reproducible from the seed plus the decision log.
 
-- manifest.json — written once when the match is initialized (after decks are
-  chosen): session identity, mode, player ids, the RNG seed, and the exact
-  pre-shuffle deck lists. Everything else about the game is reproducible from
-  the seed plus the decision log.
-- decisions.jsonl — append-only, one line per DecisionResponse with the
-  request fingerprint, written through the broker. A TCG series uses one log
-  for the whole series (matches and switch phases replay in order).
+Records are permanent. Game lifecycle is tracked by games.status
+('active', 'saved', 'completed', 'quit', 'abandoned', 'divergence_failed');
+nothing is deleted when a game ends. On startup the resume manager replays
+every 'active' game: the game coroutine is re-run from move zero with logged
+decisions fed back instantly and the transport muted; when the log is
+exhausted the game goes live again.
 
-On startup the resume manager replays each directory: the game coroutine is
-re-run from move zero with logged decisions fed back instantly and the
-transport muted; when the log is exhausted the game goes live again. The
-directory is deleted whenever the session is removed from the session manager
-(game end, forfeit, or error).
+Storage access goes through the module-level `backend` attribute
+(PostgresGameRecordBackend in production); tests swap in an in-memory fake.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
-import os
-import shutil
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from zutomayo.engine.decisions import DecisionRequest, DecisionResponse, request_fingerprint
@@ -36,11 +32,17 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-ACTIVE_GAMES_DIRECTORY = Path(__file__).resolve().parent.parent / 'active_games'
-
-MANIFEST_FILE_NAME = 'manifest.json'
-DECISIONS_FILE_NAME = 'decisions.jsonl'
 SCHEMA_VERSION = 1
+
+STATUS_ACTIVE = 'active'
+STATUS_SAVED = 'saved'
+STATUS_COMPLETED = 'completed'
+STATUS_QUIT = 'quit'
+STATUS_ABANDONED = 'abandoned'
+STATUS_DIVERGENCE_FAILED = 'divergence_failed'
+
+TERMINAL_STATUSES = (STATUS_COMPLETED, STATUS_QUIT, STATUS_ABANDONED, STATUS_DIVERGENCE_FAILED)
+SUMMARY_ELIGIBLE_STATUSES = (STATUS_COMPLETED, STATUS_QUIT, STATUS_ABANDONED)
 
 
 def card_keys(cards: list[Any]) -> list[list[int]]:
@@ -57,75 +59,196 @@ def resolve_card_keys(card_keys: list[list[int]], card_index: dict) -> list[Any]
     return [card_index[(pack, card_id)] for pack, card_id in card_keys]
 
 
-class GamePersistence:
-    def __init__(self, game_directory: Path) -> None:
-        self.game_directory = game_directory
-        self._write_lock = asyncio.Lock()
+def build_manifest(
+    session: 'GameSession',
+    mode: str,
+    extra_fields: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """
+    Manifest for a freshly initialized match. Deck lists are taken from the
+    game state, which at initialization time holds the pre-shuffle order;
+    shuffles draw from the session's seeded generator, so replay regenerates
+    them.
+    """
+    ordered_player_ids = sorted(
+        session.player_discord_ids.items(), key=lambda pair: pair[1],
+    )
+    manifest: dict[str, Any] = {
+        'schema_version': SCHEMA_VERSION,
+        'game_id': session.game_id,
+        'channel_id': session.channel_id,
+        'mode': mode,
+        'player_discord_ids': [[discord_id, index] for discord_id, index in ordered_player_ids],
+        'player_deck_names': {str(index): name for index, name in session.player_deck_names.items()},
+        'is_solo': session.is_solo,
+        'solo_difficulty': session.solo_difficulty,
+        'is_tcg': session.is_tcg,
+        'best_of': session.best_of,
+        'random_seed': session.random_seed,
+        'created_at': datetime.now(timezone.utc).isoformat(),
+    }
+    if session.game_state is not None:
+        for index in range(2):
+            manifest[f'deck_{index}'] = card_keys(session.game_state.players[index].deck)
+    if extra_fields:
+        manifest.update(extra_fields)
+    return manifest
 
-    # ------------------------------------------------------------------
-    # Creation and attachment
-    # ------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
+# PostgreSQL backend
+# ----------------------------------------------------------------------
+
+
+class PostgresGameRecordBackend:
+    async def insert_game(self, manifest: dict[str, Any]) -> None:
+        from zutomayo.data.database import get_pool
+
+        async with get_pool().acquire() as connection:
+            async with connection.transaction():
+                await connection.execute(
+                    '''
+                    INSERT INTO games (
+                        game_id, schema_version, status, mode, channel_id,
+                        is_solo, solo_difficulty, is_tcg, best_of,
+                        random_seed, manifest
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                    ON CONFLICT (game_id) DO NOTHING
+                    ''',
+                    manifest['game_id'], manifest['schema_version'], STATUS_ACTIVE,
+                    manifest['mode'], manifest['channel_id'],
+                    manifest['is_solo'], manifest['solo_difficulty'],
+                    manifest['is_tcg'], manifest['best_of'],
+                    manifest['random_seed'], manifest,
+                )
+                deck_names = manifest.get('player_deck_names', {})
+                for discord_id, player_index in manifest['player_discord_ids']:
+                    await connection.execute(
+                        '''
+                        INSERT INTO game_players (game_id, player_index, discord_id, deck_name)
+                        VALUES ($1, $2, $3, $4)
+                        ON CONFLICT (game_id, player_index) DO NOTHING
+                        ''',
+                        manifest['game_id'], player_index, discord_id,
+                        deck_names.get(str(player_index)),
+                    )
+
+    async def insert_decision(self, game_id: str, record: dict[str, Any]) -> None:
+        from zutomayo.data.database import get_pool
+
+        async with get_pool().acquire() as connection:
+            await connection.execute(
+                '''
+                INSERT INTO game_decisions (game_id, sequence_number, fingerprint, payload_type, payload)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (game_id, sequence_number) DO NOTHING
+                ''',
+                game_id, record['sequence_number'], record['fingerprint'],
+                record['payload_type'], record['payload'],
+            )
+
+    async def update_status(
+        self,
+        game_id: str,
+        status: str,
+        *,
+        winner_index: Optional[int] = None,
+        result_summary: Optional[dict] = None,
+        channel_id: Optional[int] = None,
+    ) -> None:
+        from zutomayo.data.database import get_pool
+
+        async with get_pool().acquire() as connection:
+            await connection.execute(
+                '''
+                UPDATE games SET
+                    status = $2,
+                    winner_index = COALESCE($3, winner_index),
+                    result_summary = COALESCE($4, result_summary),
+                    channel_id = COALESCE($5, channel_id),
+                    saved_at = CASE WHEN $2 = 'saved' THEN now() ELSE saved_at END,
+                    ended_at = CASE WHEN $2 IN ('completed', 'quit', 'abandoned', 'divergence_failed')
+                               THEN now() ELSE ended_at END
+                WHERE game_id = $1
+                ''',
+                game_id, status, winner_index, result_summary, channel_id,
+            )
+
+    async def load_manifest(self, game_id: str) -> Optional[dict[str, Any]]:
+        from zutomayo.data.database import get_pool
+
+        async with get_pool().acquire() as connection:
+            manifest = await connection.fetchval(
+                'SELECT manifest FROM games WHERE game_id = $1', game_id,
+            )
+        return manifest
+
+    async def load_decision_records(self, game_id: str) -> list[dict[str, Any]]:
+        from zutomayo.data.database import get_pool
+
+        async with get_pool().acquire() as connection:
+            rows = await connection.fetch(
+                '''
+                SELECT sequence_number, fingerprint, payload_type, payload
+                FROM game_decisions WHERE game_id = $1 ORDER BY sequence_number
+                ''',
+                game_id,
+            )
+        return [
+            {
+                'sequence_number': row['sequence_number'],
+                'fingerprint': row['fingerprint'],
+                'payload_type': row['payload_type'],
+                'payload': row['payload'],
+            }
+            for row in rows
+        ]
+
+    async def list_game_ids_with_status(self, status: str) -> list[str]:
+        from zutomayo.data.database import get_pool
+
+        async with get_pool().acquire() as connection:
+            rows = await connection.fetch(
+                'SELECT game_id FROM games WHERE status = $1 ORDER BY created_at', status,
+            )
+        return [row['game_id'] for row in rows]
+
+    async def get_game_row(self, game_id: str) -> Optional[dict[str, Any]]:
+        from zutomayo.data.database import get_pool
+
+        async with get_pool().acquire() as connection:
+            row = await connection.fetchrow('SELECT * FROM games WHERE game_id = $1', game_id)
+        return dict(row) if row is not None else None
+
+
+backend = PostgresGameRecordBackend()
+
+
+# ----------------------------------------------------------------------
+# Per-game handle
+# ----------------------------------------------------------------------
+
+
+class GameRecordStore:
+    def __init__(self, game_id: str) -> None:
+        self.game_id = game_id
 
     @classmethod
-    def create_for_session(
+    async def create_for_session(
         cls,
         session: 'GameSession',
         mode: str,
         extra_fields: Optional[dict[str, Any]] = None,
-    ) -> 'GamePersistence':
-        """
-        Write the manifest for a freshly initialized match and return the
-        persistence handle. Deck lists are taken from the game state, which at
-        initialization time holds the pre-shuffle order; shuffles draw from
-        the session's seeded generator, so replay regenerates them.
-        """
-        game_directory = ACTIVE_GAMES_DIRECTORY / session.game_id
-        game_directory.mkdir(parents=True, exist_ok=True)
-
-        ordered_player_ids = sorted(
-            session.player_discord_ids.items(), key=lambda pair: pair[1],
-        )
-        manifest: dict[str, Any] = {
-            'schema_version': SCHEMA_VERSION,
-            'game_id': session.game_id,
-            'channel_id': session.channel_id,
-            'mode': mode,
-            'player_discord_ids': [[discord_id, index] for discord_id, index in ordered_player_ids],
-            'player_deck_names': {str(index): name for index, name in session.player_deck_names.items()},
-            'is_solo': session.is_solo,
-            'solo_difficulty': session.solo_difficulty,
-            'is_tcg': session.is_tcg,
-            'best_of': session.best_of,
-            'random_seed': session.random_seed,
-            'created_at': datetime.now(timezone.utc).isoformat(),
-        }
-        if session.game_state is not None:
-            for index in range(2):
-                manifest[f'deck_{index}'] = card_keys(session.game_state.players[index].deck)
-        if extra_fields:
-            manifest.update(extra_fields)
-
-        persistence = cls(game_directory)
-        persistence._write_manifest(manifest)
-        return persistence
+    ) -> 'GameRecordStore':
+        """Insert the game record for a freshly initialized match and return the handle."""
+        manifest = build_manifest(session, mode, extra_fields)
+        await backend.insert_game(manifest)
+        return cls(session.game_id)
 
     @classmethod
-    def attach_for_resume(cls, game_directory: Path) -> 'GamePersistence':
-        """Attach to an existing directory; new decisions append to the same log."""
-        return cls(game_directory)
-
-    def _write_manifest(self, manifest: dict[str, Any]) -> None:
-        final_path = self.game_directory / MANIFEST_FILE_NAME
-        temporary_path = final_path.with_suffix('.json.tmp')
-        with open(temporary_path, 'w', encoding='utf-8') as manifest_file:
-            json.dump(manifest, manifest_file, ensure_ascii=False, indent=2)
-            manifest_file.flush()
-            os.fsync(manifest_file.fileno())
-        os.replace(temporary_path, final_path)
-
-    # ------------------------------------------------------------------
-    # Decision log
-    # ------------------------------------------------------------------
+    def attach_for_resume(cls, game_id: str) -> 'GameRecordStore':
+        """Attach to an existing game record; new decisions append to the same log."""
+        return cls(game_id)
 
     async def append_decision(self, request: DecisionRequest, response: DecisionResponse) -> None:
         record = {
@@ -134,19 +257,20 @@ class GamePersistence:
             'payload_type': response.payload_type,
             'payload': response.payload,
         }
-        line = json.dumps(record, ensure_ascii=False, sort_keys=True)
-        async with self._write_lock:
-            await asyncio.to_thread(self._append_line, line)
+        await backend.insert_decision(self.game_id, record)
 
-    def _append_line(self, line: str) -> None:
-        decisions_path = self.game_directory / DECISIONS_FILE_NAME
-        with open(decisions_path, 'a', encoding='utf-8', newline='\n') as decisions_file:
-            decisions_file.write(line + '\n')
-            decisions_file.flush()
-            os.fsync(decisions_file.fileno())
-
-    def delete(self) -> None:
-        shutil.rmtree(self.game_directory, ignore_errors=True)
+    async def set_status(
+        self,
+        status: str,
+        *,
+        winner_index: Optional[int] = None,
+        result_summary: Optional[dict] = None,
+        channel_id: Optional[int] = None,
+    ) -> None:
+        await backend.update_status(
+            self.game_id, status,
+            winner_index=winner_index, result_summary=result_summary, channel_id=channel_id,
+        )
 
 
 # ----------------------------------------------------------------------
@@ -154,43 +278,22 @@ class GamePersistence:
 # ----------------------------------------------------------------------
 
 
-def list_game_directories() -> list[Path]:
-    if not ACTIVE_GAMES_DIRECTORY.exists():
-        return []
-    return sorted(path for path in ACTIVE_GAMES_DIRECTORY.iterdir() if path.is_dir())
+async def load_manifest(game_id: str) -> Optional[dict[str, Any]]:
+    return await backend.load_manifest(game_id)
 
 
-def load_manifest(game_directory: Path) -> dict[str, Any]:
-    with open(game_directory / MANIFEST_FILE_NAME, 'r', encoding='utf-8') as manifest_file:
-        return json.load(manifest_file)
-
-
-def load_decision_log(game_directory: Path) -> dict[int, tuple[dict, DecisionResponse]]:
-    """
-    Load the decision log in broker replay format. A torn final line (crash
-    mid-append) is dropped with a warning; everything before it is intact
-    because appends are fsync'd line by line.
-    """
-    decisions_path = game_directory / DECISIONS_FILE_NAME
+async def load_decision_log(game_id: str) -> dict[int, tuple[dict, DecisionResponse]]:
+    """Load the decision log in broker replay format."""
     replay_log: dict[int, tuple[dict, DecisionResponse]] = {}
-    if not decisions_path.exists():
-        return replay_log
-    with open(decisions_path, 'r', encoding='utf-8') as decisions_file:
-        for line_number, line in enumerate(decisions_file, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                log.warning(
-                    'Dropping torn decision-log line %d in %s', line_number, game_directory,
-                )
-                break
-            response = DecisionResponse(
-                sequence_number=record['sequence_number'],
-                payload_type=record['payload_type'],
-                payload=record['payload'],
-            )
-            replay_log[record['sequence_number']] = (record['fingerprint'], response)
+    for record in await backend.load_decision_records(game_id):
+        response = DecisionResponse(
+            sequence_number=record['sequence_number'],
+            payload_type=record['payload_type'],
+            payload=record['payload'],
+        )
+        replay_log[record['sequence_number']] = (record['fingerprint'], response)
     return replay_log
+
+
+async def list_game_ids_with_status(status: str) -> list[str]:
+    return await backend.list_game_ids_with_status(status)

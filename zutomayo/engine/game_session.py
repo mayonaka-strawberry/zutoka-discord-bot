@@ -1,7 +1,6 @@
 import asyncio
 import random
 from typing import TYPE_CHECKING, Any, Optional
-from uuid import uuid4
 from zutomayo.effects.effect_engine import EffectEngine
 from zutomayo.engine.deck_builder import build_deck_from_cards
 from zutomayo.engine.game_controller import GameController
@@ -11,7 +10,7 @@ from zutomayo.models.game_state import GameState
 
 if TYPE_CHECKING:
     from zutomayo.engine.decision_broker import DecisionBroker
-    from zutomayo.engine.game_persistence import GamePersistence
+    from zutomayo.engine.game_persistence import GameRecordStore
     from zutomayo.engine.match_transport import MatchTransport
 
 
@@ -35,9 +34,9 @@ class GameSession:
         self.broker: Optional['DecisionBroker'] = None
         self.transport: Optional['MatchTransport'] = None
 
-        # Restart persistence, created when the match is initialized and
-        # deleted when the session is removed from the session manager.
-        self.persistence: Optional['GamePersistence'] = None
+        # Permanent game record store, created when the match is initialized.
+        # Records are never deleted; game lifecycle is tracked by games.status.
+        self.persistence: Optional['GameRecordStore'] = None
 
         # Track both players' Discord IDs
         self.player_discord_ids[creator_id] = 0
@@ -173,17 +172,19 @@ class GameSessionManager:
     # Sentinel Discord ID used for the bot player in solo mode.
     BOT_DISCORD_ID = 0
 
-    def create_game(self, channel_id: int, creator_id: int) -> GameSession:
+    async def create_game(self, channel_id: int, creator_id: int) -> GameSession:
         if creator_id in self.player_to_game:
             raise ValueError('You are already in a game.')
 
-        game_id = str(uuid4())[:8]
+        from zutomayo.data.game_id_allocator import allocate_game_id
+
+        game_id = await allocate_game_id()
         session = GameSession(game_id, channel_id, creator_id)
         self.active_games[game_id] = session
         self.player_to_game[creator_id] = game_id
         return session
 
-    def create_solo_game(self, channel_id: int, creator_id: int) -> GameSession:
+    async def create_solo_game(self, channel_id: int, creator_id: int) -> GameSession:
         """
         Create a solo game where the creator plays against the bot.
 
@@ -192,7 +193,9 @@ class GameSessionManager:
         if creator_id in self.player_to_game:
             raise ValueError('You are already in a game.')
 
-        game_id = str(uuid4())[:8]
+        from zutomayo.data.game_id_allocator import allocate_game_id
+
+        game_id = await allocate_game_id()
         session = GameSession(game_id, channel_id, creator_id)
         session.is_solo = True
         session.add_player(self.BOT_DISCORD_ID)
@@ -224,14 +227,19 @@ class GameSessionManager:
             return None
         return self.active_games.get(game_id)
 
-    def remove_game(self, game_id: str) -> None:
+    def detach_game(self, game_id: str) -> None:
+        """
+        Drop the session from the in-memory maps, freeing its players for new
+        games. The permanent game record is untouched; status transitions are
+        the responsibility of the caller (game end, save, quit, abandon).
+        """
         session = self.active_games.pop(game_id, None)
         if session:
             for discord_id in session.player_discord_ids:
                 self.player_to_game.pop(discord_id, None)
-            if session.persistence is not None:
-                session.persistence.delete()
-                session.persistence = None
+
+    def remove_game(self, game_id: str) -> None:
+        self.detach_game(game_id)
 
 
 # Singleton instance

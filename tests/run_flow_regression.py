@@ -112,12 +112,16 @@ def _make_render_stub(function_name: str, returns_zone_list: bool = False):
     return render_stub
 
 
-def _install_patches(temporary_data_directory: Path) -> None:
+def _install_patches(temporary_data_directory: Path) -> 'InMemoryGameRecordBackend':
     # Never write real player profiles, the username cache, or live game
-    # persistence from tests.
+    # records from tests.
     import zutomayo.engine.game_persistence as game_persistence_module
 
-    from tests.fakes import InMemoryNameBackend, InMemoryProfileBackend
+    from tests.fakes import (
+        InMemoryGameRecordBackend,
+        InMemoryNameBackend,
+        InMemoryProfileBackend,
+    )
 
     profile_backend = InMemoryProfileBackend()
     name_backend = InMemoryNameBackend()
@@ -125,10 +129,16 @@ def _install_patches(temporary_data_directory: Path) -> None:
     player_storage_module.backend = profile_backend
     name_storage_module.backend = name_backend
     name_storage_module._names_cache = None
-    game_persistence_module.ACTIVE_GAMES_DIRECTORY = temporary_data_directory / 'active_games'
+    game_record_backend = InMemoryGameRecordBackend()
+    game_persistence_module.backend = game_record_backend
 
     # Digest hooks: GameSession resolves TurnManager from its module namespace.
     game_session_module.TurnManager = RecordingFlowTurnManager
+    _install_render_stubs()
+    return game_record_backend
+
+
+def _install_render_stubs() -> None:
 
     # Rendering stubs: the flow modules bound these names at import time.
     import zutomayo.engine.tcg_match_flow as tcg_match_flow_module
