@@ -200,13 +200,13 @@ class GameCog(commands.Cog):
                 game_flow.run_game(session)
             )
 
-    @group.command(name='end', description='End a specific game by ID')
+    @group.command(name='end', description='End a live game, or abandon one of your saved games')
     @app_commands.guild_only()
-    @app_commands.describe(game_id='The game ID to end')
+    @app_commands.describe(game_id='The game ID to end or abandon')
     async def end_game(self, interaction: discord.Interaction, game_id: str):
         session = session_manager.active_games.get(game_id)
         if session is None:
-            await interaction.response.send_message(f'Game `{game_id}` not found.', ephemeral=True)
+            await self._abandon_saved_game(interaction, game_id)
             return
 
         if interaction.user.id not in session.player_discord_ids:
@@ -223,6 +223,91 @@ class GameCog(commands.Cog):
         await interaction.response.send_message(
             f'**{interaction.user.display_name}** ended game `{game_id}`.'
         )
+
+    @end_game.autocomplete('game_id')
+    async def end_game_autocomplete(
+        self, interaction: discord.Interaction, current: str,
+    ) -> list[app_commands.Choice[str]]:
+        try:
+            from zutomayo.engine.game_persistence import list_saved_games_for_player
+
+            choices: list[app_commands.Choice[str]] = []
+            live_session = session_manager.get_session_by_player(interaction.user.id)
+            if live_session is not None and live_session.game_id.startswith(current):
+                choices.append(app_commands.Choice(
+                    name=f'{live_session.game_id} (live game)'[:100],
+                    value=live_session.game_id,
+                ))
+            for row in await list_saved_games_for_player(interaction.user.id, current):
+                saved_date = row['saved_at'].date().isoformat() if row['saved_at'] else 'unknown date'
+                choices.append(app_commands.Choice(
+                    name=f'{row["game_id"]} ({row["mode"]}, saved {saved_date})'[:100],
+                    value=row['game_id'],
+                ))
+            return choices[:25]
+        except Exception:
+            log.exception('end autocomplete failed')
+            return []
+
+    async def _abandon_saved_game(self, interaction: discord.Interaction, game_id: str) -> None:
+        """End a saved game for good: status abandoned, forfeit for the abandoner."""
+        from zutomayo.data.player_storage import BOT_DISCORD_ID, record_forfeit
+        from zutomayo.engine.game_events import EVENT_FORFEIT
+        from zutomayo.engine.game_persistence import (
+            STATUS_ABANDONED,
+            STATUS_SAVED,
+            GameRecordStore,
+            get_game_row,
+        )
+
+        row = await get_game_row(game_id)
+        if row is None or row['status'] != STATUS_SAVED:
+            await interaction.response.send_message(f'Game `{game_id}` not found.', ephemeral=True)
+            return
+
+        manifest = row['manifest']
+        player_ids = [pair[0] for pair in manifest.get('player_discord_ids', [])]
+        if interaction.user.id not in player_ids:
+            await interaction.response.send_message('You are not a player in that game.', ephemeral=True)
+            return
+
+        opponent_id = next(
+            (player_id for player_id in player_ids
+             if player_id != interaction.user.id and player_id != BOT_DISCORD_ID),
+            None,
+        )
+        try:
+            await record_forfeit(interaction.user.id, opponent_id)
+        except Exception:
+            log.exception('Failed to record forfeit for abandoned game %s', game_id)
+
+        store = GameRecordStore.attach_for_resume(game_id)
+        player_index = next(
+            (index for player_id, index in manifest.get('player_discord_ids', [])
+             if player_id == interaction.user.id),
+            None,
+        )
+        store.next_event_index = await self._next_event_index_safe(game_id)
+        store.emit_event(EVENT_FORFEIT, {
+            'player_index': player_index,
+            'discord_id': interaction.user.id,
+        })
+        await store.set_status(STATUS_ABANDONED)
+        log.info('Saved game %s abandoned by %s', game_id, interaction.user)
+        await interaction.response.send_message(
+            f'**{interaction.user.display_name}** abandoned saved game `{game_id}`. '
+            'It can no longer be resumed.'
+        )
+
+    @staticmethod
+    async def _next_event_index_safe(game_id: str) -> int:
+        from zutomayo.engine.game_persistence import next_event_index
+
+        try:
+            return await next_event_index(game_id)
+        except Exception:
+            log.exception('Failed to read next event index for game %s', game_id)
+            return 0
 
     async def _start_make_deck(
         self,
@@ -460,6 +545,143 @@ class GameCog(commands.Cog):
         await interaction.response.send_message(
             f'**{interaction.user.display_name}** quit the game. Game `{session.game_id}` has been removed.'
         )
+
+    @group.command(
+        name='saveandquit',
+        description='Save your current game and quit; resume it later with /zutomayo resume',
+    )
+    async def save_and_quit(self, interaction: discord.Interaction) -> None:
+        from zutomayo.engine.game_events import EVENT_GAME_SAVED
+        from zutomayo.engine.game_persistence import STATUS_SAVED
+
+        session = session_manager.get_session_by_player(interaction.user.id)
+        if session is None:
+            await interaction.response.send_message('You are not in a game.', ephemeral=True)
+            return
+        if session.persistence is None:
+            await interaction.response.send_message(
+                'This game has not started yet, so there is nothing to save. '
+                'Use `/zutomayo quit` instead.',
+                ephemeral=True,
+            )
+            return
+        if session.broker is not None and session.broker.replaying:
+            await interaction.response.send_message(
+                'This game is still being restored. Try again in a moment.', ephemeral=True,
+            )
+            return
+
+        if session.game_task and not session.game_task.done():
+            session.game_task.cancel()
+
+        session.persistence.emit_event(EVENT_GAME_SAVED, {
+            'by_discord_id': interaction.user.id,
+            'channel_id': session.channel_id,
+        })
+        await session.persistence.set_status(STATUS_SAVED)
+        session_manager.detach_game(session.game_id)
+        log.info('Game %s saved by %s', session.game_id, interaction.user)
+        await interaction.response.send_message(
+            f'Game `{session.game_id}` has been saved. Resume it any time with '
+            f'`/zutomayo resume {session.game_id}`.\n'
+            'Note: saved games are restored by replaying the game log, so they '
+            'may not survive bot updates.'
+        )
+
+    @group.command(name='resume', description='Resume one of your saved games')
+    @app_commands.describe(game_id='The saved game to resume')
+    async def resume_saved_game(self, interaction: discord.Interaction, game_id: str) -> None:
+        from zutomayo.engine.game_persistence import STATUS_ACTIVE, GameRecordStore
+        from zutomayo.engine.resume_manager import load_saved_game_for_resume, resume_game
+        from zutomayo.ui.resume_views import ResumeConfirmationView
+
+        try:
+            row = await load_saved_game_for_resume(game_id, interaction.user.id)
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+
+        if row['is_solo']:
+            if interaction.guild is not None:
+                await interaction.response.send_message(
+                    'Solo games are resumed in DMs — use this command in a DM with the bot.',
+                    ephemeral=True,
+                )
+                return
+            await GameRecordStore.attach_for_resume(game_id).set_status(STATUS_ACTIVE)
+            await interaction.response.send_message(f'Resuming game `{game_id}`...')
+            await resume_game(self.bot, game_id, announcement='**Game resumed.**')
+            return
+
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                'Two-player games are resumed in a server channel, not in DMs.', ephemeral=True,
+            )
+            return
+
+        manifest = row['manifest']
+        opponent_id = next(
+            player_id for player_id, _ in manifest['player_discord_ids']
+            if player_id != interaction.user.id
+        )
+        channel_id = interaction.channel_id
+        invoker_id = interaction.user.id
+        bot = self.bot
+
+        async def start_resume(button_interaction: discord.Interaction) -> None:
+            try:
+                await load_saved_game_for_resume(game_id, invoker_id)
+            except ValueError as error:
+                await button_interaction.response.edit_message(content=str(error), view=None)
+                return
+            await GameRecordStore.attach_for_resume(game_id).set_status(
+                STATUS_ACTIVE, channel_id=channel_id,
+            )
+            await button_interaction.response.edit_message(
+                content=f'Both players agreed — resuming game `{game_id}`...', view=None,
+            )
+            await resume_game(
+                bot, game_id,
+                channel_id_override=channel_id,
+                announcement='**Game resumed.**',
+            )
+
+        view = ResumeConfirmationView(
+            game_id=game_id,
+            invoker_id=invoker_id,
+            opponent_id=opponent_id,
+            on_accept=start_resume,
+        )
+        mode_label = f'TCG best of {row["best_of"]}' if row['is_tcg'] else 'standard'
+        saved_date = row['saved_at'].date().isoformat() if row['saved_at'] else 'unknown date'
+        await interaction.response.send_message(
+            f'<@{opponent_id}> — **{interaction.user.display_name}** wants to resume '
+            f'saved game `{game_id}` ({mode_label}, saved {saved_date}). '
+            'Both players must agree before the game continues.',
+            view=view,
+            allowed_mentions=discord.AllowedMentions(users=[discord.Object(id=opponent_id)]),
+        )
+        view.message = await interaction.original_response()
+
+    @resume_saved_game.autocomplete('game_id')
+    async def resume_autocomplete(
+        self, interaction: discord.Interaction, current: str,
+    ) -> list[app_commands.Choice[str]]:
+        try:
+            from zutomayo.engine.game_persistence import list_saved_games_for_player
+
+            choices = []
+            for row in await list_saved_games_for_player(interaction.user.id, current):
+                saved_date = row['saved_at'].date().isoformat() if row['saved_at'] else 'unknown date'
+                mode_label = f'TCG best of {row["best_of"]}' if row['is_tcg'] else row['mode']
+                choices.append(app_commands.Choice(
+                    name=f'{row["game_id"]} ({mode_label}, saved {saved_date})'[:100],
+                    value=row['game_id'],
+                ))
+            return choices[:25]
+        except Exception:
+            log.exception('resume autocomplete failed')
+            return []
 
     @group.command(
         name='editname',

@@ -58,6 +58,34 @@ async def resume_all(bot: 'discord.Client') -> None:
             await _mark_divergence_failed(game_id)
 
 
+async def load_saved_game_for_resume(game_id: str, requester_discord_id: int) -> dict[str, Any]:
+    """
+    Validate that a saved game can be resumed by this player right now.
+    Returns the game row. Raises ValueError with a user-facing message when
+    the game is missing, not saved, not theirs, or a participant is busy.
+    """
+    from zutomayo.engine.game_persistence import STATUS_SAVED, get_game_row
+
+    row = await get_game_row(game_id)
+    if row is None:
+        raise ValueError(f'Game `{game_id}` was not found.')
+    if row['status'] != STATUS_SAVED:
+        raise ValueError(f'Game `{game_id}` is not a saved game (status: {row["status"]}).')
+
+    manifest = row['manifest']
+    player_ids = [pair[0] for pair in manifest.get('player_discord_ids', [])]
+    if requester_discord_id not in player_ids:
+        raise ValueError('You are not a player in that game.')
+
+    for player_id in player_ids:
+        if player_id != 0 and player_id in session_manager.player_to_game:
+            raise ValueError(
+                'A player of that game is currently in another game. '
+                'Finish or save it first.'
+            )
+    return row
+
+
 async def resume_game(
     bot: 'discord.Client',
     game_id: str,
