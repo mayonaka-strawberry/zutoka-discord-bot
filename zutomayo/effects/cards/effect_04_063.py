@@ -17,8 +17,5 @@ async def effect_04_063(
         engine, game_state, player_index, card_instance,
         candidate_matcher=lambda hand_card: hand_card.card.attribute == Attribute.FLAME,
         candidate_label='flame card',
-        no_candidates_message='No flame cards in hand. No effect.',
-        success_owner_template='**Effect (04-063):** Placed {count} card(s) into the Abyss: {names}.',
-        success_opponent_template='**Effect (04-063):** Opponent placed {count} flame card(s) into their Abyss.',
         destination=PlacementDestination.ABYSS,
     )

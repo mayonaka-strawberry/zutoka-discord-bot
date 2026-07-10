@@ -15,8 +15,5 @@ async def effect_04_061(
     await place_hand_cards_then_draw_same_count(
         engine, game_state, player_index, card_instance,
         candidate_matcher=None, candidate_label='card',
-        no_candidates_message='Hand is empty. No effect.',
-        success_owner_template='**Effect (04-061):** Placed {count} card(s) at the bottom of your deck: {names}.',
-        success_opponent_template='**Effect (04-061):** Opponent placed {count} card(s) from hand at the bottom of their deck.',
         destination=PlacementDestination.DECK_BOTTOM,
     )
