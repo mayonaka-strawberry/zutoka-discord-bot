@@ -72,8 +72,8 @@ class TcgMatchFlow:
             # Persistence covers the whole series: initial decks and sides in
             # the manifest, every match and switch decision in one log.
             if session.persistence is None:
-                from zutomayo.engine.game_persistence import GamePersistence, card_keys
-                session.persistence = GamePersistence.create_for_session(session, 'tcg', extra_fields={
+                from zutomayo.engine.game_persistence import GameRecordStore, card_keys
+                session.persistence = await GameRecordStore.create_for_session(session, 'tcg', extra_fields={
                     'deck_0': card_keys(deck_0),
                     'deck_1': card_keys(deck_1),
                     'side_0': card_keys(side_0),
@@ -113,6 +113,7 @@ class TcgMatchFlow:
             # Announce series winner
             await self._announce_series_result(session, names, wins)
             await self._record_series_stats(session, wins)
+            await self._finalize_completed_series(session, wins)
             session_manager.remove_game(session.game_id)
 
         except ResumeDivergenceError:
@@ -121,7 +122,24 @@ class TcgMatchFlow:
         except Exception:
             log.exception('Error in TCG match flow')
             await self._send_to_channel(session, content='An error occurred. TCG series ended.')
+            await self.game_flow.mark_game_abandoned(session)
             session_manager.remove_game(session.game_id)
+
+    async def _finalize_completed_series(self, session: GameSession, wins: dict[int, int]) -> None:
+        """Mark the whole series completed in the game record with the final score."""
+        from zutomayo.engine.game_persistence import STATUS_COMPLETED
+
+        if session.persistence is None:
+            return
+        series_winner = 0 if wins[0] >= self.wins_needed else 1
+        try:
+            await session.persistence.set_status(
+                STATUS_COMPLETED,
+                winner_index=series_winner,
+                result_summary={'series_score': [wins[0], wins[1]], 'best_of': self.best_of},
+            )
+        except Exception:
+            log.exception('Failed to mark TCG series %s completed', session.game_id)
 
     @staticmethod
     def _cards_for_keys(pool: list[Card], keys: list[list[int]]) -> list[Card]:

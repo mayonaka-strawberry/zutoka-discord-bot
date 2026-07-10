@@ -10,9 +10,11 @@ zutomayo/data/name_storage.py exactly.
 from __future__ import annotations
 
 import copy
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from zutomayo.data.deck_repository import resolve_card_list, serialize_cards
+from zutomayo.data.game_id_allocator import format_game_id
 from zutomayo.data.player_storage import (
     BOT_DISCORD_ID,
     ProfileMutator,
@@ -136,6 +138,115 @@ class InMemoryDeckRepository:
                 entry['user_id'] = user_id
                 entries.append(entry)
         return entries
+
+
+class InMemoryGameIdAllocator:
+    """Deterministic allocator with per-day counters, mirroring the SQL upsert."""
+
+    def __init__(self, fixed_day: Optional[date] = None) -> None:
+        self.fixed_day = fixed_day
+        self.counters: dict[date, int] = {}
+
+    async def allocate(self, now: Optional[datetime] = None) -> str:
+        if self.fixed_day is not None:
+            day = self.fixed_day
+        elif now is not None:
+            day = now.astimezone(timezone.utc).date()
+        else:
+            day = datetime.now(timezone.utc).date()
+        counter = self.counters.get(day, 0)
+        self.counters[day] = counter + 1
+        return format_game_id(day, counter)
+
+
+class InMemoryGameRecordBackend:
+    """Mirrors PostgresGameRecordBackend: game rows, decision logs, statuses."""
+
+    def __init__(self) -> None:
+        self.games: dict[str, dict] = {}
+        self.decisions: dict[str, dict[int, dict]] = {}
+        self.events: dict[str, list[dict]] = {}
+
+    async def insert_game(self, manifest: dict) -> None:
+        game_id = manifest['game_id']
+        if game_id in self.games:
+            return
+        self.games[game_id] = {
+            'game_id': game_id,
+            'schema_version': manifest['schema_version'],
+            'status': 'active',
+            'mode': manifest['mode'],
+            'channel_id': manifest['channel_id'],
+            'is_solo': manifest['is_solo'],
+            'solo_difficulty': manifest['solo_difficulty'],
+            'is_tcg': manifest['is_tcg'],
+            'best_of': manifest['best_of'],
+            'random_seed': manifest['random_seed'],
+            'manifest': copy.deepcopy(manifest),
+            'winner_index': None,
+            'result_summary': None,
+            'created_at': datetime.now(timezone.utc),
+            'saved_at': None,
+            'ended_at': None,
+        }
+        self.decisions.setdefault(game_id, {})
+
+    async def insert_decision(self, game_id: str, record: dict) -> None:
+        log_for_game = self.decisions.setdefault(game_id, {})
+        log_for_game.setdefault(record['sequence_number'], copy.deepcopy(record))
+
+    async def update_status(
+        self,
+        game_id: str,
+        status: str,
+        *,
+        winner_index: Optional[int] = None,
+        result_summary: Optional[dict] = None,
+        channel_id: Optional[int] = None,
+    ) -> None:
+        row = self.games.get(game_id)
+        if row is None:
+            return
+        row['status'] = status
+        if winner_index is not None:
+            row['winner_index'] = winner_index
+        if result_summary is not None:
+            row['result_summary'] = copy.deepcopy(result_summary)
+        if channel_id is not None:
+            row['channel_id'] = channel_id
+        if status == 'saved':
+            row['saved_at'] = datetime.now(timezone.utc)
+        if status in ('completed', 'quit', 'abandoned', 'divergence_failed'):
+            row['ended_at'] = datetime.now(timezone.utc)
+
+    async def load_manifest(self, game_id: str) -> Optional[dict]:
+        row = self.games.get(game_id)
+        return copy.deepcopy(row['manifest']) if row is not None else None
+
+    async def load_decision_records(self, game_id: str) -> list[dict]:
+        log_for_game = self.decisions.get(game_id, {})
+        return [
+            copy.deepcopy(log_for_game[sequence_number])
+            for sequence_number in sorted(log_for_game)
+        ]
+
+    async def list_game_ids_with_status(self, status: str) -> list[str]:
+        rows = [row for row in self.games.values() if row['status'] == status]
+        rows.sort(key=lambda row: row['created_at'])
+        return [row['game_id'] for row in rows]
+
+    async def get_game_row(self, game_id: str) -> Optional[dict]:
+        row = self.games.get(game_id)
+        return copy.deepcopy(row) if row is not None else None
+
+    def truncate_decision_log(self, game_id: str, keep_first: int) -> None:
+        """Test helper: simulate a crash after the first N decisions."""
+        log_for_game = self.decisions.get(game_id, {})
+        kept_numbers = sorted(log_for_game)[:keep_first]
+        self.decisions[game_id] = {
+            sequence_number: log_for_game[sequence_number]
+            for sequence_number in kept_numbers
+        }
 
 
 class InMemoryNameBackend:

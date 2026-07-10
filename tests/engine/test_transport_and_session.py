@@ -100,42 +100,68 @@ class TestGameSessionSynchronization:
 
 
 class TestGameSessionManager:
-    def test_create_join_and_remove(self, tmp_path):
-        manager = GameSessionManager()
-        session = manager.create_game(channel_id=9, creator_id=111)
-        assert manager.get_session_by_player(111) is session
+    def test_create_join_and_remove(self):
+        async def run():
+            manager = GameSessionManager()
+            session = await manager.create_game(channel_id=9, creator_id=111)
+            assert manager.get_session_by_player(111) is session
 
-        with pytest.raises(ValueError):
-            manager.create_game(channel_id=9, creator_id=111)
-        with pytest.raises(ValueError):
-            manager.join_game(session.game_id, 111)
-        with pytest.raises(ValueError):
-            manager.join_game('missing', 333)
+            with pytest.raises(ValueError):
+                await manager.create_game(channel_id=9, creator_id=111)
+            with pytest.raises(ValueError):
+                manager.join_game(session.game_id, 111)
+            with pytest.raises(ValueError):
+                manager.join_game('missing', 333)
 
-        manager.join_game(session.game_id, 222)
-        assert session.is_full
-        with pytest.raises(ValueError):
-            manager.join_game(session.game_id, 333)
+            manager.join_game(session.game_id, 222)
+            assert session.is_full
+            with pytest.raises(ValueError):
+                manager.join_game(session.game_id, 333)
 
-        manager.remove_game(session.game_id)
-        assert manager.get_session_by_player(111) is None
+            manager.remove_game(session.game_id)
+            assert manager.get_session_by_player(111) is None
 
-    def test_remove_game_deletes_persistence(self, tmp_path, monkeypatch):
-        import zutomayo.engine.game_persistence as game_persistence_module
-        from zutomayo.engine.game_persistence import GamePersistence
+        asyncio.run(run())
 
-        monkeypatch.setattr(game_persistence_module, 'ACTIVE_GAMES_DIRECTORY', tmp_path / 'active')
-        manager = GameSessionManager()
-        session = manager.create_game(channel_id=9, creator_id=111)
-        manager.join_game(session.game_id, 222)
-        session.persistence = GamePersistence.create_for_session(session, 'standard')
-        game_directory = session.persistence.game_directory
-        assert game_directory.exists()
+    def test_game_ids_follow_the_daily_counter_format(self):
+        import re
 
-        manager.remove_game(session.game_id)
-        assert not game_directory.exists()
+        async def run():
+            manager = GameSessionManager()
+            first = await manager.create_game(channel_id=9, creator_id=111)
+            second = await manager.create_game(channel_id=9, creator_id=222)
+            return first.game_id, second.game_id
+
+        first_id, second_id = asyncio.run(run())
+        assert re.fullmatch(r'\d{8}-\d{5}', first_id)
+        assert first_id.endswith('-00000')
+        assert second_id.endswith('-00001')
+
+    def test_detach_game_frees_players_without_touching_records(self, install_in_memory_backends):
+        async def run():
+            manager = GameSessionManager()
+            session = await manager.create_game(channel_id=9, creator_id=111)
+            manager.join_game(session.game_id, 222)
+
+            from zutomayo.engine.game_persistence import GameRecordStore
+            session.persistence = await GameRecordStore.create_for_session(session, 'standard')
+
+            manager.detach_game(session.game_id)
+            assert manager.get_session_by_player(111) is None
+            assert manager.get_session_by_player(222) is None
+            # Detached players can start a new game immediately.
+            await manager.create_game(channel_id=9, creator_id=111)
+            return session.game_id
+
+        game_id = asyncio.run(run())
+        record_backend = install_in_memory_backends['game_records']
+        assert record_backend.games[game_id]['status'] == 'active', \
+            'detach never changes the game record'
 
     def test_create_solo_game_wires_the_bot_player(self):
-        manager = GameSessionManager()
-        session = manager.create_solo_game(channel_id=9, creator_id=111)
+        async def run():
+            manager = GameSessionManager()
+            return await manager.create_solo_game(channel_id=9, creator_id=111)
+
+        session = asyncio.run(run())
         assert session.is_solo and session.get_discord_id(1) == 0

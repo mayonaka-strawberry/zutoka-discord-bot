@@ -259,14 +259,50 @@ class GameFlow:
             deck_1_cards, deck_2_cards = await self._do_deck_building_phase(session)
             await self.run_single_match(session, deck_1_cards, deck_2_cards)
 
+            await self.finalize_completed_game(session)
             from zutomayo.engine.game_session import session_manager
             session_manager.remove_game(session.game_id)
 
         except Exception:
             log.exception('Error in game flow')
             await self._send_to_channel(session, content='An error occurred. Game ended.')
+            await self.mark_game_abandoned(session)
             from zutomayo.engine.game_session import session_manager
             session_manager.remove_game(session.game_id)
+
+    async def finalize_completed_game(self, session: GameSession) -> None:
+        """Mark a finished standalone match completed in the game record."""
+        from zutomayo.engine.game_persistence import STATUS_COMPLETED
+        from zutomayo.enums.result import Result
+
+        if session.persistence is None or session.game_state is None:
+            return
+        game_state = session.game_state
+        if game_state.result == Result.PLAYER_1_WIN:
+            winner_index = 0
+        elif game_state.result == Result.PLAYER_2_WIN:
+            winner_index = 1
+        else:
+            winner_index = None
+        try:
+            await session.persistence.set_status(
+                STATUS_COMPLETED,
+                winner_index=winner_index,
+                result_summary={'result': game_state.result.name, 'turns': game_state.turn},
+            )
+        except Exception:
+            log.exception('Failed to mark game %s completed', session.game_id)
+
+    async def mark_game_abandoned(self, session: GameSession) -> None:
+        """Mark a game that died to an unexpected error; the record is kept for summaries."""
+        from zutomayo.engine.game_persistence import STATUS_ABANDONED
+
+        if session.persistence is None:
+            return
+        try:
+            await session.persistence.set_status(STATUS_ABANDONED)
+        except Exception:
+            log.exception('Failed to mark game %s abandoned', session.game_id)
 
     async def run_single_match(
         self,
@@ -292,9 +328,9 @@ class GameFlow:
         # matches persist too: every bot decision flows through the broker
         # (BotAgentDecisionAdapter), so the log replays them exactly.
         if session.persistence is None:
-            from zutomayo.engine.game_persistence import GamePersistence
+            from zutomayo.engine.game_persistence import GameRecordStore
             mode = 'solo' if session.is_solo else 'standard'
-            session.persistence = GamePersistence.create_for_session(session, mode)
+            session.persistence = await GameRecordStore.create_for_session(session, mode)
             session.broker.persistence = session.persistence
 
         game_state = session.game_state

@@ -56,7 +56,7 @@ class GameCog(commands.Cog):
     @app_commands.guild_only()
     async def create_game(self, interaction: discord.Interaction):
         try:
-            session = session_manager.create_game(interaction.channel_id, interaction.user.id)
+            session = await session_manager.create_game(interaction.channel_id, interaction.user.id)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
@@ -84,7 +84,7 @@ class GameCog(commands.Cog):
             return
 
         try:
-            session = session_manager.create_game(interaction.channel_id, interaction.user.id)
+            session = await session_manager.create_game(interaction.channel_id, interaction.user.id)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
@@ -105,7 +105,7 @@ class GameCog(commands.Cog):
     async def play_uniguri(self, interaction: discord.Interaction):
         channel_id = 0
         try:
-            session = session_manager.create_solo_game(channel_id, interaction.user.id)
+            session = await session_manager.create_solo_game(channel_id, interaction.user.id)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
@@ -129,7 +129,7 @@ class GameCog(commands.Cog):
     async def play_uniguri_easy(self, interaction: discord.Interaction):
         channel_id = 0
         try:
-            session = session_manager.create_solo_game(channel_id, interaction.user.id)
+            session = await session_manager.create_solo_game(channel_id, interaction.user.id)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
@@ -217,6 +217,7 @@ class GameCog(commands.Cog):
             session.game_task.cancel()
 
         await self._record_forfeit_for_session(session, interaction.user.id)
+        await self._mark_session_quit(session)
         session_manager.remove_game(game_id)
         log.info('Game %s ended by %s (end command)', game_id, interaction.user)
         await interaction.response.send_message(
@@ -453,6 +454,7 @@ class GameCog(commands.Cog):
             session.game_task.cancel()
 
         await self._record_forfeit_for_session(session, interaction.user.id)
+        await self._mark_session_quit(session)
         session_manager.remove_game(session.game_id)
         log.info('Game %s ended by %s (quit command)', session.game_id, interaction.user)
         await interaction.response.send_message(
@@ -570,6 +572,19 @@ class GameCog(commands.Cog):
             record_stats_bucket='tcg_series',
             empty_message='No ranked players yet. Finish a TCG series with `/zutomayo createtcg` to appear here.',
         )
+
+    @staticmethod
+    async def _mark_session_quit(session) -> None:
+        """Mark the game record quit; a game with no record yet (still in the
+        lobby or deck building) has nothing to update."""
+        from zutomayo.engine.game_persistence import STATUS_QUIT
+
+        if session.persistence is None:
+            return
+        try:
+            await session.persistence.set_status(STATUS_QUIT)
+        except Exception:
+            log.exception('Failed to mark game %s quit', session.game_id)
 
     @staticmethod
     async def _record_forfeit_for_session(session, quitter_id: int) -> None:
