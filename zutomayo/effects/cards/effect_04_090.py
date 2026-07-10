@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from zutomayo.enums.zone import Zone
 import logging
 
 if TYPE_CHECKING:
@@ -43,9 +42,7 @@ async def effect_04_090(
 
     # Move selected card from opponent's abyss to bottom of their deck
     opponent.abyss.remove(selected_card)
-    selected_card.zone = Zone.DECK
-    selected_card.face_up = False
-    opponent.deck.append(selected_card)
+    engine.return_to_deck_bottom(selected_card, opponent)
 
     await engine._send_dm(
         player_index,

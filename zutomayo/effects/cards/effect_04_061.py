@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from zutomayo.enums.zone import Zone
 import logging
 
 if TYPE_CHECKING:
@@ -66,9 +65,7 @@ async def effect_04_061(
     # Move selected cards from hand to bottom of deck
     for selected_card in selected_cards:
         player.hand.remove(selected_card)
-        selected_card.zone = Zone.DECK
-        selected_card.face_up = False
-        player.deck.append(selected_card)
+        engine.return_to_deck_bottom(selected_card, player)
 
     placed_names = ', '.join(selected_card.card.name for selected_card in selected_cards)
     await engine._send_dm(player_index, content=f'**Effect (04-061):** Placed {len(selected_cards)} card(s) at the bottom of your deck: {placed_names}.')

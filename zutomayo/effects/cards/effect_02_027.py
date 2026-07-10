@@ -1,7 +1,6 @@
 from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
-from zutomayo.enums.zone import Zone
 
 if TYPE_CHECKING:
     from zutomayo.effects.effect_engine import EffectEngine
@@ -65,9 +64,7 @@ async def effect_02_027(engine: EffectEngine, game_state: GameState, player_inde
     for card in (first, second):
         if card in player.hand:
             player.hand.remove(card)
-        card.zone = Zone.DECK
-        card.face_up = False
-        player.deck.append(card)
+        engine.return_to_deck_bottom(card, player)
 
     log.debug('[%s] %s: moved 2 cards to bottom of deck', card_instance.card.effect, engine.player_label(player_index))
 

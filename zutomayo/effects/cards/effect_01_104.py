@@ -21,6 +21,5 @@ async def effect_01_104(
         log.debug('[%s] %s: opponent deck is empty, no effect', card_instance.card.effect, engine.player_label(player_index))
         return
 
-    top_card = opponent.deck.pop(0)
-    engine.place_in_abyss(top_card, opponent, player_index)
+    top_card = engine.mill_deck_top_to_abyss(opponent, 1, player_index)[0]
     log.debug('[%s] %s: moved top card %s from opponent deck to their abyss', card_instance.card.effect, engine.player_label(player_index), top_card.card.effect)

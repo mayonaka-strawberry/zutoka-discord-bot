@@ -18,7 +18,7 @@ async def effect_03_027(engine: EffectEngine, game_state: GameState, player_inde
 
     # Immediately recover 50 HP to opponent (capped at 100)
     old_hp = opponent.hp
-    opponent.hp = min(opponent.hp + 50, 100)
+    engine.heal(game_state, opponent_index, 50, source=card_instance.card.effect)
     log.debug('[%s] %s: healed opponent %s by 50 (HP %d -> %d)', card_instance.card.effect, engine.player_label(player_index), engine.player_label(opponent_index), old_hp, opponent.hp)
 
     # Schedule 50 damage to opponent at end of turn

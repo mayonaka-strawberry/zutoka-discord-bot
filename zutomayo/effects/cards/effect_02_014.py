@@ -19,7 +19,7 @@ async def effect_02_014(engine: EffectEngine, game_state: GameState, player_inde
     log.debug('[%s] %s: darkness cards in abyss = %d (need >= 2)', card_instance.card.effect, engine.player_label(player_index), darkness_count)
     if darkness_count >= 2:
         old_hp = player.hp
-        player.hp = min(player.hp + 20, 100)
+        engine.heal(game_state, player_index, 20, source=card_instance.card.effect)
         log.debug('[%s] %s: condition met, +20 HP (from %d to %d)', card_instance.card.effect, engine.player_label(player_index), old_hp, player.hp)
     else:
         log.debug('[%s] %s: condition not met, no HP recovery', card_instance.card.effect, engine.player_label(player_index))

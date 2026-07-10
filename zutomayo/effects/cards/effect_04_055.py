@@ -24,7 +24,7 @@ async def effect_04_055(
     if (player.battle_zone is not None
             and player.battle_zone.card.card_type == CardType.CHARACTER
             and player.battle_zone.card.song == Song.TAIDADA):
-        player.hp = min(player.hp + 20, 100)
+        engine.heal(game_state, player_index, 20, source=card_instance.card.effect)
         log.debug('[%s] %s: HP +20 (now %d)', card_instance.card.effect, engine.player_label(player_index), player.hp)
         await engine._send_dm(player_index, content='**Effect (04-055):** Battle Zone character is TAIDADA. HP +20!')
         await engine._send_dm(opponent_index, content='**Effect (04-055):** Opponent has TAIDADA character in Battle Zone. HP +20.')
