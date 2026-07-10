@@ -74,8 +74,8 @@ class RecordingHeadlessEffectEngine(_ORIGINAL_HEADLESS_EFFECT_ENGINE):
             )
         return ordered
 
-    async def _prompt_card_selection(self, player_index, cards, prompt_text, placeholder=''):
-        chosen = await super()._prompt_card_selection(player_index, cards, prompt_text, placeholder)
+    async def _prompt_card_selection(self, player_index, cards, prompt_text, placeholder='', *, purpose=''):
+        chosen = await super()._prompt_card_selection(player_index, cards, prompt_text, placeholder, purpose=purpose)
         if _ACTIVE_RECORDER is not None:
             _ACTIVE_RECORDER.record_prompt(
                 'effect_card_select', player_index,
