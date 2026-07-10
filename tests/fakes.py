@@ -276,6 +276,24 @@ class InMemoryGameRecordBackend:
         matching.sort(key=lambda row: (row['saved_at'] is None, row['saved_at']), reverse=True)
         return matching[:limit]
 
+    async def search_finished_games(self, prefix: str = '', limit: int = 25) -> list[dict]:
+        matching = [
+            {
+                'game_id': row['game_id'],
+                'mode': row['mode'],
+                'is_tcg': row['is_tcg'],
+                'best_of': row['best_of'],
+                'status': row['status'],
+                'created_at': row['created_at'],
+                'winner_index': row['winner_index'],
+            }
+            for row in self.games.values()
+            if row['status'] in ('completed', 'quit', 'abandoned')
+            and row['game_id'].startswith(prefix)
+        ]
+        matching.sort(key=lambda row: row['created_at'], reverse=True)
+        return matching[:limit]
+
     def truncate_decision_log(self, game_id: str, keep_first: int) -> None:
         """Test helper: simulate a crash after the first N decisions."""
         log_for_game = self.decisions.get(game_id, {})
