@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from zutomayo.ui.embeds import create_deck_grid_image_off_thread
 import logging
 
 if TYPE_CHECKING:
@@ -28,14 +27,11 @@ async def effect_04_008(
     hand_attributes = {hand_card.card.attribute for hand_card in player.hand}
     hand_card_names = ', '.join(hand_card.card.name for hand_card in player.hand)
 
-    reveal_img = await create_deck_grid_image_off_thread(player.hand, columns=len(player.hand))
-    await engine._send_dm(player_index, content='**Effect (04-008):** Your revealed hand:', file=reveal_img)
-
-    reveal_img = await create_deck_grid_image_off_thread(player.hand, columns=len(player.hand))
-    await engine._send_dm(opponent_index, content=f'**Effect (04-008):** Opponent reveals hand: {hand_card_names}.', file=reveal_img)
-
-    reveal_img = await create_deck_grid_image_off_thread(player.hand, columns=len(player.hand))
-    await engine._send_to_channel(content=f'**Effect (04-008):** Opponent reveals hand: {hand_card_names}.', file=reveal_img)
+    await engine.broadcast_reveal(
+        player_index, player.hand,
+        '**Effect (04-008):** Your revealed hand:',
+        f'**Effect (04-008):** Opponent reveals hand: {hand_card_names}.',
+    )
 
     if len(hand_attributes) >= 4:
         engine.turn_state.attack_bonus[player_index] += 80

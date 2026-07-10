@@ -972,6 +972,46 @@ class EffectEngine:
         await self._send_dm(player_index, content=f'You drew **{count}** {card_word}.')
         await self._send_dm(1 - player_index, content=msg)
 
+    async def broadcast_reveal(
+        self,
+        player_index: int,
+        revealed_cards: list[CardInstance],
+        owner_message: str,
+        opponent_message: str,
+        *,
+        owner_embed: Any = None,
+        channel_message: str | None = None,
+        columns: int | None = None,
+    ) -> None:
+        """
+        Show revealed cards to both players and the channel, in that fixed
+        order: owner DM, opponent DM, channel. channel_message defaults to
+        opponent_message; columns defaults to the number of revealed cards.
+
+        A fresh image is rendered before each send: discord.File is
+        consumed on send, and the regression recorder logs one render
+        event per call, so collapsing the three renders would change
+        transcripts. Rendering resolves through the embeds module
+        attribute at call time so test stubs installed on that module
+        keep applying.
+        """
+        from zutomayo.ui import embeds
+        effective_columns = len(revealed_cards) if columns is None else columns
+        if channel_message is None:
+            channel_message = opponent_message
+        owner_kwargs: dict[str, Any] = {}
+        if owner_embed is not None:
+            owner_kwargs['embed'] = owner_embed
+
+        reveal_image = await embeds.create_deck_grid_image_off_thread(revealed_cards, columns=effective_columns)
+        await self._send_dm(player_index, content=owner_message, **owner_kwargs, file=reveal_image)
+
+        reveal_image = await embeds.create_deck_grid_image_off_thread(revealed_cards, columns=effective_columns)
+        await self._send_dm(1 - player_index, content=opponent_message, file=reveal_image)
+
+        reveal_image = await embeds.create_deck_grid_image_off_thread(revealed_cards, columns=effective_columns)
+        await self._send_to_channel(content=channel_message, file=reveal_image)
+
     async def _prompt_card_selection(
         self,
         player_index: int,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
-from zutomayo.ui.embeds import build_hand_embed, create_deck_grid_image_off_thread
+from zutomayo.ui.embeds import build_hand_embed
 
 if TYPE_CHECKING:
     from zutomayo.effects.effect_engine import EffectEngine
@@ -29,14 +29,13 @@ async def effect_03_045(engine: EffectEngine, game_state: GameState, player_inde
     hand_card_names = ', '.join(c.card.name for c in opponent.hand)
     log.debug('[%s] %s: opponent hand contains: %s', card_instance.card.effect, engine.player_label(player_index), hand_card_names)
 
-    reveal_img = await create_deck_grid_image_off_thread(opponent.hand, columns=len(opponent.hand))
-    await engine._send_dm(player_index, content='**Effect (03-045):** Opponent\'s hand revealed!', embed=embed, file=reveal_img)
-
-    reveal_img = await create_deck_grid_image_off_thread(opponent.hand, columns=len(opponent.hand))
-    await engine._send_dm(opponent_index, content=f'**Effect (03-045):** Your hand has been revealed: {hand_card_names}.', file=reveal_img)
-
-    reveal_img = await create_deck_grid_image_off_thread(opponent.hand, columns=len(opponent.hand))
-    await engine._send_to_channel(content=f"**Effect (03-045):** Opponent's hand revealed: {hand_card_names}.", file=reveal_img)
+    await engine.broadcast_reveal(
+        player_index, opponent.hand,
+        '**Effect (03-045):** Opponent\'s hand revealed!',
+        f'**Effect (03-045):** Your hand has been revealed: {hand_card_names}.',
+        owner_embed=embed,
+        channel_message=f"**Effect (03-045):** Opponent's hand revealed: {hand_card_names}.",
+    )
 
     # Shuffle the revealed hand so the caster cannot carry positional knowledge into a
     # later blind-pick effect (03-047/059/094/105, 04-035/057). Mirrors the hand owner
