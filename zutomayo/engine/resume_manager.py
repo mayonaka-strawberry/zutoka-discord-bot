@@ -86,7 +86,10 @@ async def resume_game(
 
     # The flow's runtime factory installed the right adapters; now switch the
     # broker into replay mode and mute all output until the log is exhausted.
-    session.persistence = GameRecordStore.attach_for_resume(game_id)
+    from zutomayo.engine.game_persistence import next_event_index
+
+    session.persistence = GameRecordStore.attach_for_resume(game_id, session)
+    session.persistence.next_event_index = await next_event_index(game_id)
     session.broker.persistence = session.persistence
     session.broker.replay_log = await load_decision_log(game_id)
     session.broker.replaying = True
@@ -216,10 +219,13 @@ async def _announce_divergence(session: GameSession) -> None:
 
 def _make_go_live_callback(session: GameSession, announcement: str = RESUME_ANNOUNCEMENT):
     async def go_live() -> None:
+        from zutomayo.engine.game_events import EVENT_GAME_RESUMED
         from zutomayo.enums.chronos import Chronos
         from zutomayo.ui.board_renderer import render_board_image_off_thread
 
         session.transport.muted = False
+        if session.persistence is not None:
+            session.persistence.emit_event(EVENT_GAME_RESUMED, {'channel_id': session.channel_id})
         try:
             game_state = session.game_state
             if game_state is not None:

@@ -204,6 +204,47 @@ class PostgresGameRecordBackend:
             for row in rows
         ]
 
+    async def insert_events(self, game_id: str, events: list[dict[str, Any]]) -> None:
+        from zutomayo.data.database import get_pool
+
+        async with get_pool().acquire() as connection:
+            await connection.executemany(
+                '''
+                INSERT INTO game_events (game_id, event_index, match_number, turn, phase, event_type, payload)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (game_id, event_index) DO NOTHING
+                ''',
+                [
+                    (
+                        game_id, event['event_index'], event['match_number'],
+                        event['turn'], event['phase'], event['event_type'], event['payload'],
+                    )
+                    for event in events
+                ],
+            )
+
+    async def next_event_index(self, game_id: str) -> int:
+        from zutomayo.data.database import get_pool
+
+        async with get_pool().acquire() as connection:
+            return await connection.fetchval(
+                'SELECT COALESCE(MAX(event_index), -1) + 1 FROM game_events WHERE game_id = $1',
+                game_id,
+            )
+
+    async def load_events(self, game_id: str) -> list[dict[str, Any]]:
+        from zutomayo.data.database import get_pool
+
+        async with get_pool().acquire() as connection:
+            rows = await connection.fetch(
+                '''
+                SELECT event_index, match_number, turn, phase, event_type, payload
+                FROM game_events WHERE game_id = $1 ORDER BY event_index
+                ''',
+                game_id,
+            )
+        return [dict(row) for row in rows]
+
     async def list_game_ids_with_status(self, status: str) -> list[str]:
         from zutomayo.data.database import get_pool
 
@@ -230,8 +271,21 @@ backend = PostgresGameRecordBackend()
 
 
 class GameRecordStore:
-    def __init__(self, game_id: str) -> None:
+    def __init__(self, game_id: str, session: Optional['GameSession'] = None) -> None:
         self.game_id = game_id
+        # Used only to suppress event recording during replay (the replayed
+        # portion was already recorded live before the crash or save).
+        self.session = session
+
+        # Event stream state. emit_event is a synchronous enqueue; the buffer
+        # drains at every decision append and status transition, so a game
+        # always flushes at its end and at most the events since the last
+        # decision can be lost in a hard crash.
+        self.event_buffer: list[dict[str, Any]] = []
+        self.next_event_index = 0
+        self.current_match_number: Optional[int] = 1
+        self.current_turn: Optional[int] = None
+        self.current_phase: Optional[str] = None
 
     @classmethod
     async def create_for_session(
@@ -243,12 +297,65 @@ class GameRecordStore:
         """Insert the game record for a freshly initialized match and return the handle."""
         manifest = build_manifest(session, mode, extra_fields)
         await backend.insert_game(manifest)
-        return cls(session.game_id)
+        return cls(session.game_id, session)
 
     @classmethod
-    def attach_for_resume(cls, game_id: str) -> 'GameRecordStore':
-        """Attach to an existing game record; new decisions append to the same log."""
-        return cls(game_id)
+    def attach_for_resume(cls, game_id: str, session: Optional['GameSession'] = None) -> 'GameRecordStore':
+        """Attach to an existing game record; new decisions append to the same
+        log. The caller must seed next_event_index (see next_event_index())
+        so event numbering continues where the record left off."""
+        return cls(game_id, session)
+
+    def _replaying(self) -> bool:
+        return (
+            self.session is not None
+            and self.session.broker is not None
+            and self.session.broker.replaying
+        )
+
+    def emit_event(
+        self,
+        event_type: str,
+        payload: dict[str, Any],
+        *,
+        match_number: Optional[int] = None,
+        turn: Optional[int] = None,
+        phase: Optional[str] = None,
+    ) -> None:
+        """
+        Enqueue one event. Observation-only and synchronous: never reads the
+        session RNG, never mutates game state, and is suppressed during
+        replay. Context columns default to the last seen values so mid-phase
+        emitters (the effect engine) need not thread them through.
+        """
+        if self._replaying():
+            return
+        if match_number is not None:
+            self.current_match_number = match_number
+        if turn is not None:
+            self.current_turn = turn
+        if phase is not None:
+            self.current_phase = phase
+        self.event_buffer.append({
+            'event_index': self.next_event_index,
+            'match_number': self.current_match_number,
+            'turn': self.current_turn,
+            'phase': self.current_phase,
+            'event_type': event_type,
+            'payload': payload,
+        })
+        self.next_event_index += 1
+
+    async def flush_events(self) -> None:
+        if not self.event_buffer:
+            return
+        pending, self.event_buffer = self.event_buffer, []
+        try:
+            await backend.insert_events(self.game_id, pending)
+        except Exception:
+            # Keep the events queued for the next flush point.
+            self.event_buffer = pending + self.event_buffer
+            log.exception('Failed to flush %d event(s) for game %s', len(pending), self.game_id)
 
     async def append_decision(self, request: DecisionRequest, response: DecisionResponse) -> None:
         record = {
@@ -259,6 +366,11 @@ class GameRecordStore:
         }
         await backend.insert_decision(self.game_id, record)
 
+        from zutomayo.engine.game_events import EVENT_DECISION_MADE, describe_decision
+
+        self.emit_event(EVENT_DECISION_MADE, describe_decision(request, response))
+        await self.flush_events()
+
     async def set_status(
         self,
         status: str,
@@ -267,6 +379,7 @@ class GameRecordStore:
         result_summary: Optional[dict] = None,
         channel_id: Optional[int] = None,
     ) -> None:
+        await self.flush_events()
         await backend.update_status(
             self.game_id, status,
             winner_index=winner_index, result_summary=result_summary, channel_id=channel_id,
@@ -297,3 +410,11 @@ async def load_decision_log(game_id: str) -> dict[int, tuple[dict, DecisionRespo
 
 async def list_game_ids_with_status(status: str) -> list[str]:
     return await backend.list_game_ids_with_status(status)
+
+
+async def next_event_index(game_id: str) -> int:
+    return await backend.next_event_index(game_id)
+
+
+async def load_events(game_id: str) -> list[dict[str, Any]]:
+    return await backend.load_events(game_id)

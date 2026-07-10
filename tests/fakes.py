@@ -230,6 +230,23 @@ class InMemoryGameRecordBackend:
             for sequence_number in sorted(log_for_game)
         ]
 
+    async def insert_events(self, game_id: str, events: list[dict]) -> None:
+        stored = self.events.setdefault(game_id, [])
+        existing_indices = {event['event_index'] for event in stored}
+        for event in events:
+            if event['event_index'] not in existing_indices:
+                stored.append(copy.deepcopy(event))
+        stored.sort(key=lambda event: event['event_index'])
+
+    async def next_event_index(self, game_id: str) -> int:
+        stored = self.events.get(game_id, [])
+        if not stored:
+            return 0
+        return stored[-1]['event_index'] + 1
+
+    async def load_events(self, game_id: str) -> list[dict]:
+        return [copy.deepcopy(event) for event in self.events.get(game_id, [])]
+
     async def list_game_ids_with_status(self, status: str) -> list[str]:
         rows = [row for row in self.games.values() if row['status'] == status]
         rows.sort(key=lambda row: row['created_at'])

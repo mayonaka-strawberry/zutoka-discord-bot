@@ -497,11 +497,13 @@ class EffectEngine:
         )
 
         if len(eligible) == 1:
+            self._record_effect_order(player_index, 'single', eligible)
             dispatched = await self._dispatch_with_cost_check(game_state, player_index, eligible[0])
             if dispatched:
                 result.resolved.append(eligible[0])
             else:
                 result.skipped_cost.append(eligible[0])
+            self._record_effect_resolution(player_index, 0, eligible[0], dispatched)
             return result
 
         # 2+ eligible effects — let the player choose order
@@ -510,8 +512,9 @@ class EffectEngine:
             '%s: resolution order: %s', self.player_label(player_index),
             ', '.join(f'{ci.card.effect} ({ci.card.name})' for ci in ordered),
         )
+        self._record_effect_order(player_index, 'player_choice', ordered)
 
-        for card_instance in ordered:
+        for order_index, card_instance in enumerate(ordered):
             # Q&A rule: game ends immediately when HP reaches 0
             if any(p.hp <= 0 for p in game_state.players):
                 log.debug('%s: HP reached 0, stopping effect resolution', self.player_label(player_index))
@@ -521,8 +524,48 @@ class EffectEngine:
                 result.resolved.append(card_instance)
             else:
                 result.skipped_cost.append(card_instance)
+            self._record_effect_resolution(player_index, order_index, card_instance, dispatched)
 
         return result
+
+    def _event_record_store(self):
+        """The session's game record store, or None in headless environments.
+        Recording is observation-only; the store suppresses itself during replay."""
+        if self.session is None:
+            return None
+        return getattr(self.session, 'persistence', None)
+
+    def _record_effect_order(self, player_index: int, source: str, ordered: list[CardInstance]) -> None:
+        record_store = self._event_record_store()
+        if record_store is None:
+            return
+        from zutomayo.engine.game_events import EVENT_EFFECT_ORDER_CHOSEN, describe_card_instance
+
+        record_store.emit_event(EVENT_EFFECT_ORDER_CHOSEN, {
+            'player_index': player_index,
+            'source': source,
+            'ordered': [describe_card_instance(card_instance) for card_instance in ordered],
+        })
+
+    def _record_effect_resolution(
+        self, player_index: int, order_index: int, card_instance: CardInstance, dispatched: bool,
+    ) -> None:
+        record_store = self._event_record_store()
+        if record_store is None:
+            return
+        from zutomayo.engine.game_events import (
+            EVENT_EFFECT_RESOLVED,
+            EVENT_EFFECT_SKIPPED_COST,
+            describe_card_instance,
+        )
+
+        payload = describe_card_instance(card_instance)
+        payload['player_index'] = player_index
+        payload['order_index'] = order_index
+        payload['dispatched'] = dispatched
+        record_store.emit_event(
+            EVENT_EFFECT_RESOLVED if dispatched else EVENT_EFFECT_SKIPPED_COST, payload,
+        )
 
     def get_effective_attack(self, game_state: GameState, player: Player) -> int:
         """
