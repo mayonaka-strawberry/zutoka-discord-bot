@@ -710,6 +710,84 @@ class GameCog(commands.Cog):
         )
 
     @group.command(
+        name='summary',
+        description='Show a full summary of a finished game: moves, phases, hands, and results',
+    )
+    @app_commands.describe(game_id='The finished game to summarize (search by game ID)')
+    async def game_summary(self, interaction: discord.Interaction, game_id: str) -> None:
+        from zutomayo.data.deck_validator import get_card_index
+        from zutomayo.engine.game_persistence import (
+            SUMMARY_ELIGIBLE_STATUSES,
+            get_game_row,
+            load_events,
+        )
+        from zutomayo.ui.game_summary_view import GameSummaryView, build_game_summary
+
+        row = await get_game_row(game_id)
+        if row is None or row['status'] not in SUMMARY_ELIGIBLE_STATUSES:
+            await interaction.response.send_message(
+                f'Game `{game_id}` was not found or is not finished yet. '
+                'Summaries are available for completed, quit, or abandoned games.',
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer()
+
+        manifest = row.get('manifest') or {}
+        player_ids = manifest.get('player_discord_ids', [])
+        human_ids = [player_id for player_id, _ in player_ids if player_id != 0]
+        await ensure_display_names(self.bot, human_ids)
+
+        from zutomayo.data.name_storage import resolve_display_name
+        from zutomayo.engine.bot_agent import BOT_NAME
+
+        player_names = {
+            index: (BOT_NAME if player_id == 0 else resolve_display_name(self.bot, player_id))
+            for player_id, index in player_ids
+        }
+
+        events = await load_events(game_id)
+        _, card_index = get_card_index()
+        summary = build_game_summary(row, player_names, events, card_index)
+        if not summary.pages:
+            await interaction.followup.send(
+                f'No summary data is recorded for game `{game_id}`.',
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            return
+
+        view = GameSummaryView(game_id, summary)
+        view.message = await interaction.followup.send(
+            embed=view.build_embed(),
+            view=view,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @game_summary.autocomplete('game_id')
+    async def game_summary_autocomplete(
+        self, interaction: discord.Interaction, current: str,
+    ) -> list[app_commands.Choice[str]]:
+        try:
+            from zutomayo.engine.game_persistence import search_finished_games
+
+            choices = []
+            for row in await search_finished_games(current):
+                if row['is_tcg']:
+                    mode_label = f'TCG best of {row["best_of"]}'
+                else:
+                    mode_label = row['mode']
+                played_date = row['created_at'].date().isoformat() if row['created_at'] else ''
+                choices.append(app_commands.Choice(
+                    name=f'{row["game_id"]} ({mode_label}, {row["status"]}, {played_date})'[:100],
+                    value=row['game_id'],
+                ))
+            return choices[:25]
+        except Exception:
+            log.exception('summary autocomplete failed')
+            return []
+
+    @group.command(
         name='profilestats',
         description='Show your own ZUTOMAYO CARD player profile (Elo, win/loss, top decks, top rivals)',
     )

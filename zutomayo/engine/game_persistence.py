@@ -282,6 +282,23 @@ class PostgresGameRecordBackend:
             )
         return [dict(row) for row in rows]
 
+    async def search_finished_games(self, prefix: str = '', limit: int = 25) -> list[dict[str, Any]]:
+        from zutomayo.data.database import get_pool
+
+        async with get_pool().acquire() as connection:
+            rows = await connection.fetch(
+                '''
+                SELECT game_id, mode, is_tcg, best_of, status, created_at, winner_index
+                FROM games
+                WHERE status IN ('completed', 'quit', 'abandoned')
+                  AND game_id LIKE $1 || '%'
+                ORDER BY created_at DESC
+                LIMIT $2
+                ''',
+                prefix, limit,
+            )
+        return [dict(row) for row in rows]
+
 
 backend = PostgresGameRecordBackend()
 
@@ -445,6 +462,10 @@ async def list_saved_games_for_player(
     discord_id: int, prefix: str = '', limit: int = 25,
 ) -> list[dict[str, Any]]:
     return await backend.list_saved_games_for_player(discord_id, prefix, limit)
+
+
+async def search_finished_games(prefix: str = '', limit: int = 25) -> list[dict[str, Any]]:
+    return await backend.search_finished_games(prefix, limit)
 
 
 async def load_events(game_id: str) -> list[dict[str, Any]]:
