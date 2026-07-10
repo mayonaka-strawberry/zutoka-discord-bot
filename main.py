@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from discord.ext import commands
 
 from zutomayo.data import database
+from zutomayo.data import name_storage
 
 
 load_dotenv()
@@ -22,6 +23,7 @@ class ZutokaBot(commands.Bot):
         # the failure to the first command.
         await database.initialize_pool()
         await database.apply_schema()
+        await name_storage.load_display_name_cache()
         await self.load_extension('zutomayo.cogs.game_cog')
 
 

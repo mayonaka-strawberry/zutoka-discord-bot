@@ -117,10 +117,14 @@ def _install_patches(temporary_data_directory: Path) -> None:
     # persistence from tests.
     import zutomayo.engine.game_persistence as game_persistence_module
 
-    player_storage_module.PLAYERS_DIRECTORY = temporary_data_directory / 'players'
-    name_storage_module.USERNAMES_FILE = temporary_data_directory / 'players' / 'usernames.json'
-    if hasattr(name_storage_module, '_names_cache'):
-        name_storage_module._names_cache = None
+    from tests.fakes import InMemoryNameBackend, InMemoryProfileBackend
+
+    profile_backend = InMemoryProfileBackend()
+    name_backend = InMemoryNameBackend()
+    name_backend.profile_backend = profile_backend
+    player_storage_module.backend = profile_backend
+    name_storage_module.backend = name_backend
+    name_storage_module._names_cache = None
     game_persistence_module.ACTIVE_GAMES_DIRECTORY = temporary_data_directory / 'active_games'
 
     # Digest hooks: GameSession resolves TurnManager from its module namespace.

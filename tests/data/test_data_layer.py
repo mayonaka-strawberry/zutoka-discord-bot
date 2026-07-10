@@ -10,6 +10,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
+import asyncio  # noqa: E402
 import random  # noqa: E402
 
 import pytest  # noqa: E402
@@ -176,12 +177,15 @@ class TestValidators:
 
 
 class TestPlayerStorage:
-    def test_standard_pvp_match_moves_elo_and_stats(self):
+    def test_standard_pvp_match_moves_elo_and_stats(self, install_in_memory_backends):
         from zutomayo.data.player_storage import load_profile, record_match_result
 
-        record_match_result(111, 222, 'Alpha', None, 0, mode='standard', is_solo=False)
-        winner = load_profile(111)
-        loser = load_profile(222)
+        async def run():
+            await record_match_result(111, 222, 'Alpha', None, 0,
+                                      mode='standard', is_solo=False, game_id='20260710-00000')
+            return await load_profile(111), await load_profile(222)
+
+        winner, loser = asyncio.run(run())
         assert winner['stats']['standard']['wins'] == 1
         assert loser['stats']['standard']['losses'] == 1
         assert winner['elo'] > 1000 > loser['elo']
@@ -191,76 +195,140 @@ class TestPlayerStorage:
         assert loser['deck_stats']['standard']['<random>']['pvp']['losses'] == 1
         assert winner['opponent_stats']['222']['wins'] == 1
 
+        history = install_in_memory_backends['profiles'].elo_history
+        assert len(history) == 2
+        assert {row['user_id'] for row in history} == {111, 222}
+        assert all(row['ladder'] == 'standard' for row in history)
+        assert all(row['game_id'] == '20260710-00000' for row in history)
+        winner_row = next(row for row in history if row['user_id'] == 111)
+        assert winner_row['elo_before'] == 1000 and winner_row['elo_after'] == winner['elo']
+
+    def test_elo_history_is_skipped_without_a_game_id(self, install_in_memory_backends):
+        from zutomayo.data.player_storage import record_match_result
+
+        asyncio.run(record_match_result(111, 222, None, None, 0, mode='standard', is_solo=False))
+        assert install_in_memory_backends['profiles'].elo_history == []
+
     def test_draws_split_the_elo_score(self):
         from zutomayo.data.player_storage import load_profile, record_match_result
 
-        record_match_result(111, 222, None, None, None, mode='standard', is_solo=False)
-        assert load_profile(111)['elo'] == 1000 and load_profile(222)['elo'] == 1000
-        assert load_profile(111)['stats']['standard']['draws'] == 1
+        async def run():
+            await record_match_result(111, 222, None, None, None, mode='standard', is_solo=False)
+            return await load_profile(111), await load_profile(222)
+
+        profile_zero, profile_one = asyncio.run(run())
+        assert profile_zero['elo'] == 1000 and profile_one['elo'] == 1000
+        assert profile_zero['stats']['standard']['draws'] == 1
 
     def test_tcg_match_does_not_move_standard_elo(self):
         from zutomayo.data.player_storage import load_profile, record_match_result
 
-        record_match_result(111, 222, None, None, 0, mode='tcg_match', is_solo=False)
-        assert load_profile(111)['elo'] == 1000
-        assert load_profile(111)['stats']['tcg_match']['wins'] == 1
+        async def run():
+            await record_match_result(111, 222, None, None, 0, mode='tcg_match', is_solo=False)
+            return await load_profile(111)
 
-    def test_solo_match_updates_only_the_human(self):
+        profile = asyncio.run(run())
+        assert profile['elo'] == 1000
+        assert profile['stats']['tcg_match']['wins'] == 1
+
+    def test_solo_match_updates_only_the_human(self, install_in_memory_backends):
         from zutomayo.data.player_storage import BOT_DISCORD_ID, load_profile, record_match_result
 
-        record_match_result(111, BOT_DISCORD_ID, 'Alpha', '<bot>', 0,
-                            mode='standard', is_solo=True, solo_difficulty='easy')
-        human = load_profile(111)
+        async def run():
+            await record_match_result(111, BOT_DISCORD_ID, 'Alpha', '<bot>', 0,
+                                      mode='standard', is_solo=True, solo_difficulty='easy',
+                                      game_id='20260710-00001')
+            return await load_profile(111)
+
+        human = asyncio.run(run())
         assert human['stats']['solo_easy']['wins'] == 1
         assert human['elo'] == 1000, 'solo games never move Elo'
         assert human['deck_stats']['standard']['Alpha']['solo']['wins'] == 1
+        assert install_in_memory_backends['profiles'].elo_history == [], 'solo games write no elo history'
 
-    def test_tcg_series_moves_the_parallel_ladder(self):
+    def test_tcg_series_moves_the_parallel_ladder(self, install_in_memory_backends):
         from zutomayo.data.player_storage import load_profile, record_tcg_series
 
-        record_tcg_series(111, 222, {0: 2, 1: 1})
-        winner = load_profile(111)
-        loser = load_profile(222)
+        async def run():
+            await record_tcg_series(111, 222, {0: 2, 1: 1}, game_id='20260710-00002')
+            return await load_profile(111), await load_profile(222)
+
+        winner, loser = asyncio.run(run())
         assert winner['stats']['tcg_series']['wins'] == 1
         assert winner['tcg_elo'] > 1000 > loser['tcg_elo']
         assert winner['elo'] == 1000, 'the standard ladder is untouched'
 
+        history = install_in_memory_backends['profiles'].elo_history
+        assert len(history) == 2 and all(row['ladder'] == 'tcg' for row in history)
+
     def test_tcg_series_skips_bot_and_ties(self):
         from zutomayo.data.player_storage import BOT_DISCORD_ID, load_profile, record_tcg_series
 
-        record_tcg_series(111, BOT_DISCORD_ID, {0: 2, 1: 0})
-        assert load_profile(111)['stats']['tcg_series']['wins'] == 0
+        async def run():
+            await record_tcg_series(111, BOT_DISCORD_ID, {0: 2, 1: 0})
+            await record_tcg_series(111, 222, {0: 1, 1: 1})
+            return await load_profile(111)
 
-        record_tcg_series(111, 222, {0: 1, 1: 1})
-        assert load_profile(111)['stats']['tcg_series']['wins'] == 0
+        profile = asyncio.run(run())
+        assert profile['stats']['tcg_series']['wins'] == 0
 
     def test_record_forfeit(self):
         from zutomayo.data.player_storage import load_profile, record_forfeit
 
-        record_forfeit(111, 222)
-        assert load_profile(111)['stats']['forfeits_given'] == 1
-        assert load_profile(222)['stats']['forfeits_received'] == 1
+        async def run():
+            await record_forfeit(111, 222)
+            await record_forfeit(111, None)
+            return await load_profile(111), await load_profile(222)
 
-        record_forfeit(111, None)
-        assert load_profile(111)['stats']['forfeits_given'] == 2
+        quitter, opponent = asyncio.run(run())
+        assert quitter['stats']['forfeits_given'] == 2
+        assert opponent['stats']['forfeits_received'] == 1
+
+    def test_list_ranked_profiles_orders_and_filters(self):
+        from zutomayo.data.player_storage import list_ranked_profiles, record_match_result
+
+        async def run():
+            await record_match_result(111, 222, None, None, 0, mode='standard', is_solo=False)
+            return await list_ranked_profiles(minimum_games=1)
+
+        ranked = asyncio.run(run())
+        assert [profile['user_id'] for profile in ranked] == [111, 222]
+        assert ranked[0]['elo'] > ranked[1]['elo']
 
 
 class TestNameStorage:
-    def test_remember_resolve_and_custom_names(self):
+    def test_remember_resolve_and_custom_names(self, install_in_memory_backends):
         from zutomayo.data import name_storage
 
-        name_storage.remember_user(5, 'Alpha')
-        assert name_storage.get_stored_display_name(5) == 'Alpha'
-        assert name_storage.resolve_display_name(None, 5) == 'Alpha'
+        async def run():
+            name_storage.remember_user(5, 'Alpha')
+            assert name_storage.get_stored_display_name(5) == 'Alpha'
+            assert name_storage.resolve_display_name(None, 5) == 'Alpha'
 
-        # Custom names survive automatic capture.
-        name_storage.set_custom_name(5, 'CustomName')
-        name_storage.remember_user(5, 'SomethingElse')
-        assert name_storage.resolve_display_name(None, 5) == 'CustomName'
+            # Custom names survive automatic capture.
+            await name_storage.set_custom_name(5, 'CustomName')
+            name_storage.remember_user(5, 'SomethingElse')
+            assert name_storage.resolve_display_name(None, 5) == 'CustomName'
 
-        name_storage.clear_custom_name(5)
-        name_storage.remember_user(5, 'Fresh')
-        assert name_storage.resolve_display_name(None, 5) == 'Fresh'
+            await name_storage.clear_custom_name(5)
+            name_storage.remember_user(5, 'Fresh')
+            assert name_storage.resolve_display_name(None, 5) == 'Fresh'
+            # Give the fire-and-forget persist tasks one loop tick to flush.
+            await asyncio.sleep(0)
+
+        asyncio.run(run())
+        # remember_user persists through the backend when a loop is running.
+        assert install_in_memory_backends['names'].names['5'] == {'name': 'Fresh', 'custom': False}
+
+    def test_cache_reload_reflects_backend_contents(self, install_in_memory_backends):
+        from zutomayo.data import name_storage
+
+        async def run():
+            await install_in_memory_backends['names'].upsert(9, 'Stored', False)
+            await name_storage.load_display_name_cache()
+            return name_storage.get_stored_display_name(9)
+
+        assert asyncio.run(run()) == 'Stored'
 
     def test_unknown_user_falls_back_to_id_suffix(self):
         from zutomayo.data import name_storage

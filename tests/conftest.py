@@ -8,18 +8,25 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def isolate_player_data(tmp_path, monkeypatch):
+def install_in_memory_backends(monkeypatch):
     """
-    Keep every test away from the live player profiles and username cache.
-    (The standalone regression harnesses do their own equivalent patching.)
+    Swap every storage backend for an in-memory fake so tests never touch
+    PostgreSQL (or live data). The fakes are returned for assertions.
     """
     import zutomayo.data.name_storage as name_storage_module
     import zutomayo.data.player_storage as player_storage_module
 
-    monkeypatch.setattr(player_storage_module, 'PLAYERS_DIRECTORY', tmp_path / 'players')
-    monkeypatch.setattr(name_storage_module, 'PLAYERS_DIRECTORY', tmp_path / 'players')
-    monkeypatch.setattr(name_storage_module, 'USERNAMES_FILE', tmp_path / 'players' / 'usernames.json')
+    from tests.fakes import InMemoryNameBackend, InMemoryProfileBackend
+
+    profile_backend = InMemoryProfileBackend()
+    name_backend = InMemoryNameBackend()
+    name_backend.profile_backend = profile_backend
+
+    monkeypatch.setattr(player_storage_module, 'backend', profile_backend)
+    monkeypatch.setattr(name_storage_module, 'backend', name_backend)
     monkeypatch.setattr(name_storage_module, '_names_cache', None)
+
+    return {'profiles': profile_backend, 'names': name_backend}
 
 
 @pytest.fixture

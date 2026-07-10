@@ -112,7 +112,7 @@ class TcgMatchFlow:
 
             # Announce series winner
             await self._announce_series_result(session, names, wins)
-            self._record_series_stats(session, wins)
+            await self._record_series_stats(session, wins)
             session_manager.remove_game(session.game_id)
 
         except ResumeDivergenceError:
@@ -136,7 +136,7 @@ class TcgMatchFlow:
                     break
         return chosen
 
-    def _record_series_stats(self, session: GameSession, wins: dict[int, int]) -> None:
+    async def _record_series_stats(self, session: GameSession, wins: dict[int, int]) -> None:
         """Persist series-level tcg_series win/loss into both player profiles. Per-match Elo and
         per-match stats were already written during the series by GameFlow._end_game.
         """
@@ -151,7 +151,7 @@ class TcgMatchFlow:
             player_one_id = session.get_discord_id(1)
             if player_zero_id is None or player_one_id is None:
                 return
-            record_tcg_series(player_zero_id, player_one_id, wins)
+            await record_tcg_series(player_zero_id, player_one_id, wins, game_id=session.game_id)
         except Exception:
             log.exception('Failed to record TCG series stats for game %s', session.game_id)
 

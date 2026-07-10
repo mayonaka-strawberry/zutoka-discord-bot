@@ -11,9 +11,8 @@ from zutomayo.data.name_storage import (
     set_custom_name,
 )
 from zutomayo.data.player_storage import (
-    BOT_DISCORD_ID,
-    iter_all_profiles,
     load_profile,
+    list_ranked_profiles,
 )
 from zutomayo.engine.game_session import session_manager
 from zutomayo.ui.player_embeds import (
@@ -217,7 +216,7 @@ class GameCog(commands.Cog):
         if session.game_task and not session.game_task.done():
             session.game_task.cancel()
 
-        self._record_forfeit_for_session(session, interaction.user.id)
+        await self._record_forfeit_for_session(session, interaction.user.id)
         session_manager.remove_game(game_id)
         log.info('Game %s ended by %s (end command)', game_id, interaction.user)
         await interaction.response.send_message(
@@ -453,7 +452,7 @@ class GameCog(commands.Cog):
         if session.game_task and not session.game_task.done():
             session.game_task.cancel()
 
-        self._record_forfeit_for_session(session, interaction.user.id)
+        await self._record_forfeit_for_session(session, interaction.user.id)
         session_manager.remove_game(session.game_id)
         log.info('Game %s ended by %s (quit command)', session.game_id, interaction.user)
         await interaction.response.send_message(
@@ -467,7 +466,7 @@ class GameCog(commands.Cog):
     @app_commands.describe(name=f'Your new display name (max {MAXIMUM_CUSTOM_NAME_LENGTH} characters)')
     async def edit_name(self, interaction: discord.Interaction, name: str | None = None) -> None:
         if name is None or not name.strip():
-            clear_custom_name(interaction.user.id)
+            await clear_custom_name(interaction.user.id)
             remember_user(interaction.user.id, interaction.user.global_name or interaction.user.name)
             await interaction.response.send_message(
                 'Your display name now follows your Discord name again.', ephemeral=True,
@@ -481,7 +480,7 @@ class GameCog(commands.Cog):
             )
             return
 
-        set_custom_name(interaction.user.id, name)
+        await set_custom_name(interaction.user.id, name)
         await interaction.response.send_message(
             f'Your display name is now **{name}**.', ephemeral=True,
         )
@@ -492,7 +491,7 @@ class GameCog(commands.Cog):
     )
     async def profile_stats(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
-        profile = load_profile(interaction.user.id)
+        profile = await load_profile(interaction.user.id)
         rival_ids = [
             int(opponent_id_str)
             for opponent_id_str in profile.get('opponent_stats', {})
@@ -544,12 +543,11 @@ class GameCog(commands.Cog):
     )
     async def leaderboard(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
-        ranked_rows = [
-            profile for profile in iter_all_profiles()
-            if profile.get('elo_games', 0) >= LEADERBOARD_MINIMUM_GAMES
-            and profile.get('user_id') != BOT_DISCORD_ID
-        ]
-        ranked_rows.sort(key=lambda profile: profile.get('elo', 1000), reverse=True)
+        ranked_rows = await list_ranked_profiles(
+            rating_field='elo',
+            games_field='elo_games',
+            minimum_games=LEADERBOARD_MINIMUM_GAMES,
+        )
         await self._send_leaderboard(interaction, ranked_rows)
 
     @group.command(
@@ -558,12 +556,11 @@ class GameCog(commands.Cog):
     )
     async def leaderboard_tcg(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
-        ranked_rows = [
-            profile for profile in iter_all_profiles()
-            if profile.get('tcg_elo_games', 0) >= LEADERBOARD_MINIMUM_GAMES
-            and profile.get('user_id') != BOT_DISCORD_ID
-        ]
-        ranked_rows.sort(key=lambda profile: profile.get('tcg_elo', 1000), reverse=True)
+        ranked_rows = await list_ranked_profiles(
+            rating_field='tcg_elo',
+            games_field='tcg_elo_games',
+            minimum_games=LEADERBOARD_MINIMUM_GAMES,
+        )
         await self._send_leaderboard(
             interaction,
             ranked_rows,
@@ -575,7 +572,7 @@ class GameCog(commands.Cog):
         )
 
     @staticmethod
-    def _record_forfeit_for_session(session, quitter_id: int) -> None:
+    async def _record_forfeit_for_session(session, quitter_id: int) -> None:
         """Record a forfeit_given for the quitter and forfeit_received for the human opponent (if any).
         Storage errors are logged and swallowed so the quit/end command stays responsive.
         """
@@ -587,7 +584,7 @@ class GameCog(commands.Cog):
                 if discord_id != quitter_id and discord_id != BOT_DISCORD_ID:
                     opponent_id = discord_id
                     break
-            record_forfeit(quitter_id, opponent_id)
+            await record_forfeit(quitter_id, opponent_id)
         except Exception:
             log.exception('Failed to record forfeit for game %s', session.game_id)
 
