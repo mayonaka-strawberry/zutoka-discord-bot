@@ -757,13 +757,13 @@ class GameFlow:
         await self._send_to_channel(session, embed=embed)
         await self._send_to_both(session, embed=embed)
 
-        self._record_match_stats(session)
+        await self._record_match_stats(session)
 
         if remove_session:
             from zutomayo.engine.game_session import session_manager
             session_manager.remove_game(session.game_id)
 
-    def _record_match_stats(self, session: GameSession) -> None:
+    async def _record_match_stats(self, session: GameSession) -> None:
         """
         Persist the just-finished match into player profiles.
 
@@ -797,7 +797,7 @@ class GameFlow:
                 return
 
             mode = 'tcg_match' if session.is_tcg else 'standard'
-            record_match_result(
+            await record_match_result(
                 player_zero_id,
                 player_one_id,
                 session.player_deck_names.get(0),
@@ -806,6 +806,7 @@ class GameFlow:
                 mode=mode,
                 is_solo=session.is_solo,
                 solo_difficulty=session.solo_difficulty,
+                game_id=session.game_id,
             )
         except Exception:
             log.exception('Failed to record match stats for game %s', session.game_id)
