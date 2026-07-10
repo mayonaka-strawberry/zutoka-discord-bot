@@ -51,9 +51,21 @@ leaderboard, profilestats, editname, end, quit, ranksongs).
   - `turn_manager.py`: mechanical rules (chronos, swaps, battle, end turn).
   - `bot_agent.py` + `rl_model_v2.py` + `uniguri_env_v2.py`: the solo
     opponent (メカうにぐり), driven by trained V2 PyTorch checkpoints.
-- `zutomayo/effects/` — `effect_engine.py` (effect collection, ordering, cost
-  gate, area-enchant removal rules, end-of-turn processing) and
-  `effects/cards/effect_XX_YYY.py`, one module per card effect (252 handlers).
+- `zutomayo/effects/` — three layers:
+  - `effect_engine.py`: effect collection and ordering, the cost gate
+    (`is_effect_affordable`), the declarative `_AREA_ENCHANT_REMOVAL_RULES`
+    table, end-of-turn processing, and the state-mutation primitives every
+    handler routes through (`deal_damage`, `heal`, `lose_game`,
+    `place_in_abyss`, `place_in_power_charger`, `return_to_deck_bottom`,
+    `return_to_deck_top`, `mill_deck_top_to_abyss`, `broadcast_reveal`).
+  - `card_effect_helpers.py`: shared effect templates (attribute/day-night
+    buffs, zone scans, reveal and hand-placement flows) plus the narration
+    builders `announce_effect_outcome` / `announce_effect_fizzle` that give
+    all packs one player-facing message grammar.
+  - `effects/cards/effect_XX_YYY.py`: one module per card effect (250
+    modules, 247 registered handlers — 02-005/02-007/02-062 live inside the
+    engine). Cards that share a shape are thin wrappers over a template;
+    cards with unique text keep bespoke handlers.
 - `zutomayo/data/` — card catalog loading (cached), deck persistence
   (`deck_repository.py` serves both the standard and TCG formats), validators,
   player profiles and Elo, display-name storage, gacha.
@@ -75,7 +87,9 @@ python tests/run_flow_regression.py compare      # Tier B: full flow matches (2-
 ```
 
 Baselines live in `tests/baselines/` as gzip JSONL transcripts. Regenerate
-with `write` instead of `compare` only when a behavior change is intended.
+with `write` instead of `compare` only when a behavior change is intended;
+the most recent intended regeneration was the effect-narration unification
+(packs 01-04 now share one narration grammar emitted by the template layer).
 The effect tests are characterization tests: they pin current behavior, which
 has been verified against the official rules; do not "fix" rules in tests.
 
