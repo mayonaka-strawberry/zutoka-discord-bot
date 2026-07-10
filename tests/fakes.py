@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 from typing import Optional
 
+from zutomayo.data.deck_repository import resolve_card_list, serialize_cards
 from zutomayo.data.player_storage import (
     BOT_DISCORD_ID,
     ProfileMutator,
@@ -19,6 +20,7 @@ from zutomayo.data.player_storage import (
     _migrate_profile,
     _now_iso,
 )
+from zutomayo.models.card import Card
 
 
 class InMemoryProfileBackend:
@@ -65,6 +67,75 @@ class InMemoryProfileBackend:
             profile['last_updated'] = _now_iso()
             self.profiles[user_id] = profile
         self.elo_history.extend(copy.deepcopy(row) for row in elo_history_rows)
+
+
+class InMemoryDeckRepository:
+    """Mirrors PostgresDeckRepository, alphabetical listing included."""
+
+    resolve_card_list = staticmethod(resolve_card_list)
+
+    def __init__(self, card_list_fields: tuple[str, ...]) -> None:
+        self.card_list_fields = card_list_fields
+        self.decks_by_user: dict[int, dict[str, dict]] = {}
+
+    def _user_decks(self, user_id: int) -> dict[str, dict]:
+        return self.decks_by_user.setdefault(user_id, {})
+
+    async def load_user_decks(self, user_id: int) -> list[dict]:
+        return [
+            copy.deepcopy(self._user_decks(user_id)[name])
+            for name in sorted(self._user_decks(user_id))
+        ]
+
+    async def save_user_decks(self, user_id: int, decks: list[dict]) -> None:
+        self.decks_by_user[user_id] = {
+            deck_entry['name']: copy.deepcopy(deck_entry) for deck_entry in decks
+        }
+
+    async def get_deck_names(self, user_id: int) -> list[str]:
+        return sorted(self._user_decks(user_id))
+
+    async def get_deck_by_name(self, user_id: int, name: str) -> Optional[dict]:
+        stored = self._user_decks(user_id).get(name)
+        return copy.deepcopy(stored) if stored is not None else None
+
+    async def search_deck_names(self, user_id: int, prefix: str, limit: int = 25) -> list[str]:
+        matches = [
+            name for name in sorted(self._user_decks(user_id))
+            if name.lower().startswith(prefix.lower())
+        ]
+        return matches[:limit]
+
+    async def add_deck(self, user_id: int, name: str, card_lists: dict[str, list[Card]]) -> None:
+        decks = self._user_decks(user_id)
+        if name in decks:
+            raise ValueError(f'A deck named "{name}" already exists.')
+        entry: dict = {'name': name}
+        for field in self.card_list_fields:
+            entry[field] = serialize_cards(card_lists[field])
+        decks[name] = entry
+
+    async def update_deck(self, user_id: int, name: str, card_lists: dict[str, list[Card]]) -> None:
+        decks = self._user_decks(user_id)
+        if name not in decks:
+            raise ValueError(f'Deck "{name}" not found.')
+        for field in self.card_list_fields:
+            decks[name][field] = serialize_cards(card_lists[field])
+
+    async def delete_deck(self, user_id: int, name: str) -> None:
+        decks = self._user_decks(user_id)
+        if name not in decks:
+            raise ValueError(f'Deck "{name}" not found.')
+        del decks[name]
+
+    async def list_all_decks(self) -> list[dict]:
+        entries = []
+        for user_id in sorted(self.decks_by_user):
+            for name in sorted(self.decks_by_user[user_id]):
+                entry = copy.deepcopy(self.decks_by_user[user_id][name])
+                entry['user_id'] = user_id
+                entries.append(entry)
+        return entries
 
 
 class InMemoryNameBackend:

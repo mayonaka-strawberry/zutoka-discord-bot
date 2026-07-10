@@ -66,7 +66,7 @@ class MakeDeckModal(discord.ui.Modal):
             return
 
         try:
-            add_deck(self.user_id, self.deck_name, cards)
+            await add_deck(self.user_id, self.deck_name, cards)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
@@ -124,7 +124,7 @@ class EditDeckModal(discord.ui.Modal):
             return
 
         try:
-            update_deck(self.user_id, self.deck_name, cards)
+            await update_deck(self.user_id, self.deck_name, cards)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
@@ -202,7 +202,7 @@ class ManageDecksView(DeckNamePaginationMixin, discord.ui.View):
         back_btn.callback = self._go_back
         self.add_item(back_btn)
 
-        deck_data = get_deck_by_name(self.user_id, self.selected_deck_name)
+        deck_data = await get_deck_by_name(self.user_id, self.selected_deck_name)
         cards = resolve_deck_cards(deck_data, self.card_index)
         embed = build_deck_list_embed(self.selected_deck_name, cards)
         ids_line = ' '.join(f'{c.pack:02d}-{c.id:03d}' for c in cards)
@@ -239,12 +239,12 @@ class ManageDecksView(DeckNamePaginationMixin, discord.ui.View):
 
     async def _confirm_delete(self, interaction: discord.Interaction):
         try:
-            delete_deck(self.user_id, self.selected_deck_name)
+            await delete_deck(self.user_id, self.selected_deck_name)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
 
-        self.all_deck_names = get_deck_names(self.user_id)
+        self.all_deck_names = await get_deck_names(self.user_id)
         if not self.all_deck_names:
             await interaction.response.edit_message(
                 content=f'Deck **{self.selected_deck_name}** deleted. You have no more saved decks.',
@@ -424,7 +424,7 @@ class DeckSourceView(discord.ui.View):
     @discord.ui.button(label='Select a Deck', style=discord.ButtonStyle.secondary, row=0)
     async def select_deck(self, interaction: discord.Interaction, button: discord.ui.Button):
         user_id = interaction.user.id
-        deck_names = get_deck_names(user_id)
+        deck_names = await get_deck_names(user_id)
         if not deck_names:
             await interaction.response.send_message(
                 'You have no saved decks. Use `/zutomayo makedeck` to create one, or click **Build a Deck**.',
@@ -535,7 +535,7 @@ class SavedDeckSelectView(DeckNamePaginationMixin, discord.ui.View):
 
     async def _deck_selected(self, interaction: discord.Interaction):
         deck_name = interaction.data['values'][0]
-        deck_data = get_deck_by_name(self.user_id, deck_name)
+        deck_data = await get_deck_by_name(self.user_id, deck_name)
         if deck_data is None:
             await interaction.response.send_message('Deck not found.', ephemeral=True)
             return

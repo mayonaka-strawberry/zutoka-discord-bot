@@ -13,20 +13,36 @@ def install_in_memory_backends(monkeypatch):
     Swap every storage backend for an in-memory fake so tests never touch
     PostgreSQL (or live data). The fakes are returned for assertions.
     """
+    import zutomayo.data.deck_repository as deck_repository_module
     import zutomayo.data.name_storage as name_storage_module
     import zutomayo.data.player_storage as player_storage_module
 
-    from tests.fakes import InMemoryNameBackend, InMemoryProfileBackend
+    from tests.fakes import (
+        InMemoryDeckRepository,
+        InMemoryNameBackend,
+        InMemoryProfileBackend,
+    )
 
     profile_backend = InMemoryProfileBackend()
     name_backend = InMemoryNameBackend()
     name_backend.profile_backend = profile_backend
+    standard_deck_repository = InMemoryDeckRepository(('cards',))
+    tcg_deck_repository = InMemoryDeckRepository(('deck', 'side_deck'))
 
     monkeypatch.setattr(player_storage_module, 'backend', profile_backend)
     monkeypatch.setattr(name_storage_module, 'backend', name_backend)
     monkeypatch.setattr(name_storage_module, '_names_cache', None)
+    monkeypatch.setattr(
+        deck_repository_module, 'STANDARD_DECK_REPOSITORY', standard_deck_repository,
+    )
+    monkeypatch.setattr(deck_repository_module, 'TCG_DECK_REPOSITORY', tcg_deck_repository)
 
-    return {'profiles': profile_backend, 'names': name_backend}
+    return {
+        'profiles': profile_backend,
+        'names': name_backend,
+        'decks': standard_deck_repository,
+        'decks_tcg': tcg_deck_repository,
+    }
 
 
 @pytest.fixture

@@ -240,7 +240,7 @@ class GameCog(commands.Cog):
             )
             return
 
-        existing_names = load_deck_names(interaction.user.id)
+        existing_names = await load_deck_names(interaction.user.id)
         if name in existing_names:
             await interaction.response.send_message(duplicate_message, ephemeral=True)
             return
@@ -260,7 +260,7 @@ class GameCog(commands.Cog):
         """Shared body of the managedecks / managedeckstcg commands."""
         from zutomayo.data.deck_validator import get_card_index
 
-        deck_names = load_deck_names(interaction.user.id)
+        deck_names = await load_deck_names(interaction.user.id)
         if not deck_names:
             await interaction.response.send_message(empty_message, ephemeral=True)
             return
@@ -302,7 +302,7 @@ class GameCog(commands.Cog):
         from zutomayo.data.deck_storage import load_user_decks
         from zutomayo.data.deck_validator import get_card_index
 
-        decks = load_user_decks(interaction.user.id)
+        decks = await load_user_decks(interaction.user.id)
         if not decks:
             await interaction.response.send_message(
                 'You have no saved decks. Use `/zutomayo makedeck` to create one.',
@@ -346,7 +346,7 @@ class GameCog(commands.Cog):
         from zutomayo.data.deck_storage_tcg import load_user_tcg_decks
         from zutomayo.data.deck_validator import get_card_index
 
-        decks = load_user_tcg_decks(interaction.user.id)
+        decks = await load_user_tcg_decks(interaction.user.id)
         if not decks:
             await interaction.response.send_message(
                 'You have no saved TCG decks. Use `/zutomayo makedecktcg` to create one.',
