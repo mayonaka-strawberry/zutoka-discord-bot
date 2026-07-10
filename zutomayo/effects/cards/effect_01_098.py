@@ -1,6 +1,7 @@
 from __future__ import annotations
-import logging
 from typing import TYPE_CHECKING
+from zutomayo.effects.card_effect_helpers import add_attack_bonus_by_opponent_character_power_cost
+
 
 if TYPE_CHECKING:
     from zutomayo.effects.effect_engine import EffectEngine
@@ -8,16 +9,11 @@ if TYPE_CHECKING:
     from zutomayo.models.game_state import GameState
 
 
-log = logging.getLogger(__name__)
-
-
 async def effect_01_098(
     engine: EffectEngine, game_state: GameState, player_index: int, card_instance: CardInstance,
 ) -> None:
     """Attack +30 if the opponent's character card has a power cost of 0 or 1."""
-    opponent = game_state.players[1 - player_index]
-    if opponent.battle_zone is not None and opponent.battle_zone.card.power_cost <= 1:
-        engine.turn_state.attack_bonus[player_index] += 30
-        log.debug('[%s] %s: opponent power_cost=%d <= 1, +30 attack bonus (now %d)', card_instance.card.effect, engine.player_label(player_index), opponent.battle_zone.card.power_cost, engine.turn_state.attack_bonus[player_index])
-    else:
-        log.debug('[%s] %s: opponent power_cost > 1 or no battle_zone, no bonus', card_instance.card.effect, engine.player_label(player_index))
+    await add_attack_bonus_by_opponent_character_power_cost(
+        engine, game_state, player_index, card_instance,
+        maximum_power_cost=1, bonus=30,
+    )

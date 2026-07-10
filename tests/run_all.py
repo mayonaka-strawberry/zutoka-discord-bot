@@ -35,7 +35,10 @@ DEAD_EFFECT_MODULES = ('effect_02_005.py', 'effect_02_007.py', 'effect_02_062.py
 # training stack) are deliberately ungated: mocked-interaction tests would
 # prove the mock, not the bot — manual playtests own those surfaces.
 COVERAGE_GATES: list[tuple[str, float, list[str]]] = [
-    ('effect handlers (zutomayo/effects/cards)', 99.0, ['zutomayo/effects/cards/']),
+    ('effect handlers (zutomayo/effects/cards + card_effect_helpers)', 99.0, [
+        'zutomayo/effects/cards/',
+        'zutomayo/effects/card_effect_helpers.py',
+    ]),
     ('engine core (effect_engine, turn_manager, game_controller)', 94.0, [
         'zutomayo/effects/effect_engine.py',
         'zutomayo/engine/turn_manager.py',
