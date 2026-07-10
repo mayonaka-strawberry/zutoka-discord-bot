@@ -75,10 +75,34 @@ class DiscordMatchTransport:
 
         if self.muted:
             return None
+        self._record_narration(session, kwargs)
         channel = self.bot.get_channel(session.channel_id)
         if channel is None:
             return None
         return await send_with_retry(lambda: channel.send(**kwargs), label='channel send')
+
+    @staticmethod
+    def _record_narration(session: 'GameSession', kwargs: dict[str, Any]) -> None:
+        """Mirror channel narration into the game event stream. Runs before the
+        channel lookup so solo games (no guild channel) are recorded too;
+        muted sends never reach here, so replay stays silent."""
+        if session.persistence is None:
+            return
+        embeds = list(kwargs.get('embeds') or [])
+        if kwargs.get('embed') is not None:
+            embeds.insert(0, kwargs['embed'])
+        payload = {
+            'content': kwargs.get('content'),
+            'embeds': [
+                {'title': embed.title, 'description': embed.description}
+                for embed in embeds
+            ],
+        }
+        if payload['content'] is None and not payload['embeds']:
+            return
+        from zutomayo.engine.game_events import EVENT_NARRATION
+
+        session.persistence.emit_event(EVENT_NARRATION, payload)
 
     def display_name(self, session: 'GameSession', player_index: int) -> Optional[str]:
         from zutomayo.data.name_storage import resolve_display_name

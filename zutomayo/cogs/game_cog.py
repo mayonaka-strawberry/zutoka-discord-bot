@@ -600,6 +600,14 @@ class GameCog(commands.Cog):
                     opponent_id = discord_id
                     break
             await record_forfeit(quitter_id, opponent_id)
+
+            if session.persistence is not None:
+                from zutomayo.engine.game_events import EVENT_FORFEIT
+
+                session.persistence.emit_event(EVENT_FORFEIT, {
+                    'player_index': session.get_player_index(quitter_id),
+                    'discord_id': quitter_id,
+                })
         except Exception:
             log.exception('Failed to record forfeit for game %s', session.game_id)
 

@@ -81,8 +81,33 @@ class TcgMatchFlow:
                 })
                 session.broker.persistence = session.persistence
 
+            from zutomayo.engine.game_events import (
+                EVENT_MATCH_RESULT,
+                EVENT_MATCH_START,
+                EVENT_SERIES_RESULT,
+                EVENT_SERIES_START,
+            )
+            from zutomayo.engine.game_persistence import card_keys
+
+            self.game_flow._emit_event(session, EVENT_SERIES_START, {
+                'best_of': self.best_of,
+                'deck_names': {str(index): session.player_deck_names.get(index) for index in range(2)},
+                'decks': {
+                    '0': {'main': card_keys(deck_0), 'side': card_keys(side_0)},
+                    '1': {'main': card_keys(deck_1), 'side': card_keys(side_1)},
+                },
+            })
+
             while wins[0] < self.wins_needed and wins[1] < self.wins_needed:
                 match_number += 1
+
+                self.game_flow._emit_event(session, EVENT_MATCH_START, {
+                    'series_score': [wins[0], wins[1]],
+                    'decks': {
+                        '0': {'main': card_keys(deck_0), 'side': card_keys(side_0)},
+                        '1': {'main': card_keys(deck_1), 'side': card_keys(side_1)},
+                    },
+                }, match_number=match_number)
 
                 # Announce match start
                 await self._announce_match_start(session, names, match_number, wins)
@@ -98,6 +123,12 @@ class TcgMatchFlow:
 
                 wins[winner] += 1
 
+                self.game_flow._emit_event(session, EVENT_MATCH_RESULT, {
+                    'match_number': match_number,
+                    'winner_index': winner,
+                    'series_score': [wins[0], wins[1]],
+                })
+
                 # Announce match result
                 await self._announce_match_result(session, names, match_number, wins, winner)
 
@@ -109,6 +140,11 @@ class TcgMatchFlow:
                 deck_0, side_0, deck_1, side_1 = await self._do_switch_cards(
                     session, names, deck_0, side_0, deck_1, side_1,
                 )
+
+            self.game_flow._emit_event(session, EVENT_SERIES_RESULT, {
+                'score': [wins[0], wins[1]],
+                'winner_index': 0 if wins[0] >= self.wins_needed else 1,
+            })
 
             # Announce series winner
             await self._announce_series_result(session, names, wins)
@@ -284,6 +320,14 @@ class TcgMatchFlow:
                 deck.append(card)
 
             swap_counts.append(len(removed_keys))
+
+            from zutomayo.engine.game_events import EVENT_SIDE_DECK_SWAP
+
+            self.game_flow._emit_event(session, EVENT_SIDE_DECK_SWAP, {
+                'player_index': index,
+                'removed': removed_keys,
+                'added': added_keys,
+            })
 
         # Send updated deck images after switching
         for index, (deck, side) in enumerate([(deck_0, side_0), (deck_1, side_1)]):

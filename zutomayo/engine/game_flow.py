@@ -20,6 +20,8 @@ from zutomayo.engine.decisions import (
     DecisionRequest,
     build_card_options,
 )
+from zutomayo.engine import game_events
+from zutomayo.engine.game_persistence import card_keys
 from zutomayo.engine.match_transport import DiscordMatchTransport
 from zutomayo.ui.embeds import (
     build_battle_result_embed,
@@ -59,6 +61,50 @@ class GameFlow:
         for discord_id, index in session.player_discord_ids.items():
             names[index] = session.transport.display_name(session, index) or f'Player {index + 1}'
         return names
+
+    @staticmethod
+    def _emit_event(session: GameSession, event_type: str, payload: dict, **context) -> None:
+        """Record one event into the permanent game event stream.
+
+        Observation-only: a no-op when no record store is attached (headless
+        environments) or while the broker is replaying."""
+        if session.persistence is not None:
+            session.persistence.emit_event(event_type, payload, **context)
+
+    def _record_phase(self, session: GameSession) -> None:
+        game_state = session.game_state
+        self._emit_event(
+            session,
+            game_events.EVENT_PHASE_ENTERED,
+            {'chronos': game_state.chronos, 'day_night': game_state.day_night.name},
+            turn=game_state.turn,
+            phase=game_state.current_phase.name,
+        )
+
+    def _record_effect_priority(self, session: GameSession, priority: int) -> None:
+        game_state = session.game_state
+        self._emit_event(session, game_events.EVENT_EFFECT_PRIORITY_DETERMINED, {
+            'chronos': game_state.chronos,
+            'day_night': game_state.day_night.name,
+            'priority_player_index': priority,
+            'resolution_order': [priority, 1 - priority],
+        }, turn=game_state.turn)
+
+    def _record_battle_result(self, session: GameSession, battle_result: dict) -> None:
+        game_state = session.game_state
+        self._emit_event(session, game_events.EVENT_BATTLE_RESULT, {
+            'attacks': {'0': battle_result['player_0_attack'], '1': battle_result['player_1_attack']},
+            'damage': {'0': battle_result['damage_to_0'], '1': battle_result['damage_to_1']},
+            'winner_index': battle_result['winner'],
+            'hp_after': {'0': game_state.players[0].hp, '1': game_state.players[1].hp},
+        }, turn=game_state.turn)
+
+    def _record_state_snapshot(self, session: GameSession) -> None:
+        self._emit_event(
+            session,
+            game_events.EVENT_STATE_SNAPSHOT,
+            game_events.build_state_snapshot(session.game_state),
+        )
 
     async def _send_to_player(self, session: GameSession, player_index: int, **kwargs) -> discord.Message | None:
         self._ensure_decision_runtime(session)
@@ -343,6 +389,7 @@ class GameFlow:
         # --- SETUP PHASE ---
         game_state.current_phase = Phase.SETUP
         game_state.turn = 0
+        self._record_phase(session)
 
         # Shuffle decks
         for player in game_state.players:
@@ -352,6 +399,10 @@ class GameFlow:
         for i, player in enumerate(game_state.players):
             player.draw(5)
             await turn_manager.effect_engine.notify_draw(game_state, i, 5)
+            self._emit_event(session, game_events.EVENT_INITIAL_HAND, {
+                'player_index': i,
+                'cards': card_keys(player.hand),
+            })
 
         # Send hands to both players
         for index in range(2):
@@ -393,6 +444,7 @@ class GameFlow:
 
         # Establish initial zone snapshot after game-start messages
         session._zone_snapshots = self._take_zone_snapshots(game_state)
+        self._record_state_snapshot(session)
 
         # --- TURN 1 ---
         game_state.turn = 1
@@ -400,6 +452,7 @@ class GameFlow:
 
         # Advance chronos for both players (from initial cards)
         game_state.current_phase = Phase.ADVANCE_CHRONOS
+        self._record_phase(session)
         for player in game_state.players:
             turn_manager.advance_chronos(player)
 
@@ -409,8 +462,10 @@ class GameFlow:
 
         # Process effects (priority player first)
         game_state.current_phase = Phase.PROCESS_EFFECTS
+        self._record_phase(session)
         priority = game_state.priority_player
         other = 1 - priority
+        self._record_effect_priority(session, priority)
 
         priority_result = await turn_manager.effect_engine.process_effects(game_state, priority)
         await self._broadcast_effect_resolution(session, priority, names, priority_result)
@@ -434,7 +489,9 @@ class GameFlow:
             return self._winner_index(game_state)
 
         game_state.current_phase = Phase.BATTLE
+        self._record_phase(session)
         battle_result = turn_manager.resolve_battle()
+        self._record_battle_result(session, battle_result)
         battle_embed = build_battle_result_embed(battle_result, game_state, names)
 
         # GATE: Battle results
@@ -452,6 +509,7 @@ class GameFlow:
 
         # End turn 1: draw cards
         game_state.current_phase = Phase.END_TURN
+        self._record_phase(session)
         for player in game_state.players:
             drawn_count = turn_manager.end_turn(player)
             await turn_manager.effect_engine.notify_draw(game_state, player.index, drawn_count)
@@ -465,6 +523,7 @@ class GameFlow:
 
         turn_manager.effect_engine.save_battle_characters(game_state)
         turn_manager.reset_turn_flags()
+        self._record_state_snapshot(session)
 
         # GATE: Turn 1 complete
         await self._phase_announce(session, names, 'Turn 1 complete. Preparing next turn...', force_zones=True)
@@ -540,6 +599,13 @@ class GameFlow:
                     player.deck.append(card_instance)
                 session.random_generator.shuffle(player.deck)
 
+                self._emit_event(session, game_events.EVENT_REDRAW, {
+                    'player_index': index,
+                    'discarded': card_keys(cards_to_redraw),
+                    'drawn': card_keys(drawn),
+                    'hand_after': card_keys(player.hand),
+                })
+
                 # Send updated hand
                 if session.transport.delivers_to_player(session, index):
                     embed = build_hand_embed(player)
@@ -583,7 +649,12 @@ class GameFlow:
             player = game_state.players[index]
             response = responses[index]
             if response.payload_type == PAYLOAD_INDICES and response.payload:
-                turn_manager.set_initial_battle_card(player, hand_snapshots[index][response.payload[0]])
+                chosen_card = hand_snapshots[index][response.payload[0]]
+                turn_manager.set_initial_battle_card(player, chosen_card)
+                self._emit_event(session, game_events.EVENT_INITIAL_BATTLE_CARD, {
+                    'player_index': index,
+                    'card': card_keys([chosen_card])[0],
+                })
 
     async def _do_turn(self, session: GameSession, names: dict[int, str]) -> None:
         game_state = session.game_state
@@ -591,6 +662,7 @@ class GameFlow:
 
         # Phase 1: Set cards
         game_state.current_phase = Phase.SET_CARDS
+        self._record_phase(session)
         session.clear_pending()
 
         hand_snapshots: dict[int, list] = {}
@@ -673,6 +745,7 @@ class GameFlow:
 
         # Phase 2: Reveal
         game_state.current_phase = Phase.REVEAL
+        self._record_phase(session)
         for player in game_state.players:
             if player.set_zone_a:
                 player.set_zone_a.face_up = True
@@ -684,6 +757,7 @@ class GameFlow:
 
         # Phase 3: Advance chronos
         game_state.current_phase = Phase.ADVANCE_CHRONOS
+        self._record_phase(session)
         for player in game_state.players:
             turn_manager.advance_chronos(player)
 
@@ -693,6 +767,7 @@ class GameFlow:
 
         # Phase 4: Character swap
         game_state.current_phase = Phase.CHARACTER_SWAP
+        self._record_phase(session)
         for player in game_state.players:
             await turn_manager.do_character_swap(player)
 
@@ -705,6 +780,7 @@ class GameFlow:
 
         # Phase 5: Area enchant swap
         game_state.current_phase = Phase.AREA_ENCHANT_SWAP
+        self._record_phase(session)
         for player in game_state.players:
             turn_manager.do_area_enchant_swap(player)
 
@@ -717,8 +793,10 @@ class GameFlow:
 
         # Phase 6: Process effects (priority player first)
         game_state.current_phase = Phase.PROCESS_EFFECTS
+        self._record_phase(session)
         priority = game_state.priority_player
         other = 1 - priority
+        self._record_effect_priority(session, priority)
 
         priority_result = await turn_manager.effect_engine.process_effects(game_state, priority)
         await self._broadcast_effect_resolution(session, priority, names, priority_result)
@@ -741,7 +819,9 @@ class GameFlow:
 
         # Phase 7-8: Battle
         game_state.current_phase = Phase.BATTLE
+        self._record_phase(session)
         battle_result = turn_manager.resolve_battle()
+        self._record_battle_result(session, battle_result)
         battle_embed = build_battle_result_embed(battle_result, game_state, names)
 
         # GATE: Battle results (includes battle embed alongside field embed)
@@ -758,6 +838,7 @@ class GameFlow:
 
         # Turn-end effects (e.g. 03-027 delayed damage)
         game_state.current_phase = Phase.TURN_END_EFFECTS
+        self._record_phase(session)
         turn_manager.effect_engine.process_end_of_turn_effects(game_state)
 
         # Check win condition
@@ -767,6 +848,7 @@ class GameFlow:
 
         # Phase 9-10: End turn
         game_state.current_phase = Phase.END_TURN
+        self._record_phase(session)
         for player in game_state.players:
             drawn_count = turn_manager.end_turn(player)
             await turn_manager.effect_engine.notify_draw(game_state, player.index, drawn_count)
@@ -780,6 +862,7 @@ class GameFlow:
 
         turn_manager.effect_engine.save_battle_characters(game_state)
         turn_manager.reset_turn_flags()
+        self._record_state_snapshot(session)
 
         log.info('Game %s turn %d complete', session.game_id, game_state.turn)
 
@@ -789,6 +872,14 @@ class GameFlow:
     async def _end_game(self, session: GameSession, names: dict[int, str], *, remove_session: bool = True) -> None:
         game_state = session.game_state
         log.info('Game %s ended: %s', session.game_id, game_state.result.name)
+        self._record_state_snapshot(session)
+        self._emit_event(session, game_events.EVENT_GAME_END, {
+            'result': game_state.result.name,
+            'winner_index': self._winner_index(game_state),
+            'turn_count': game_state.turn,
+        })
+        if session.persistence is not None:
+            await session.persistence.flush_events()
         embed = build_game_over_embed(game_state, names)
         await self._send_to_channel(session, embed=embed)
         await self._send_to_both(session, embed=embed)
