@@ -23,7 +23,7 @@ modules:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from constants import NIGHT_END
 from zutomayo.enums.attribute import Attribute
@@ -229,3 +229,133 @@ async def add_damage_reduction(
         card_instance.card.effect, engine.player_label(player_index),
         amount, engine.turn_state.damage_reduction[player_index],
     )
+
+
+async def add_attack_bonus_if_zone_cards_all_attribute(
+    engine: EffectEngine, game_state: GameState, player_index: int, card_instance: CardInstance,
+    *, zone_attribute_name: str, attribute: Attribute, bonus: int, use_opponent_zone: bool = False,
+) -> None:
+    """
+    Attack +bonus if the named zone ('power_charger' or 'abyss') is
+    non-empty and contains only cards of the attribute. Zone scans read
+    the printed card.attribute (the override only applies in battle).
+    """
+    if use_opponent_zone:
+        zone_owner = engine.opponent_of(game_state, player_index)
+        owner_description = 'opponent'
+    else:
+        zone_owner = game_state.players[player_index]
+        owner_description = 'own'
+    zone_cards = getattr(zone_owner, zone_attribute_name)
+    if zone_cards and all(zone_card.card.attribute == attribute for zone_card in zone_cards):
+        engine.turn_state.attack_bonus[player_index] += bonus
+        log.debug(
+            '[%s] %s: all %s %s cards are %s, +%d attack bonus (now %d)',
+            card_instance.card.effect, engine.player_label(player_index),
+            owner_description, zone_attribute_name, attribute.name,
+            bonus, engine.turn_state.attack_bonus[player_index],
+        )
+    else:
+        log.debug(
+            '[%s] %s: %s %s not all %s (count=%d), no bonus',
+            card_instance.card.effect, engine.player_label(player_index),
+            owner_description, zone_attribute_name, attribute.name, len(zone_cards),
+        )
+
+
+async def add_attack_bonus_if_any_attribute_card_in_zone(
+    engine: EffectEngine, game_state: GameState, player_index: int, card_instance: CardInstance,
+    *, zone_attribute_name: str, attribute: Attribute, bonus: int,
+) -> None:
+    """Attack +bonus if any card of the attribute is in your named zone."""
+    player = game_state.players[player_index]
+    zone_cards = getattr(player, zone_attribute_name)
+    if any(zone_card.card.attribute == attribute for zone_card in zone_cards):
+        engine.turn_state.attack_bonus[player_index] += bonus
+        log.debug(
+            '[%s] %s: %s card found in %s, +%d attack bonus (now %d)',
+            card_instance.card.effect, engine.player_label(player_index),
+            attribute.name, zone_attribute_name,
+            bonus, engine.turn_state.attack_bonus[player_index],
+        )
+    else:
+        log.debug(
+            '[%s] %s: no %s card in %s, no bonus',
+            card_instance.card.effect, engine.player_label(player_index),
+            attribute.name, zone_attribute_name,
+        )
+
+
+async def add_attack_bonus_if_zone_attribute_count_at_least(
+    engine: EffectEngine, game_state: GameState, player_index: int, card_instance: CardInstance,
+    *, zone_attribute_name: str, attribute: Attribute, minimum_count: int, bonus: int,
+) -> None:
+    """Attack +bonus if your named zone holds at least minimum_count cards of the attribute."""
+    player = game_state.players[player_index]
+    zone_cards = getattr(player, zone_attribute_name)
+    matching_count = sum(1 for zone_card in zone_cards if zone_card.card.attribute == attribute)
+    if matching_count >= minimum_count:
+        engine.turn_state.attack_bonus[player_index] += bonus
+        log.debug(
+            '[%s] %s: %d %s cards in %s (need >= %d), +%d attack bonus (now %d)',
+            card_instance.card.effect, engine.player_label(player_index),
+            matching_count, attribute.name, zone_attribute_name, minimum_count,
+            bonus, engine.turn_state.attack_bonus[player_index],
+        )
+    else:
+        log.debug(
+            '[%s] %s: only %d %s cards in %s (need >= %d), no bonus',
+            card_instance.card.effect, engine.player_label(player_index),
+            matching_count, attribute.name, zone_attribute_name, minimum_count,
+        )
+
+
+async def add_attack_bonus_per_matching_card_in_zone(
+    engine: EffectEngine, game_state: GameState, player_index: int, card_instance: CardInstance,
+    *, card_matcher: 'Callable[[CardInstance], bool]', matched_description: str,
+    zone_attribute_name: str, bonus_per_card: int,
+) -> None:
+    """Attack +bonus_per_card for each card in your named zone the matcher accepts."""
+    player = game_state.players[player_index]
+    zone_cards = getattr(player, zone_attribute_name)
+    matching_count = sum(1 for zone_card in zone_cards if card_matcher(zone_card))
+    if matching_count > 0:
+        attack_bonus = bonus_per_card * matching_count
+        engine.turn_state.attack_bonus[player_index] += attack_bonus
+        log.debug(
+            '[%s] %s: %d %s cards in %s, +%d attack bonus (now %d)',
+            card_instance.card.effect, engine.player_label(player_index),
+            matching_count, matched_description, zone_attribute_name,
+            attack_bonus, engine.turn_state.attack_bonus[player_index],
+        )
+    else:
+        log.debug(
+            '[%s] %s: no %s cards in %s, no bonus',
+            card_instance.card.effect, engine.player_label(player_index),
+            matched_description, zone_attribute_name,
+        )
+
+
+async def add_attack_bonus_if_abyss_has_all_attributes(
+    engine: EffectEngine, game_state: GameState, player_index: int, card_instance: CardInstance,
+    *, required_attributes: frozenset[Attribute], bonus: int,
+) -> None:
+    """Attack +bonus if your Abyss holds cards of every required attribute."""
+    player = game_state.players[player_index]
+    abyss_attributes = {abyss_card.card.attribute for abyss_card in player.abyss}
+    log.debug(
+        '[%s] %s: abyss attributes found: %s',
+        card_instance.card.effect, engine.player_label(player_index), abyss_attributes,
+    )
+    if required_attributes.issubset(abyss_attributes):
+        engine.turn_state.attack_bonus[player_index] += bonus
+        log.debug(
+            '[%s] %s: all required attributes present, +%d attack bonus (now %d)',
+            card_instance.card.effect, engine.player_label(player_index),
+            bonus, engine.turn_state.attack_bonus[player_index],
+        )
+    else:
+        log.debug(
+            '[%s] %s: missing required attributes, no bonus',
+            card_instance.card.effect, engine.player_label(player_index),
+        )
