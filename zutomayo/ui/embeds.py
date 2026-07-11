@@ -1,4 +1,5 @@
 from pathlib import Path
+import asyncio
 import discord
 from PIL import Image
 from zutomayo.ui.image_utils import save_image_for_discord
@@ -392,3 +393,18 @@ def create_hand_image(hand: list[CardInstance]) -> discord.File | None:
     if not hand:
         return None
     return create_deck_grid_image(hand, columns=len(hand))
+
+
+async def create_deck_grid_image_off_thread(
+    cards: list,
+    columns: int = 5,
+    padding: int = 10,
+    filename: str = 'deck.webp',
+) -> discord.File | None:
+    """Run create_deck_grid_image in a worker thread so the event loop stays responsive."""
+    return await asyncio.to_thread(create_deck_grid_image, cards, columns, padding, filename)
+
+
+async def create_hand_image_off_thread(hand: list[CardInstance]) -> discord.File | None:
+    """Run create_hand_image in a worker thread so the event loop stays responsive."""
+    return await asyncio.to_thread(create_hand_image, hand)

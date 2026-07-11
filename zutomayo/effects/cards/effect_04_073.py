@@ -21,7 +21,7 @@ async def effect_04_073(
     player = game_state.players[player_index]
 
     if Song.SHADE in engine.turn_state.swapped_from_songs.get(player_index, set()):
-        player.hp = min(100, player.hp + 20)
+        engine.heal(game_state, player_index, 20, source=card_instance.card.effect)
         log.debug('[%s] %s: HP +20 (now %d)', card_instance.card.effect, engine.player_label(player_index), player.hp)
         await engine._send_dm(player_index, content='**Effect (04-073):** Swapped with a SHADE character this turn. HP +20!')
         await engine._send_dm(opponent_index, content='**Effect (04-073):** Opponent swapped with a SHADE character. HP +20.')

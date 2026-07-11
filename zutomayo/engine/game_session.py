@@ -1,13 +1,17 @@
 import asyncio
-from typing import Any, Optional
-from uuid import uuid4
-from zutomayo.data.card_loader import load_cards
+import random
+from typing import TYPE_CHECKING, Any, Optional
 from zutomayo.effects.effect_engine import EffectEngine
 from zutomayo.engine.deck_builder import build_deck_from_cards
 from zutomayo.engine.game_controller import GameController
 from zutomayo.engine.turn_manager import TurnManager
 from zutomayo.models.card import Card
 from zutomayo.models.game_state import GameState
+
+if TYPE_CHECKING:
+    from zutomayo.engine.decision_broker import DecisionBroker
+    from zutomayo.engine.game_persistence import GameRecordStore
+    from zutomayo.engine.match_transport import MatchTransport
 
 
 class GameSession:
@@ -18,6 +22,21 @@ class GameSession:
         self.game_state: Optional[GameState] = None
         self.turn_manager: Optional[TurnManager] = None
         self.effect_engine = EffectEngine()
+
+        # Per-game seeded RNG: every shuffle and the coin flip draw from this
+        # generator so a logged game can be replayed deterministically from the
+        # seed (restart resumability). The seed is persisted in the game
+        # manifest once persistence is wired.
+        self.random_seed: int = random.SystemRandom().getrandbits(64)
+        self.random_generator: random.Random = random.Random(self.random_seed)
+
+        # Decision-broker runtime, installed by the flow that runs this game.
+        self.broker: Optional['DecisionBroker'] = None
+        self.transport: Optional['MatchTransport'] = None
+
+        # Permanent game record store, created when the match is initialized.
+        # Records are never deleted; game lifecycle is tracked by games.status.
+        self.persistence: Optional['GameRecordStore'] = None
 
         # Track both players' Discord IDs
         self.player_discord_ids[creator_id] = 0
@@ -58,11 +77,10 @@ class GameSession:
         deck_1_cards: list[Card] | None = None,
         deck_2_cards: list[Card] | None = None,
     ) -> GameState:
-        from zutomayo.data.deck_validator import build_card_index
+        from zutomayo.data.deck_validator import get_card_index
         from zutomayo.engine.bot_agent import load_random_saved_deck
 
-        all_cards = load_cards()
-        card_index = build_card_index(all_cards)
+        all_cards, card_index = get_card_index()
 
         discord_ids = list(self.player_discord_ids.keys())
         name_1 = str(discord_ids[0])
@@ -88,6 +106,7 @@ class GameSession:
             deck_1=deck_1,
             deck_2=deck_2,
             effect_engine=self.effect_engine,
+            random_generator=self.random_generator,
         )
 
         self.game_state = controller.game_state
@@ -153,17 +172,19 @@ class GameSessionManager:
     # Sentinel Discord ID used for the bot player in solo mode.
     BOT_DISCORD_ID = 0
 
-    def create_game(self, channel_id: int, creator_id: int) -> GameSession:
+    async def create_game(self, channel_id: int, creator_id: int) -> GameSession:
         if creator_id in self.player_to_game:
             raise ValueError('You are already in a game.')
 
-        game_id = str(uuid4())[:8]
+        from zutomayo.data.game_id_allocator import allocate_game_id
+
+        game_id = await allocate_game_id()
         session = GameSession(game_id, channel_id, creator_id)
         self.active_games[game_id] = session
         self.player_to_game[creator_id] = game_id
         return session
 
-    def create_solo_game(self, channel_id: int, creator_id: int) -> GameSession:
+    async def create_solo_game(self, channel_id: int, creator_id: int) -> GameSession:
         """
         Create a solo game where the creator plays against the bot.
 
@@ -172,7 +193,9 @@ class GameSessionManager:
         if creator_id in self.player_to_game:
             raise ValueError('You are already in a game.')
 
-        game_id = str(uuid4())[:8]
+        from zutomayo.data.game_id_allocator import allocate_game_id
+
+        game_id = await allocate_game_id()
         session = GameSession(game_id, channel_id, creator_id)
         session.is_solo = True
         session.add_player(self.BOT_DISCORD_ID)
@@ -204,11 +227,19 @@ class GameSessionManager:
             return None
         return self.active_games.get(game_id)
 
-    def remove_game(self, game_id: str) -> None:
+    def detach_game(self, game_id: str) -> None:
+        """
+        Drop the session from the in-memory maps, freeing its players for new
+        games. The permanent game record is untouched; status transitions are
+        the responsibility of the caller (game end, save, quit, abandon).
+        """
         session = self.active_games.pop(game_id, None)
         if session:
             for discord_id in session.player_discord_ids:
                 self.player_to_game.pop(discord_id, None)
+
+    def remove_game(self, game_id: str) -> None:
+        self.detach_game(game_id)
 
 
 # Singleton instance

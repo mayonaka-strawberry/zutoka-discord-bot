@@ -211,7 +211,6 @@ __marimo__/
 train_uniguri_v2.py
 best_decks_uniguri_v2.py
 best_decks_uniguri_v2_easy.py
-test_headless.py
 
 zutomayo/.DS_Store
 .DS_Store
@@ -223,32 +222,13 @@ training_hyperparameters.json
 zutomayo/progress/*
 !zutomayo/progress/.gitkeep
 
-# AlphaZero pilot + co-evolution deck search.
-# Kept fully local until training is complete; commit later once ready.
-# Library modules
-zutomayo/engine/game_fork.py
-zutomayo/engine/mcts_v3.py
-zutomayo/engine/rl_model_v3.py
-zutomayo/engine/search_agent_v3.py
-zutomayo/engine/uniguri_env_v3.py
-zutomayo/engine/replay_buffer_v3.py
-zutomayo/engine/self_play_workers.py
-zutomayo/engine/batched_evaluator_v3.py
-zutomayo/engine/deploy_v3.py
-zutomayo/optimization/
-# Offline driver scripts
-train_uniguri_v3.py
-optimize_decks_coevolution.py
-distill_uniguri_v3.py
-test_game_fork_v3.py
-test_observation_v3_equivalence.py
-# Generated artifacts
-zutomayo/models_trained_v3/
-zutomayo/best_decks_optimal_v3.json
-coevolution_config.json
-coevolution_archive.json
-coevolution_progress/
-training_hyperparameters_v3.json
 
 # AlphaZero engine rewrite (engine_alpha) — fully local
 engine_alpha/
+
+# In-flight game persistence (runtime state, recreated on demand)
+zutomayo/active_games/
+
+# Coverage artifacts
+.coverage
+tests/coverage_summary.json

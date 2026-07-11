@@ -1,4 +1,9 @@
-discord.py
-Pillow
-python-dotenv
-torch>=2.0.0
+asyncpg==0.31.0
+discord.py==2.7.0
+Pillow==12.1.1
+python-dotenv==1.2.2
+torch==2.10.0
+pytest==9.1.1
+pytest-cov==7.1.0
+coverage==7.15.0
+

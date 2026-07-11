@@ -1,7 +1,7 @@
 from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
-from zutomayo.ui.embeds import card_detail_description, create_deck_grid_image
+from zutomayo.ui.embeds import card_detail_description
 
 if TYPE_CHECKING:
     from zutomayo.effects.effect_engine import EffectEngine
@@ -35,15 +35,13 @@ async def effect_03_103(engine: EffectEngine, game_state: GameState, player_inde
     embed = _discord.Embed(title='Revealed Card [公開カード]', color=_discord.Color.gold())
     embed.description = card_detail_description(top_card)
 
-    # Send reveal image to all three recipients
-    reveal_img = create_deck_grid_image([top_card], columns=1)
-    await engine._send_dm(player_index, content="**Effect (03-103):** Revealed top card of opponent's deck:", embed=embed, file=reveal_img)
-
-    reveal_img = create_deck_grid_image([top_card], columns=1)
-    await engine._send_dm(opponent_index, content=f'**Effect (03-103):** Top card of your deck was revealed: {top_card.card.name}.', file=reveal_img)
-
-    reveal_img = create_deck_grid_image([top_card], columns=1)
-    await engine._send_to_channel(content=f"**Effect (03-103):** Top card of opponent's deck revealed: {top_card.card.name}.", file=reveal_img)
+    await engine.broadcast_reveal(
+        player_index, [top_card],
+        "**Effect (03-103):** Revealed top card of opponent's deck:",
+        f'**Effect (03-103):** Top card of your deck was revealed: {top_card.card.name}.',
+        owner_embed=embed,
+        channel_message=f"**Effect (03-103):** Top card of opponent's deck revealed: {top_card.card.name}.",
+    )
 
     if top_card.card.send_to_power == 0:
         old_bonus = engine.turn_state.attack_bonus[player_index]

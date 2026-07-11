@@ -4,6 +4,7 @@ from __future__ import annotations
 import random
 from typing import TYPE_CHECKING
 import discord
+from zutomayo.ui.deck_management_common import DECKS_PER_PAGE, DeckNamePaginationMixin
 from zutomayo.data.deck_storage import (
     add_deck,
     delete_deck,
@@ -14,14 +15,13 @@ from zutomayo.data.deck_storage import (
     update_deck,
 )
 from zutomayo.data.deck_validator import parse_deck_input
-from zutomayo.ui.embeds import build_deck_list_embed, create_deck_grid_image
+from zutomayo.ui.embeds import build_deck_list_embed, create_deck_grid_image_off_thread
 
 if TYPE_CHECKING:
     from zutomayo.engine.game_session import GameSession
     from zutomayo.models.card import Card
 
 
-DECKS_PER_PAGE = 25
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +66,7 @@ class MakeDeckModal(discord.ui.Modal):
             return
 
         try:
-            add_deck(self.user_id, self.deck_name, cards)
+            await add_deck(self.user_id, self.deck_name, cards)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
@@ -77,7 +77,7 @@ class MakeDeckModal(discord.ui.Modal):
             embed=embed,
             ephemeral=True,
         )
-        grid = create_deck_grid_image(cards)
+        grid = await create_deck_grid_image_off_thread(cards)
         if grid:
             await interaction.followup.send(file=grid, ephemeral=True)
 
@@ -87,8 +87,13 @@ class MakeDeckModal(discord.ui.Modal):
 # ---------------------------------------------------------------------------
 
 
+def format_card_ids_line(cards: list[Card]) -> str:
+    """The space-separated XX-YYY id line used in deck embeds and prefills."""
+    return ' '.join(f'{card.pack:02d}-{card.id:03d}' for card in cards)
+
+
 class EditDeckModal(discord.ui.Modal):
-    """Modal for re-entering cards of an existing deck."""
+    """Modal for editing an existing deck, pre-filled with its current cards."""
 
     deck_input = discord.ui.TextInput(
         label='Deck List (20 cards)',
@@ -104,11 +109,14 @@ class EditDeckModal(discord.ui.Modal):
         deck_name: str,
         user_id: int,
         card_index: dict[tuple[int, int], Card],
+        current_cards: list[Card] | None = None,
     ):
         super().__init__(title=f'Edit Deck: {deck_name[:38]}', timeout=750)
         self.deck_name = deck_name
         self.user_id = user_id
         self.card_index = card_index
+        if current_cards:
+            self.deck_input.default = format_card_ids_line(current_cards)
 
     async def on_submit(self, interaction: discord.Interaction):
         cards, errors = parse_deck_input(self.deck_input.value, self.card_index)
@@ -124,7 +132,7 @@ class EditDeckModal(discord.ui.Modal):
             return
 
         try:
-            update_deck(self.user_id, self.deck_name, cards)
+            await update_deck(self.user_id, self.deck_name, cards)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
@@ -135,244 +143,86 @@ class EditDeckModal(discord.ui.Modal):
             embed=embed,
             ephemeral=True,
         )
-        grid = create_deck_grid_image(cards)
+        grid = await create_deck_grid_image_off_thread(cards)
         if grid:
             await interaction.followup.send(file=grid, ephemeral=True)
 
 
-class ManageDecksView(discord.ui.View):
-    """Paginated dropdown to select a deck, then Edit or Delete."""
+class ManageDeckActionsView(discord.ui.View):
+    """Edit / Delete actions for one deck chosen through command autocomplete."""
 
     def __init__(
         self,
         user_id: int,
-        deck_names: list[str],
+        deck_name: str,
         card_index: dict[tuple[int, int], Card],
-        page: int = 0,
     ):
         super().__init__(timeout=750)
         self.user_id = user_id
-        self.all_deck_names = deck_names
+        self.deck_name = deck_name
         self.card_index = card_index
-        self.page = page
-        self.selected_deck_name: str | None = None
-        self._build_page()
+        self._build_action_buttons()
 
-    @property
-    def total_pages(self) -> int:
-        return max(1, -(-len(self.all_deck_names) // DECKS_PER_PAGE))
-
-    def _page_slice(self) -> list[str]:
-        start = self.page * DECKS_PER_PAGE
-        return self.all_deck_names[start : start + DECKS_PER_PAGE]
-
-    def _build_page(self) -> None:
-        names = self._page_slice()
-        options = [
-            discord.SelectOption(label=name[:100], value=name[:100])
-            for name in names
-        ]
-        select = discord.ui.Select(
-            placeholder='Select a deck to manage...',
-            options=options,
-        )
-        select.callback = self._deck_selected
-        self.add_item(select)
-
-        if self.total_pages > 1:
-            prev_btn = discord.ui.Button(
-                label='<< Prev', style=discord.ButtonStyle.grey,
-                disabled=(self.page == 0), row=1,
-            )
-            prev_btn.callback = self._prev_page
-            self.add_item(prev_btn)
-
-            next_btn = discord.ui.Button(
-                label='Next >>', style=discord.ButtonStyle.grey,
-                disabled=(self.page >= self.total_pages - 1), row=1,
-            )
-            next_btn.callback = self._next_page
-            self.add_item(next_btn)
-
-    async def _deck_selected(self, interaction: discord.Interaction):
-        self.selected_deck_name = interaction.data['values'][0]
+    def _build_action_buttons(self) -> None:
         self.clear_items()
 
-        edit_btn = discord.ui.Button(label='Edit', style=discord.ButtonStyle.primary)
-        edit_btn.callback = self._edit_deck
-        self.add_item(edit_btn)
+        edit_button = discord.ui.Button(label='Edit', style=discord.ButtonStyle.primary)
+        edit_button.callback = self._edit_deck
+        self.add_item(edit_button)
 
-        delete_btn = discord.ui.Button(label='Delete', style=discord.ButtonStyle.danger)
-        delete_btn.callback = self._delete_deck
-        self.add_item(delete_btn)
-
-        back_btn = discord.ui.Button(label='Go Back', style=discord.ButtonStyle.grey)
-        back_btn.callback = self._go_back
-        self.add_item(back_btn)
-
-        deck_data = get_deck_by_name(self.user_id, self.selected_deck_name)
-        cards = resolve_deck_cards(deck_data, self.card_index)
-        embed = build_deck_list_embed(self.selected_deck_name, cards)
-        ids_line = ' '.join(f'{c.pack:02d}-{c.id:03d}' for c in cards)
-        embed.description += f'\n\n{ids_line}'
-
-        await interaction.response.edit_message(
-            content='Choose an action:',
-            embed=embed,
-            view=self,
-        )
-        grid = create_deck_grid_image(cards)
-        if grid:
-            await interaction.followup.send(file=grid, ephemeral=True)
+        delete_button = discord.ui.Button(label='Delete', style=discord.ButtonStyle.danger)
+        delete_button.callback = self._delete_deck
+        self.add_item(delete_button)
 
     async def _edit_deck(self, interaction: discord.Interaction):
-        modal = EditDeckModal(self.selected_deck_name, self.user_id, self.card_index)
+        deck_data = await get_deck_by_name(self.user_id, self.deck_name)
+        if deck_data is None:
+            await interaction.response.send_message(
+                f'Deck **{self.deck_name}** no longer exists.', ephemeral=True,
+            )
+            return
+        current_cards = resolve_deck_cards(deck_data, self.card_index)
+        modal = EditDeckModal(
+            self.deck_name, self.user_id, self.card_index, current_cards=current_cards,
+        )
         await interaction.response.send_modal(modal)
 
     async def _delete_deck(self, interaction: discord.Interaction):
         self.clear_items()
 
-        confirm_btn = discord.ui.Button(label='Confirm Delete', style=discord.ButtonStyle.danger)
-        confirm_btn.callback = self._confirm_delete
-        self.add_item(confirm_btn)
+        confirm_button = discord.ui.Button(label='Confirm Delete', style=discord.ButtonStyle.danger)
+        confirm_button.callback = self._confirm_delete
+        self.add_item(confirm_button)
 
-        cancel_btn = discord.ui.Button(label='Cancel', style=discord.ButtonStyle.grey)
-        cancel_btn.callback = self._go_back
-        self.add_item(cancel_btn)
+        cancel_button = discord.ui.Button(label='Cancel', style=discord.ButtonStyle.grey)
+        cancel_button.callback = self._cancel_delete
+        self.add_item(cancel_button)
 
         await interaction.response.edit_message(
-            content=f'Are you sure you want to delete **{self.selected_deck_name}**?',
+            content=f'Are you sure you want to delete **{self.deck_name}**?',
             view=self,
         )
 
     async def _confirm_delete(self, interaction: discord.Interaction):
         try:
-            delete_deck(self.user_id, self.selected_deck_name)
+            await delete_deck(self.user_id, self.deck_name)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
 
-        self.all_deck_names = get_deck_names(self.user_id)
-        if not self.all_deck_names:
-            await interaction.response.edit_message(
-                content=f'Deck **{self.selected_deck_name}** deleted. You have no more saved decks.',
-                embed=None,
-                view=None,
-            )
-            self.stop()
-            return
-
-        if self.page >= self.total_pages:
-            self.page = self.total_pages - 1
-
-        self.clear_items()
-        self._build_page()
         await interaction.response.edit_message(
-            content=f'Deck **{self.selected_deck_name}** deleted. Select another deck to manage:',
+            content=f'Deck **{self.deck_name}** deleted.',
             embed=None,
+            view=None,
+        )
+        self.stop()
+
+    async def _cancel_delete(self, interaction: discord.Interaction):
+        self._build_action_buttons()
+        await interaction.response.edit_message(
+            content='Choose an action:',
             view=self,
         )
-
-    async def _go_back(self, interaction: discord.Interaction):
-        self.selected_deck_name = None
-        self.clear_items()
-        self._build_page()
-        await interaction.response.edit_message(
-            content='Select a deck to manage:',
-            embed=None,
-            view=self,
-        )
-
-    async def _prev_page(self, interaction: discord.Interaction):
-        self.page = max(0, self.page - 1)
-        self.clear_items()
-        self._build_page()
-        await interaction.response.edit_message(
-            content=f'Select a deck to manage (Page {self.page + 1}/{self.total_pages}):',
-            embed=None,
-            view=self,
-        )
-
-    async def _next_page(self, interaction: discord.Interaction):
-        self.page = min(self.total_pages - 1, self.page + 1)
-        self.clear_items()
-        self._build_page()
-        await interaction.response.edit_message(
-            content=f'Select a deck to manage (Page {self.page + 1}/{self.total_pages}):',
-            embed=None,
-            view=self,
-        )
-
-
-# ---------------------------------------------------------------------------
-# /zutomayo viewdeck
-# ---------------------------------------------------------------------------
-
-
-class ViewDeckView(discord.ui.View):
-    """Paginated deck viewer. Shows one deck at a time with Prev/Next buttons."""
-
-    def __init__(
-        self,
-        user_id: int,
-        decks: list[dict],
-        card_index: dict[tuple[int, int], Card],
-        page: int = 0,
-    ):
-        super().__init__(timeout=750)
-        self.user_id = user_id
-        self.decks = decks
-        self.card_index = card_index
-        self.page = page
-        self._build_buttons()
-
-    def _build_buttons(self) -> None:
-        if len(self.decks) > 1:
-            prev_btn = discord.ui.Button(
-                label='<< Prev Deck', style=discord.ButtonStyle.grey,
-                disabled=(self.page == 0),
-            )
-            prev_btn.callback = self._prev_deck
-            self.add_item(prev_btn)
-
-            next_btn = discord.ui.Button(
-                label='Next Deck >>', style=discord.ButtonStyle.grey,
-                disabled=(self.page >= len(self.decks) - 1),
-            )
-            next_btn.callback = self._next_deck
-            self.add_item(next_btn)
-
-    def current_cards(self) -> list:
-        """Return the resolved cards for the currently displayed deck."""
-        deck = self.decks[self.page]
-        return resolve_deck_cards(deck, self.card_index)
-
-    def current_embed(self) -> discord.Embed:
-        deck = self.decks[self.page]
-        cards = resolve_deck_cards(deck, self.card_index)
-        title = f'{deck["name"]} ({self.page + 1}/{len(self.decks)})'
-        embed = build_deck_list_embed(title, cards)
-        ids_line = ' '.join(f'{c.pack:02d}-{c.id:03d}' for c in cards)
-        embed.description += f'\n\n{ids_line}'
-        return embed
-
-    async def _prev_deck(self, interaction: discord.Interaction):
-        self.page = max(0, self.page - 1)
-        self.clear_items()
-        self._build_buttons()
-        await interaction.response.edit_message(embed=self.current_embed(), view=self)
-        grid = create_deck_grid_image(self.current_cards())
-        if grid:
-            await interaction.followup.send(file=grid, ephemeral=True)
-
-    async def _next_deck(self, interaction: discord.Interaction):
-        self.page = min(len(self.decks) - 1, self.page + 1)
-        self.clear_items()
-        self._build_buttons()
-        await interaction.response.edit_message(embed=self.current_embed(), view=self)
-        grid = create_deck_grid_image(self.current_cards())
-        if grid:
-            await interaction.followup.send(file=grid, ephemeral=True)
 
 
 # ---------------------------------------------------------------------------
@@ -432,7 +282,7 @@ class DeckSourceView(discord.ui.View):
     @discord.ui.button(label='Select a Deck', style=discord.ButtonStyle.secondary, row=0)
     async def select_deck(self, interaction: discord.Interaction, button: discord.ui.Button):
         user_id = interaction.user.id
-        deck_names = get_deck_names(user_id)
+        deck_names = await get_deck_names(user_id)
         if not deck_names:
             await interaction.response.send_message(
                 'You have no saved decks. Use `/zutomayo makedeck` to create one, or click **Build a Deck**.',
@@ -487,7 +337,7 @@ class DeckSourceView(discord.ui.View):
             self.session.submit_action(self.player_index, _random_deck(self.all_cards))
 
 
-class SavedDeckSelectView(discord.ui.View):
+class SavedDeckSelectView(DeckNamePaginationMixin, discord.ui.View):
     """Paginated dropdown of saved decks during game start."""
 
     def __init__(
@@ -511,14 +361,6 @@ class SavedDeckSelectView(discord.ui.View):
         self.opponent_name = opponent_name
         self.page = page
         self._build_page()
-
-    @property
-    def total_pages(self) -> int:
-        return max(1, -(-len(self.all_deck_names) // DECKS_PER_PAGE))
-
-    def _page_slice(self) -> list[str]:
-        start = self.page * DECKS_PER_PAGE
-        return self.all_deck_names[start : start + DECKS_PER_PAGE]
 
     def _build_page(self) -> None:
         names = self._page_slice()
@@ -551,7 +393,7 @@ class SavedDeckSelectView(discord.ui.View):
 
     async def _deck_selected(self, interaction: discord.Interaction):
         deck_name = interaction.data['values'][0]
-        deck_data = get_deck_by_name(self.user_id, deck_name)
+        deck_data = await get_deck_by_name(self.user_id, deck_name)
         if deck_data is None:
             await interaction.response.send_message('Deck not found.', ephemeral=True)
             return
@@ -576,7 +418,7 @@ class SavedDeckSelectView(discord.ui.View):
             view=view,
         )
         self.stop()
-        grid = create_deck_grid_image(cards)
+        grid = await create_deck_grid_image_off_thread(cards)
         if grid:
             await interaction.followup.send(file=grid, ephemeral=True)
 
@@ -750,7 +592,7 @@ class DefaultDeckSelectView(discord.ui.View):
             view=view,
         )
         self.stop()
-        grid = create_deck_grid_image(cards)
+        grid = await create_deck_grid_image_off_thread(cards)
         if grid:
             await interaction.followup.send(file=grid, ephemeral=True)
 

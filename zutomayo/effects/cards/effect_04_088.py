@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from zutomayo.enums.zone import Zone
 import logging
 
 if TYPE_CHECKING:
@@ -27,8 +26,7 @@ async def effect_04_088(
 
     # Phase 1: Select a card from Abyss and place at deck bottom (mandatory)
     if not player.abyss:
-        player.hp = 0
-        log.debug('[%s] %s: HP set to 0, player loses', card_instance.card.effect, engine.player_label(player_index))
+        engine.lose_game(game_state, player_index, source=card_instance.card.effect)
         await engine._send_dm(
             player_index,
             content='**Effect (04-088):** No cards in Abyss. You lose the game!',
@@ -50,8 +48,7 @@ async def effect_04_088(
 
     if selected_card is None:
         # Timeout — player loses the game (mandatory action)
-        player.hp = 0
-        log.debug('[%s] %s: HP set to 0, player loses', card_instance.card.effect, engine.player_label(player_index))
+        engine.lose_game(game_state, player_index, source=card_instance.card.effect)
         await engine._send_dm(
             player_index,
             content='**Effect (04-088):** Failed to select a card. You lose the game!',
@@ -65,9 +62,7 @@ async def effect_04_088(
 
     # Move selected card from abyss to deck bottom (face down)
     player.abyss.remove(selected_card)
-    selected_card.zone = Zone.DECK
-    selected_card.face_up = False
-    player.deck.append(selected_card)
+    engine.return_to_deck_bottom(selected_card, player)
 
     await engine._send_dm(
         player_index,

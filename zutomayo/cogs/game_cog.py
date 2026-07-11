@@ -11,9 +11,8 @@ from zutomayo.data.name_storage import (
     set_custom_name,
 )
 from zutomayo.data.player_storage import (
-    BOT_DISCORD_ID,
-    iter_all_profiles,
     load_profile,
+    list_ranked_profiles,
 )
 from zutomayo.engine.game_session import session_manager
 from zutomayo.ui.player_embeds import (
@@ -57,7 +56,7 @@ class GameCog(commands.Cog):
     @app_commands.guild_only()
     async def create_game(self, interaction: discord.Interaction):
         try:
-            session = session_manager.create_game(interaction.channel_id, interaction.user.id)
+            session = await session_manager.create_game(interaction.channel_id, interaction.user.id)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
@@ -85,7 +84,7 @@ class GameCog(commands.Cog):
             return
 
         try:
-            session = session_manager.create_game(interaction.channel_id, interaction.user.id)
+            session = await session_manager.create_game(interaction.channel_id, interaction.user.id)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
@@ -106,7 +105,7 @@ class GameCog(commands.Cog):
     async def play_uniguri(self, interaction: discord.Interaction):
         channel_id = 0
         try:
-            session = session_manager.create_solo_game(channel_id, interaction.user.id)
+            session = await session_manager.create_solo_game(channel_id, interaction.user.id)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
@@ -130,7 +129,7 @@ class GameCog(commands.Cog):
     async def play_uniguri_easy(self, interaction: discord.Interaction):
         channel_id = 0
         try:
-            session = session_manager.create_solo_game(channel_id, interaction.user.id)
+            session = await session_manager.create_solo_game(channel_id, interaction.user.id)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
@@ -201,13 +200,13 @@ class GameCog(commands.Cog):
                 game_flow.run_game(session)
             )
 
-    @group.command(name='end', description='End a specific game by ID')
+    @group.command(name='end', description='End a live game, or abandon one of your saved games')
     @app_commands.guild_only()
-    @app_commands.describe(game_id='The game ID to end')
+    @app_commands.describe(game_id='The game ID to end or abandon')
     async def end_game(self, interaction: discord.Interaction, game_id: str):
         session = session_manager.active_games.get(game_id)
         if session is None:
-            await interaction.response.send_message(f'Game `{game_id}` not found.', ephemeral=True)
+            await self._abandon_saved_game(interaction, game_id)
             return
 
         if interaction.user.id not in session.player_discord_ids:
@@ -217,198 +216,305 @@ class GameCog(commands.Cog):
         if session.game_task and not session.game_task.done():
             session.game_task.cancel()
 
-        self._record_forfeit_for_session(session, interaction.user.id)
+        await self._record_forfeit_for_session(session, interaction.user.id)
+        await self._mark_session_quit(session)
         session_manager.remove_game(game_id)
         log.info('Game %s ended by %s (end command)', game_id, interaction.user)
         await interaction.response.send_message(
             f'**{interaction.user.display_name}** ended game `{game_id}`.'
         )
 
-    @group.command(name='makedeck', description='Create and save a new deck')
-    @app_commands.describe(name='A unique name for this deck (max 50 characters)')
-    async def make_deck(self, interaction: discord.Interaction, name: str):
+    @end_game.autocomplete('game_id')
+    async def end_game_autocomplete(
+        self, interaction: discord.Interaction, current: str,
+    ) -> list[app_commands.Choice[str]]:
+        try:
+            from zutomayo.engine.game_persistence import list_saved_games_for_player
+
+            choices: list[app_commands.Choice[str]] = []
+            live_session = session_manager.get_session_by_player(interaction.user.id)
+            if live_session is not None and live_session.game_id.startswith(current):
+                choices.append(app_commands.Choice(
+                    name=f'{live_session.game_id} (live game)'[:100],
+                    value=live_session.game_id,
+                ))
+            for row in await list_saved_games_for_player(interaction.user.id, current):
+                saved_date = row['saved_at'].date().isoformat() if row['saved_at'] else 'unknown date'
+                choices.append(app_commands.Choice(
+                    name=f'{row["game_id"]} ({row["mode"]}, saved {saved_date})'[:100],
+                    value=row['game_id'],
+                ))
+            return choices[:25]
+        except Exception:
+            log.exception('end autocomplete failed')
+            return []
+
+    async def _abandon_saved_game(self, interaction: discord.Interaction, game_id: str) -> None:
+        """End a saved game for good: status abandoned, forfeit for the abandoner."""
+        from zutomayo.data.player_storage import BOT_DISCORD_ID, record_forfeit
+        from zutomayo.engine.game_events import EVENT_FORFEIT
+        from zutomayo.engine.game_persistence import (
+            STATUS_ABANDONED,
+            STATUS_SAVED,
+            GameRecordStore,
+            get_game_row,
+        )
+
+        row = await get_game_row(game_id)
+        if row is None or row['status'] != STATUS_SAVED:
+            await interaction.response.send_message(f'Game `{game_id}` not found.', ephemeral=True)
+            return
+
+        manifest = row['manifest']
+        player_ids = [pair[0] for pair in manifest.get('player_discord_ids', [])]
+        if interaction.user.id not in player_ids:
+            await interaction.response.send_message('You are not a player in that game.', ephemeral=True)
+            return
+
+        opponent_id = next(
+            (player_id for player_id in player_ids
+             if player_id != interaction.user.id and player_id != BOT_DISCORD_ID),
+            None,
+        )
+        try:
+            await record_forfeit(interaction.user.id, opponent_id)
+        except Exception:
+            log.exception('Failed to record forfeit for abandoned game %s', game_id)
+
+        store = GameRecordStore.attach_for_resume(game_id)
+        player_index = next(
+            (index for player_id, index in manifest.get('player_discord_ids', [])
+             if player_id == interaction.user.id),
+            None,
+        )
+        store.next_event_index = await self._next_event_index_safe(game_id)
+        store.emit_event(EVENT_FORFEIT, {
+            'player_index': player_index,
+            'discord_id': interaction.user.id,
+        })
+        await store.set_status(STATUS_ABANDONED)
+        log.info('Saved game %s abandoned by %s', game_id, interaction.user)
+        await interaction.response.send_message(
+            f'**{interaction.user.display_name}** abandoned saved game `{game_id}`. '
+            'It can no longer be resumed.'
+        )
+
+    @staticmethod
+    async def _next_event_index_safe(game_id: str) -> int:
+        from zutomayo.engine.game_persistence import next_event_index
+
+        try:
+            return await next_event_index(game_id)
+        except Exception:
+            log.exception('Failed to read next event index for game %s', game_id)
+            return 0
+
+    async def _start_make_deck(
+        self,
+        interaction: discord.Interaction,
+        name: str,
+        load_deck_names,
+        duplicate_message: str,
+        modal_class,
+    ) -> None:
+        """Shared body of the makedeck / makedecktcg commands."""
+        from zutomayo.data.deck_validator import get_card_index
+
         if len(name) > 50:
             await interaction.response.send_message(
                 'Deck name must be 50 characters or fewer.', ephemeral=True,
             )
             return
 
-        from zutomayo.data.card_loader import load_cards
-        from zutomayo.data.deck_storage import get_deck_names
-        from zutomayo.data.deck_validator import build_card_index
-
-        existing_names = get_deck_names(interaction.user.id)
+        existing_names = await load_deck_names(interaction.user.id)
         if name in existing_names:
-            await interaction.response.send_message(
-                f'A deck named **{name}** already exists. Please choose a different name.',
-                ephemeral=True,
-            )
+            await interaction.response.send_message(duplicate_message, ephemeral=True)
             return
 
-        all_cards = load_cards()
-        card_index = build_card_index(all_cards)
-
-        from zutomayo.ui.deck_management_views import MakeDeckModal
-        modal = MakeDeckModal(deck_name=name, user_id=interaction.user.id, card_index=card_index)
+        _, card_index = get_card_index()
+        modal = modal_class(deck_name=name, user_id=interaction.user.id, card_index=card_index)
         await interaction.response.send_modal(modal)
 
-    @group.command(name='managedecks', description='Edit or delete your saved decks')
-    async def manage_decks(self, interaction: discord.Interaction):
-        from zutomayo.data.card_loader import load_cards
+    @group.command(name='makedeck', description='Create and save a new deck')
+    @app_commands.describe(name='A unique name for this deck (max 50 characters)')
+    async def make_deck(self, interaction: discord.Interaction, name: str):
         from zutomayo.data.deck_storage import get_deck_names
-        from zutomayo.data.deck_validator import build_card_index
+        from zutomayo.ui.deck_management_views import MakeDeckModal
 
-        deck_names = get_deck_names(interaction.user.id)
-        if not deck_names:
+        await self._start_make_deck(
+            interaction, name, get_deck_names,
+            f'A deck named **{name}** already exists. Please choose a different name.',
+            MakeDeckModal,
+        )
+
+    async def _load_deck_or_report(self, interaction: discord.Interaction, deck: str):
+        """Resolve a standard deck by name; sends the not-found reply itself."""
+        from zutomayo.data.deck_storage import get_deck_by_name, resolve_deck_cards
+        from zutomayo.data.deck_validator import get_card_index
+
+        deck_data = await get_deck_by_name(interaction.user.id, deck)
+        if deck_data is None:
             await interaction.response.send_message(
-                'You have no saved decks. Use `/zutomayo makedeck` to create one.',
+                f'You have no deck named **{deck}**. Start typing to search your '
+                'saved decks, or use `/zutomayo makedeck` to create one.',
                 ephemeral=True,
             )
+            return None, None
+        _, card_index = get_card_index()
+        return resolve_deck_cards(deck_data, card_index), card_index
+
+    async def _deck_name_autocomplete(self, interaction: discord.Interaction, current: str, tcg: bool):
+        try:
+            if tcg:
+                from zutomayo.data.deck_storage_tcg import search_tcg_deck_names as search
+            else:
+                from zutomayo.data.deck_storage import search_deck_names as search
+            names = await search(interaction.user.id, current)
+            return [app_commands.Choice(name=name[:100], value=name[:100]) for name in names[:25]]
+        except Exception:
+            log.exception('deck name autocomplete failed')
+            return []
+
+    @group.command(name='managedecks', description='Edit or delete one of your saved decks')
+    @app_commands.describe(deck='The deck to manage (search by name)')
+    async def manage_decks(self, interaction: discord.Interaction, deck: str):
+        from zutomayo.ui.deck_management_views import ManageDeckActionsView, format_card_ids_line
+        from zutomayo.ui.embeds import build_deck_list_embed, create_deck_grid_image_off_thread
+
+        cards, card_index = await self._load_deck_or_report(interaction, deck)
+        if cards is None:
             return
 
-        all_cards = load_cards()
-        card_index = build_card_index(all_cards)
-
-        from zutomayo.ui.deck_management_views import ManageDecksView
-        view = ManageDecksView(
+        embed = build_deck_list_embed(deck, cards)
+        embed.description += f'\n\n{format_card_ids_line(cards)}'
+        view = ManageDeckActionsView(
             user_id=interaction.user.id,
-            deck_names=deck_names,
+            deck_name=deck,
             card_index=card_index,
         )
         await interaction.response.send_message(
-            'Select a deck to manage:',
-            view=view,
-            ephemeral=True,
+            'Choose an action:', embed=embed, view=view, ephemeral=True,
         )
-
-    @group.command(name='viewdeck', description='View your saved decks')
-    async def view_deck(self, interaction: discord.Interaction):
-        from zutomayo.data.card_loader import load_cards
-        from zutomayo.data.deck_storage import load_user_decks
-        from zutomayo.data.deck_validator import build_card_index
-
-        decks = load_user_decks(interaction.user.id)
-        if not decks:
-            await interaction.response.send_message(
-                'You have no saved decks. Use `/zutomayo makedeck` to create one.',
-                ephemeral=True,
-            )
-            return
-
-        all_cards = load_cards()
-        card_index = build_card_index(all_cards)
-
-        from zutomayo.ui.deck_management_views import ViewDeckView
-        from zutomayo.ui.embeds import create_deck_grid_image
-
-        view = ViewDeckView(
-            user_id=interaction.user.id,
-            decks=decks,
-            card_index=card_index,
-        )
-        await interaction.response.send_message(
-            embed=view.current_embed(),
-            view=view,
-            ephemeral=True,
-        )
-        grid = create_deck_grid_image(view.current_cards())
+        grid = await create_deck_grid_image_off_thread(cards)
         if grid:
             await interaction.followup.send(file=grid, ephemeral=True)
+
+    @manage_decks.autocomplete('deck')
+    async def manage_decks_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._deck_name_autocomplete(interaction, current, tcg=False)
+
+    @group.command(name='viewdeck', description='View one of your saved decks')
+    @app_commands.describe(deck='The deck to view (search by name)')
+    async def view_deck(self, interaction: discord.Interaction, deck: str):
+        from zutomayo.ui.deck_management_views import format_card_ids_line
+        from zutomayo.ui.embeds import build_deck_list_embed, create_deck_grid_image_off_thread
+
+        cards, _ = await self._load_deck_or_report(interaction, deck)
+        if cards is None:
+            return
+
+        embed = build_deck_list_embed(deck, cards)
+        embed.description += f'\n\n{format_card_ids_line(cards)}'
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        grid = await create_deck_grid_image_off_thread(cards)
+        if grid:
+            await interaction.followup.send(file=grid, ephemeral=True)
+
+    @view_deck.autocomplete('deck')
+    async def view_deck_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._deck_name_autocomplete(interaction, current, tcg=False)
 
     @group.command(name='makedecktcg', description='Create and save a new TCG deck (20 main + 8 side)')
     @app_commands.describe(name='A unique name for this deck (max 50 characters)')
     async def make_deck_tcg(self, interaction: discord.Interaction, name: str):
-        if len(name) > 50:
-            await interaction.response.send_message(
-                'Deck name must be 50 characters or fewer.', ephemeral=True,
-            )
-            return
-
-        from zutomayo.data.card_loader import load_cards
         from zutomayo.data.deck_storage_tcg import get_tcg_deck_names
-        from zutomayo.data.deck_validator import build_card_index
-
-        existing_names = get_tcg_deck_names(interaction.user.id)
-        if name in existing_names:
-            await interaction.response.send_message(
-                f'A TCG deck named **{name}** already exists. Please choose a different name.',
-                ephemeral=True,
-            )
-            return
-
-        all_cards = load_cards()
-        card_index = build_card_index(all_cards)
-
         from zutomayo.ui.deck_management_views_tcg import MakeDeckTcgModal
-        modal = MakeDeckTcgModal(deck_name=name, user_id=interaction.user.id, card_index=card_index)
-        await interaction.response.send_modal(modal)
 
-    @group.command(name='viewdecktcg', description='View your saved TCG decks')
-    async def view_deck_tcg(self, interaction: discord.Interaction):
-        from zutomayo.data.card_loader import load_cards
-        from zutomayo.data.deck_storage_tcg import load_user_tcg_decks
-        from zutomayo.data.deck_validator import build_card_index
+        await self._start_make_deck(
+            interaction, name, get_tcg_deck_names,
+            f'A TCG deck named **{name}** already exists. Please choose a different name.',
+            MakeDeckTcgModal,
+        )
 
-        decks = load_user_tcg_decks(interaction.user.id)
-        if not decks:
+    async def _load_tcg_deck_or_report(self, interaction: discord.Interaction, deck: str):
+        """Resolve a TCG deck by name; sends the not-found reply itself."""
+        from zutomayo.data.deck_storage_tcg import get_tcg_deck_by_name, resolve_tcg_deck_cards
+        from zutomayo.data.deck_validator import get_card_index
+
+        deck_data = await get_tcg_deck_by_name(interaction.user.id, deck)
+        if deck_data is None:
             await interaction.response.send_message(
-                'You have no saved TCG decks. Use `/zutomayo makedecktcg` to create one.',
+                f'You have no TCG deck named **{deck}**. Start typing to search your '
+                'saved TCG decks, or use `/zutomayo makedecktcg` to create one.',
                 ephemeral=True,
             )
-            return
+            return None, None, None
+        _, card_index = get_card_index()
+        main_cards, side_cards = resolve_tcg_deck_cards(deck_data, card_index)
+        return main_cards, side_cards, card_index
 
-        all_cards = load_cards()
-        card_index = build_card_index(all_cards)
+    def _build_tcg_deck_embeds(self, deck: str, main_cards, side_cards) -> list[discord.Embed]:
+        from zutomayo.ui.deck_management_views import format_card_ids_line
+        from zutomayo.ui.embeds import build_deck_list_embed
 
-        from zutomayo.ui.deck_management_views_tcg import ViewDeckTcgView
-        from zutomayo.ui.embeds import create_deck_grid_image
+        main_embed = build_deck_list_embed(f'{deck} - Main Deck', main_cards)
+        main_embed.description += f'\n\n{format_card_ids_line(main_cards)}'
+        side_embed = build_deck_list_embed(f'{deck} - Side Deck', side_cards)
+        side_embed.description += f'\n\n{format_card_ids_line(side_cards)}'
+        return [main_embed, side_embed]
 
-        view = ViewDeckTcgView(
-            user_id=interaction.user.id,
-            decks=decks,
-            card_index=card_index,
-        )
-        await interaction.response.send_message(
-            embeds=view.current_embeds(),
-            view=view,
-            ephemeral=True,
-        )
-        main_cards, side_cards = view.current_cards()
-        grid = create_deck_grid_image(main_cards)
+    async def _send_tcg_deck_grids(self, interaction: discord.Interaction, main_cards, side_cards) -> None:
+        from zutomayo.ui.embeds import create_deck_grid_image_off_thread
+
+        grid = await create_deck_grid_image_off_thread(main_cards)
         if grid:
             await interaction.followup.send(content='**Main Deck:**', file=grid, ephemeral=True)
-        side_grid = create_deck_grid_image(side_cards, columns=4)
+        side_grid = await create_deck_grid_image_off_thread(side_cards, columns=4)
         if side_grid:
             await interaction.followup.send(content='**Side Deck:**', file=side_grid, ephemeral=True)
 
-    @group.command(name='managedeckstcg', description='Edit or delete your saved TCG decks')
-    async def manage_decks_tcg(self, interaction: discord.Interaction):
-        from zutomayo.data.card_loader import load_cards
-        from zutomayo.data.deck_storage_tcg import get_tcg_deck_names
-        from zutomayo.data.deck_validator import build_card_index
-
-        deck_names = get_tcg_deck_names(interaction.user.id)
-        if not deck_names:
-            await interaction.response.send_message(
-                'You have no saved TCG decks. Use `/zutomayo makedecktcg` to create one.',
-                ephemeral=True,
-            )
+    @group.command(name='viewdecktcg', description='View one of your saved TCG decks')
+    @app_commands.describe(deck='The TCG deck to view (search by name)')
+    async def view_deck_tcg(self, interaction: discord.Interaction, deck: str):
+        main_cards, side_cards, _ = await self._load_tcg_deck_or_report(interaction, deck)
+        if main_cards is None:
             return
 
-        all_cards = load_cards()
-        card_index = build_card_index(all_cards)
+        await interaction.response.send_message(
+            embeds=self._build_tcg_deck_embeds(deck, main_cards, side_cards),
+            ephemeral=True,
+        )
+        await self._send_tcg_deck_grids(interaction, main_cards, side_cards)
 
-        from zutomayo.ui.deck_management_views_tcg import ManageDecksTcgView
-        view = ManageDecksTcgView(
+    @view_deck_tcg.autocomplete('deck')
+    async def view_deck_tcg_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._deck_name_autocomplete(interaction, current, tcg=True)
+
+    @group.command(name='managedeckstcg', description='Edit or delete one of your saved TCG decks')
+    @app_commands.describe(deck='The TCG deck to manage (search by name)')
+    async def manage_decks_tcg(self, interaction: discord.Interaction, deck: str):
+        from zutomayo.ui.deck_management_views_tcg import ManageDeckTcgActionsView
+
+        main_cards, side_cards, card_index = await self._load_tcg_deck_or_report(interaction, deck)
+        if main_cards is None:
+            return
+
+        view = ManageDeckTcgActionsView(
             user_id=interaction.user.id,
-            deck_names=deck_names,
+            deck_name=deck,
             card_index=card_index,
         )
         await interaction.response.send_message(
-            'Select a TCG deck to manage:',
+            'Choose an action:',
+            embeds=self._build_tcg_deck_embeds(deck, main_cards, side_cards),
             view=view,
             ephemeral=True,
         )
+        await self._send_tcg_deck_grids(interaction, main_cards, side_cards)
+
+    @manage_decks_tcg.autocomplete('deck')
+    async def manage_decks_tcg_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._deck_name_autocomplete(interaction, current, tcg=True)
 
     @group.command(name='gacha', description='Open a card pack and draw 5 cards')
     @app_commands.describe(pack='Pack number (1-4)')
@@ -421,11 +527,11 @@ class GameCog(commands.Cog):
 
         from zutomayo.data.card_loader import load_cards
         from zutomayo.data.gacha import draw_gacha
-        from zutomayo.ui.embeds import create_deck_grid_image
+        from zutomayo.ui.embeds import create_deck_grid_image_off_thread
 
         all_cards = load_cards()
         drawn = draw_gacha(pack, all_cards)
-        image = create_deck_grid_image(drawn, columns=5, filename='gacha.webp')
+        image = await create_deck_grid_image_off_thread(drawn, columns=5, filename='gacha.webp')
         if image:
             await interaction.response.send_message(file=image)
         else:
@@ -447,13 +553,13 @@ class GameCog(commands.Cog):
 
         from zutomayo.data.card_loader import load_cards
         from zutomayo.data.gacha import draw_gachabox
-        from zutomayo.ui.embeds import create_deck_grid_image
+        from zutomayo.ui.embeds import create_deck_grid_image_off_thread
 
         all_cards = load_cards()
         drawn = draw_gachabox(pack, all_cards)
         half = len(drawn) // 2
-        image1 = create_deck_grid_image(drawn[:half], columns=5, filename='gachabox_1.webp')
-        image2 = create_deck_grid_image(drawn[half:], columns=5, filename='gachabox_2.webp')
+        image1 = await create_deck_grid_image_off_thread(drawn[:half], columns=5, filename='gachabox_1.webp')
+        image2 = await create_deck_grid_image_off_thread(drawn[half:], columns=5, filename='gachabox_2.webp')
         files = [f for f in (image1, image2) if f]
         if files:
             await interaction.followup.send(files=files)
@@ -473,12 +579,150 @@ class GameCog(commands.Cog):
         if session.game_task and not session.game_task.done():
             session.game_task.cancel()
 
-        self._record_forfeit_for_session(session, interaction.user.id)
+        await self._record_forfeit_for_session(session, interaction.user.id)
+        await self._mark_session_quit(session)
         session_manager.remove_game(session.game_id)
         log.info('Game %s ended by %s (quit command)', session.game_id, interaction.user)
         await interaction.response.send_message(
             f'**{interaction.user.display_name}** quit the game. Game `{session.game_id}` has been removed.'
         )
+
+    @group.command(
+        name='saveandquit',
+        description='Save your current game and quit; resume it later with /zutomayo resume',
+    )
+    async def save_and_quit(self, interaction: discord.Interaction) -> None:
+        from zutomayo.engine.game_events import EVENT_GAME_SAVED
+        from zutomayo.engine.game_persistence import STATUS_SAVED
+
+        session = session_manager.get_session_by_player(interaction.user.id)
+        if session is None:
+            await interaction.response.send_message('You are not in a game.', ephemeral=True)
+            return
+        if session.persistence is None:
+            await interaction.response.send_message(
+                'This game has not started yet, so there is nothing to save. '
+                'Use `/zutomayo quit` instead.',
+                ephemeral=True,
+            )
+            return
+        if session.broker is not None and session.broker.replaying:
+            await interaction.response.send_message(
+                'This game is still being restored. Try again in a moment.', ephemeral=True,
+            )
+            return
+
+        if session.game_task and not session.game_task.done():
+            session.game_task.cancel()
+
+        session.persistence.emit_event(EVENT_GAME_SAVED, {
+            'by_discord_id': interaction.user.id,
+            'channel_id': session.channel_id,
+        })
+        await session.persistence.set_status(STATUS_SAVED)
+        session_manager.detach_game(session.game_id)
+        log.info('Game %s saved by %s', session.game_id, interaction.user)
+        await interaction.response.send_message(
+            f'Game `{session.game_id}` has been saved. Resume it any time with '
+            f'`/zutomayo resume {session.game_id}`.\n'
+            'Note: saved games are restored by replaying the game log, so they '
+            'may not survive bot updates.'
+        )
+
+    @group.command(name='resume', description='Resume one of your saved games')
+    @app_commands.describe(game_id='The saved game to resume')
+    async def resume_saved_game(self, interaction: discord.Interaction, game_id: str) -> None:
+        from zutomayo.engine.game_persistence import STATUS_ACTIVE, GameRecordStore
+        from zutomayo.engine.resume_manager import load_saved_game_for_resume, resume_game
+        from zutomayo.ui.resume_views import ResumeConfirmationView
+
+        try:
+            row = await load_saved_game_for_resume(game_id, interaction.user.id)
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+
+        if row['is_solo']:
+            if interaction.guild is not None:
+                await interaction.response.send_message(
+                    'Solo games are resumed in DMs — use this command in a DM with the bot.',
+                    ephemeral=True,
+                )
+                return
+            await GameRecordStore.attach_for_resume(game_id).set_status(STATUS_ACTIVE)
+            await interaction.response.send_message(f'Resuming game `{game_id}`...')
+            await resume_game(self.bot, game_id, announcement='**Game resumed.**')
+            return
+
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                'Two-player games are resumed in a server channel, not in DMs.', ephemeral=True,
+            )
+            return
+
+        manifest = row['manifest']
+        opponent_id = next(
+            player_id for player_id, _ in manifest['player_discord_ids']
+            if player_id != interaction.user.id
+        )
+        channel_id = interaction.channel_id
+        invoker_id = interaction.user.id
+        bot = self.bot
+
+        async def start_resume(button_interaction: discord.Interaction) -> None:
+            try:
+                await load_saved_game_for_resume(game_id, invoker_id)
+            except ValueError as error:
+                await button_interaction.response.edit_message(content=str(error), view=None)
+                return
+            await GameRecordStore.attach_for_resume(game_id).set_status(
+                STATUS_ACTIVE, channel_id=channel_id,
+            )
+            await button_interaction.response.edit_message(
+                content=f'Both players agreed — resuming game `{game_id}`...', view=None,
+            )
+            await resume_game(
+                bot, game_id,
+                channel_id_override=channel_id,
+                announcement='**Game resumed.**',
+            )
+
+        view = ResumeConfirmationView(
+            game_id=game_id,
+            invoker_id=invoker_id,
+            opponent_id=opponent_id,
+            on_accept=start_resume,
+        )
+        mode_label = f'TCG best of {row["best_of"]}' if row['is_tcg'] else 'standard'
+        saved_date = row['saved_at'].date().isoformat() if row['saved_at'] else 'unknown date'
+        await interaction.response.send_message(
+            f'<@{opponent_id}> — **{interaction.user.display_name}** wants to resume '
+            f'saved game `{game_id}` ({mode_label}, saved {saved_date}). '
+            'Both players must agree before the game continues.',
+            view=view,
+            allowed_mentions=discord.AllowedMentions(users=[discord.Object(id=opponent_id)]),
+        )
+        view.message = await interaction.original_response()
+
+    @resume_saved_game.autocomplete('game_id')
+    async def resume_autocomplete(
+        self, interaction: discord.Interaction, current: str,
+    ) -> list[app_commands.Choice[str]]:
+        try:
+            from zutomayo.engine.game_persistence import list_saved_games_for_player
+
+            choices = []
+            for row in await list_saved_games_for_player(interaction.user.id, current):
+                saved_date = row['saved_at'].date().isoformat() if row['saved_at'] else 'unknown date'
+                mode_label = f'TCG best of {row["best_of"]}' if row['is_tcg'] else row['mode']
+                choices.append(app_commands.Choice(
+                    name=f'{row["game_id"]} ({mode_label}, saved {saved_date})'[:100],
+                    value=row['game_id'],
+                ))
+            return choices[:25]
+        except Exception:
+            log.exception('resume autocomplete failed')
+            return []
 
     @group.command(
         name='editname',
@@ -487,7 +731,7 @@ class GameCog(commands.Cog):
     @app_commands.describe(name=f'Your new display name (max {MAXIMUM_CUSTOM_NAME_LENGTH} characters)')
     async def edit_name(self, interaction: discord.Interaction, name: str | None = None) -> None:
         if name is None or not name.strip():
-            clear_custom_name(interaction.user.id)
+            await clear_custom_name(interaction.user.id)
             remember_user(interaction.user.id, interaction.user.global_name or interaction.user.name)
             await interaction.response.send_message(
                 'Your display name now follows your Discord name again.', ephemeral=True,
@@ -501,26 +745,252 @@ class GameCog(commands.Cog):
             )
             return
 
-        set_custom_name(interaction.user.id, name)
+        await set_custom_name(interaction.user.id, name)
         await interaction.response.send_message(
             f'Your display name is now **{name}**.', ephemeral=True,
         )
 
     @group.command(
-        name='profilestats',
-        description='Show your own ZUTOMAYO CARD player profile (Elo, win/loss, top decks, top rivals)',
+        name='summary',
+        description='Show a full summary of a finished game: moves, phases, hands, and results',
     )
-    async def profile_stats(self, interaction: discord.Interaction) -> None:
+    @app_commands.describe(game_id='The finished game to summarize (search by game ID)')
+    async def game_summary(self, interaction: discord.Interaction, game_id: str) -> None:
+        from zutomayo.data.deck_validator import get_card_index
+        from zutomayo.engine.game_persistence import (
+            SUMMARY_ELIGIBLE_STATUSES,
+            get_game_row,
+            load_events,
+        )
+        from zutomayo.ui.game_summary_view import GameSummaryView, build_game_summary
+
+        row = await get_game_row(game_id)
+        if row is None or row['status'] not in SUMMARY_ELIGIBLE_STATUSES:
+            await interaction.response.send_message(
+                f'Game `{game_id}` was not found or is not finished yet. '
+                'Summaries are available for completed, quit, or abandoned games.',
+                ephemeral=True,
+            )
+            return
+
         await interaction.response.defer()
-        profile = load_profile(interaction.user.id)
+
+        manifest = row.get('manifest') or {}
+        player_ids = manifest.get('player_discord_ids', [])
+        human_ids = [player_id for player_id, _ in player_ids if player_id != 0]
+        await ensure_display_names(self.bot, human_ids)
+
+        from zutomayo.data.name_storage import resolve_display_name
+        from zutomayo.engine.bot_agent import BOT_NAME
+
+        player_names = {
+            index: (BOT_NAME if player_id == 0 else resolve_display_name(self.bot, player_id))
+            for player_id, index in player_ids
+        }
+
+        events = await load_events(game_id)
+        _, card_index = get_card_index()
+        summary = build_game_summary(row, player_names, events, card_index)
+        if not summary.pages:
+            await interaction.followup.send(
+                f'No summary data is recorded for game `{game_id}`.',
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            return
+
+        view = GameSummaryView(game_id, summary)
+        view.message = await interaction.followup.send(
+            embed=view.build_embed(),
+            view=view,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @game_summary.autocomplete('game_id')
+    async def game_summary_autocomplete(
+        self, interaction: discord.Interaction, current: str,
+    ) -> list[app_commands.Choice[str]]:
+        try:
+            from zutomayo.engine.game_persistence import search_finished_games
+
+            choices = []
+            for row in await search_finished_games(current):
+                if row['is_tcg']:
+                    mode_label = f'TCG best of {row["best_of"]}'
+                else:
+                    mode_label = row['mode']
+                played_date = row['created_at'].date().isoformat() if row['created_at'] else ''
+                choices.append(app_commands.Choice(
+                    name=f'{row["game_id"]} ({mode_label}, {row["status"]}, {played_date})'[:100],
+                    value=row['game_id'],
+                ))
+            return choices[:25]
+        except Exception:
+            log.exception('summary autocomplete failed')
+            return []
+
+    async def _resolve_player_option(
+        self, interaction: discord.Interaction, player: str | None,
+    ) -> tuple[int, str, str | None, bool] | None:
+        """
+        Resolve the optional player search option to
+        (user_id, display_name, avatar_url, viewing_own). The option value is
+        a user id string from autocomplete, but a typed display name is also
+        accepted. Sends the not-found reply itself and returns None on failure.
+        """
+        from zutomayo.data.name_storage import resolve_display_name, search_known_players
+
+        if player is None or not player.strip():
+            return (
+                interaction.user.id,
+                interaction.user.display_name,
+                interaction.user.display_avatar.url,
+                True,
+            )
+
+        player = player.strip()
+        if player.isdigit():
+            target_id = int(player)
+        else:
+            matches = await search_known_players(player, limit=2)
+            exact = [pair for pair in matches if pair[1].lower() == player.lower()]
+            if len(exact) == 1:
+                target_id = exact[0][0]
+            elif len(matches) == 1:
+                target_id = matches[0][0]
+            else:
+                await interaction.response.send_message(
+                    f'No player named **{player}** was found. Start typing to '
+                    'search known players.',
+                    ephemeral=True,
+                )
+                return None
+
+        if target_id == interaction.user.id:
+            return (
+                interaction.user.id,
+                interaction.user.display_name,
+                interaction.user.display_avatar.url,
+                True,
+            )
+
+        display_name = resolve_display_name(self.bot, target_id)
+        user = self.bot.get_user(target_id)
+        avatar_url = user.display_avatar.url if user is not None else None
+        return target_id, display_name, avatar_url, False
+
+    async def _player_search_autocomplete(
+        self, interaction: discord.Interaction, current: str,
+    ) -> list[app_commands.Choice[str]]:
+        try:
+            from zutomayo.data.name_storage import search_known_players
+
+            matches = await search_known_players(current)
+            return [
+                app_commands.Choice(name=name[:100], value=str(user_id))
+                for user_id, name in matches[:25]
+            ]
+        except Exception:
+            log.exception('player search autocomplete failed')
+            return []
+
+    @group.command(
+        name='profilestats',
+        description='Show a player profile (Elo, win/loss, top decks, top rivals); defaults to your own',
+    )
+    @app_commands.describe(player='Another player to look up (search by name); leave empty for yourself')
+    async def profile_stats(self, interaction: discord.Interaction, player: str | None = None) -> None:
+        resolved = await self._resolve_player_option(interaction, player)
+        if resolved is None:
+            return
+        target_id, display_name, avatar_url, viewing_own = resolved
+
+        await interaction.response.defer()
+        profile = await load_profile(target_id)
         rival_ids = [
             int(opponent_id_str)
             for opponent_id_str in profile.get('opponent_stats', {})
             if opponent_id_str.isdigit()
         ]
         await ensure_display_names(self.bot, rival_ids)
-        embed = build_profile_embed(self.bot, interaction.user, profile)
-        await interaction.followup.send(embed=embed)
+        embed = build_profile_embed(
+            self.bot, profile,
+            display_name=display_name,
+            avatar_url=avatar_url,
+            viewing_own=viewing_own,
+        )
+        await interaction.followup.send(
+            embed=embed, allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @profile_stats.autocomplete('player')
+    async def profile_stats_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._player_search_autocomplete(interaction, current)
+
+    @group.command(
+        name='history',
+        description='List recent finished games (yours or another player’s) with their game ids',
+    )
+    @app_commands.describe(player='Another player to look up (search by name); leave empty for yourself')
+    async def game_history(self, interaction: discord.Interaction, player: str | None = None) -> None:
+        from zutomayo.data.name_storage import resolve_display_name
+        from zutomayo.engine.bot_agent import BOT_NAME
+        from zutomayo.engine.game_persistence import list_recent_games_for_player
+
+        resolved = await self._resolve_player_option(interaction, player)
+        if resolved is None:
+            return
+        target_id, display_name, _, viewing_own = resolved
+
+        await interaction.response.defer()
+        recent_games = await list_recent_games_for_player(target_id, limit=15)
+        if not recent_games:
+            subject = 'You have' if viewing_own else f'**{display_name}** has'
+            await interaction.followup.send(
+                f'{subject} no finished games yet.',
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            return
+
+        opponent_ids = [
+            row['opponent_discord_id'] for row in recent_games
+            if row['opponent_discord_id'] not in (None, 0)
+        ]
+        await ensure_display_names(self.bot, opponent_ids)
+
+        lines = []
+        for row in recent_games:
+            if row['opponent_discord_id'] in (None, 0):
+                opponent_name = BOT_NAME
+            else:
+                opponent_name = resolve_display_name(self.bot, row['opponent_discord_id'])
+            if row['status'] != 'completed':
+                outcome = row['status']
+            elif row['winner_index'] is None:
+                outcome = 'draw'
+            elif row['winner_index'] == row['player_index']:
+                outcome = 'won'
+            else:
+                outcome = 'lost'
+            mode_label = f'TCG bo{row["best_of"]}' if row['is_tcg'] else row['mode']
+            played_date = row['created_at'].date().isoformat() if row['created_at'] else ''
+            lines.append(
+                f'`{row["game_id"]}` — {mode_label} vs {opponent_name} — {outcome} ({played_date})'
+            )
+
+        title = 'Your Recent Games' if viewing_own else f'Recent Games — {display_name}'
+        embed = discord.Embed(
+            title=title,
+            description='\n'.join(lines),
+            color=discord.Color.blurple(),
+        )
+        embed.set_footer(text='Use /zutomayo summary <game id> to replay any of these games.')
+        await interaction.followup.send(
+            embed=embed, allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @game_history.autocomplete('player')
+    async def game_history_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._player_search_autocomplete(interaction, current)
 
     async def _send_leaderboard(
         self,
@@ -564,12 +1034,11 @@ class GameCog(commands.Cog):
     )
     async def leaderboard(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
-        ranked_rows = [
-            profile for profile in iter_all_profiles()
-            if profile.get('elo_games', 0) >= LEADERBOARD_MINIMUM_GAMES
-            and profile.get('user_id') != BOT_DISCORD_ID
-        ]
-        ranked_rows.sort(key=lambda profile: profile.get('elo', 1000), reverse=True)
+        ranked_rows = await list_ranked_profiles(
+            rating_field='elo',
+            games_field='elo_games',
+            minimum_games=LEADERBOARD_MINIMUM_GAMES,
+        )
         await self._send_leaderboard(interaction, ranked_rows)
 
     @group.command(
@@ -578,12 +1047,11 @@ class GameCog(commands.Cog):
     )
     async def leaderboard_tcg(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
-        ranked_rows = [
-            profile for profile in iter_all_profiles()
-            if profile.get('tcg_elo_games', 0) >= LEADERBOARD_MINIMUM_GAMES
-            and profile.get('user_id') != BOT_DISCORD_ID
-        ]
-        ranked_rows.sort(key=lambda profile: profile.get('tcg_elo', 1000), reverse=True)
+        ranked_rows = await list_ranked_profiles(
+            rating_field='tcg_elo',
+            games_field='tcg_elo_games',
+            minimum_games=LEADERBOARD_MINIMUM_GAMES,
+        )
         await self._send_leaderboard(
             interaction,
             ranked_rows,
@@ -595,7 +1063,20 @@ class GameCog(commands.Cog):
         )
 
     @staticmethod
-    def _record_forfeit_for_session(session, quitter_id: int) -> None:
+    async def _mark_session_quit(session) -> None:
+        """Mark the game record quit; a game with no record yet (still in the
+        lobby or deck building) has nothing to update."""
+        from zutomayo.engine.game_persistence import STATUS_QUIT
+
+        if session.persistence is None:
+            return
+        try:
+            await session.persistence.set_status(STATUS_QUIT)
+        except Exception:
+            log.exception('Failed to mark game %s quit', session.game_id)
+
+    @staticmethod
+    async def _record_forfeit_for_session(session, quitter_id: int) -> None:
         """Record a forfeit_given for the quitter and forfeit_received for the human opponent (if any).
         Storage errors are logged and swallowed so the quit/end command stays responsive.
         """
@@ -607,7 +1088,15 @@ class GameCog(commands.Cog):
                 if discord_id != quitter_id and discord_id != BOT_DISCORD_ID:
                     opponent_id = discord_id
                     break
-            record_forfeit(quitter_id, opponent_id)
+            await record_forfeit(quitter_id, opponent_id)
+
+            if session.persistence is not None:
+                from zutomayo.engine.game_events import EVENT_FORFEIT
+
+                session.persistence.emit_event(EVENT_FORFEIT, {
+                    'player_index': session.get_player_index(quitter_id),
+                    'discord_id': quitter_id,
+                })
         except Exception:
             log.exception('Failed to record forfeit for game %s', session.game_id)
 

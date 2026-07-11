@@ -2,13 +2,28 @@ from __future__ import annotations
 import logging
 import importlib
 import pkgutil
+import random
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Callable, Coroutine, Optional
+
+import zutomayo.effects.cards as cards_pkg
 from constants import CHRONOS_SIZE, MIDNIGHT, NIGHT_END
 from zutomayo.data.name_storage import resolve_display_name
+from zutomayo.engine.decisions import (
+    KIND_EFFECT_CARD_SELECT,
+    KIND_EFFECT_NUMBER_SELECT,
+    KIND_EFFECT_TEXT_INPUT,
+    PAYLOAD_INDICES,
+    PAYLOAD_NUMBER,
+    PAYLOAD_TEXT,
+    PURPOSE_EFFECT_ORDER,
+    DecisionRequest,
+    build_card_options,
+)
 from zutomayo.enums.card_type import CardType
-from zutomayo.utils.discord_utils import send_with_retry
 from zutomayo.enums.chronos import Chronos
+from zutomayo.enums.song import Song
 from zutomayo.models.card_instance import CardInstance
 
 if TYPE_CHECKING:
@@ -88,6 +103,168 @@ class EffectResolutionResult:
     skipped_cost: list[CardInstance] = field(default_factory=list)
 
 
+# ======================================================================
+# Area-enchant removal rules
+# ======================================================================
+#
+# Each area enchant with a printed removal condition has one entry in
+# _AREA_ENCHANT_REMOVAL_RULES. check_area_enchant_removal evaluates the
+# table per player (player 0 first), gating on power cost BEFORE the
+# condition (Q&A rule: an unaffordable enchant is never removed even when
+# its condition is met).
+
+
+class AreaEnchantRemovalDestination(Enum):
+    # Default routing: TurnManager.move_to_power_or_abyss decides by the
+    # card's SEND TO POWER value.
+    POWER_OR_ABYSS = auto()
+    # 04-030 only: the card text sends it to the Abyss despite its
+    # SEND TO POWER star, bypassing the send_to_power routing.
+    ABYSS = auto()
+
+
+@dataclass(frozen=True)
+class AreaEnchantRemovalRule:
+    # Some removal conditions (HP thresholds, placement flags) only apply
+    # at end of turn per Q&A rules; others are checked at every removal
+    # window.
+    end_of_turn_only: bool
+    condition: Callable[['EffectEngine', 'GameState', 'Player'], bool]
+    destination: AreaEnchantRemovalDestination = AreaEnchantRemovalDestination.POWER_OR_ABYSS
+
+
+def _any_day_night_transition_occurred(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    return engine.turn_state.day_to_night_occurred or engine.turn_state.night_to_day_occurred
+
+
+def _opponent_played_area_enchant(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    opponent_area_enchant = game_state.players[1 - player.index].set_zone_c
+    return opponent_area_enchant is not None and opponent_area_enchant.played_this_turn
+
+
+def _own_character_reached_power_charger(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    return engine.turn_state.character_to_power_this_turn.get(player.index, False)
+
+
+def _opponent_hp_at_most(threshold: int) -> Callable[['EffectEngine', 'GameState', 'Player'], bool]:
+    def condition(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+        return game_state.players[1 - player.index].hp <= threshold
+    return condition
+
+
+def _not_night_now(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    # Either a night-to-day transition occurred or it was already day.
+    return engine.turn_state.night_to_day_occurred or game_state.day_night != Chronos.NIGHT
+
+
+def _not_day_now(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    # Either a day-to-night transition occurred or it was already night.
+    return engine.turn_state.day_to_night_occurred or game_state.day_night != Chronos.DAY
+
+
+def _battle_character_power_cost_at_least_four(
+    *, use_opponent: bool,
+) -> Callable[['EffectEngine', 'GameState', 'Player'], bool]:
+    def condition(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+        target = game_state.players[1 - player.index] if use_opponent else player
+        return target.battle_zone is not None and target.battle_zone.card.power_cost >= 4
+    return condition
+
+
+def _opponent_placed_card_in_abyss(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    # Agent-based trigger (03-055, 03-091): keyed by the watcher, true when
+    # the watcher's opponent performed an Abyss placement this turn.
+    return engine.turn_state.opponent_card_to_abyss.get(player.index, False)
+
+
+def _opponent_fields_area_enchant(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    return game_state.players[1 - player.index].set_zone_c is not None
+
+
+def _abyss_has_four_or_more_cards(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    return len(player.abyss) >= 4
+
+
+def _opponent_abyss_received_card(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    # Location-based trigger (04-030, JP: 置かれた, passive): fires no
+    # matter who caused the placement into the opponent's Abyss.
+    return engine.turn_state.abyss_received_card.get(1 - player.index, False)
+
+
+def _own_card_reached_power_charger(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    return engine.turn_state.card_to_power_this_turn.get(player.index, False)
+
+
+def _swapped_to_non_study_me_character(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    swapped_songs = engine.turn_state.swapped_from_songs.get(player.index, set())
+    if not swapped_songs:   # No swap happened this turn
+        return False
+    return (player.battle_zone is None
+            or player.battle_zone.card.song != Song.STUDY_ME)
+
+
+def _own_hp_at_most(threshold: int) -> Callable[['EffectEngine', 'GameState', 'Player'], bool]:
+    def condition(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+        return player.hp <= threshold
+    return condition
+
+
+def _power_charger_has_five_or_more_cards(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    return len(player.power_charger) >= 5
+
+
+def _lost_battle_this_turn(engine: EffectEngine, game_state: GameState, player: Player) -> bool:
+    # Keyed on the loss itself, not battle damage: damage reduction can
+    # bring the damage to 0 while the battle is still lost (04-095).
+    return engine.turn_state.battle_lost.get(player.index, False)
+
+
+_AREA_ENCHANT_REMOVAL_RULES: dict[str, AreaEnchantRemovalRule] = {
+    # Remove when any day/night transition occurred this turn.
+    '02-005': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_any_day_night_transition_occurred),
+    # Remove when the opponent plays an area enchant this turn.
+    '02-007': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_opponent_played_area_enchant),
+    # Remove when your character card is placed on your Power Charger.
+    '02-058': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_own_character_reached_power_charger),
+    # Remove when the opponent's HP falls to the threshold or below
+    # (end of turn only per Q&A).
+    '02-064': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_opponent_hp_at_most(30)),
+    '03-064': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_opponent_hp_at_most(40)),
+    # Remove when it is not night / not day.
+    '02-086': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_not_night_now),
+    '02-098': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_not_day_now),
+    # Remove when the opponent's / your own character card costs 4 or more.
+    '02-092': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_battle_character_power_cost_at_least_four(use_opponent=True)),
+    '02-104': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_battle_character_power_cost_at_least_four(use_opponent=False)),
+    # Remove when the opponent places a card in the Abyss.
+    '03-055': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_opponent_placed_card_in_abyss),
+    '03-091': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_opponent_placed_card_in_abyss),
+    # Remove (routed to own Power Charger via send_to_power) when the
+    # opponent has any area enchant on the field at end of turn.
+    '03-061': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_opponent_fields_area_enchant),
+    # Remove if 4 or more total cards are in the player's Abyss.
+    '03-086': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_abyss_has_four_or_more_cards),
+    '03-092': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_abyss_has_four_or_more_cards),
+    '03-098': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_abyss_has_four_or_more_cards),
+    '03-104': AreaEnchantRemovalRule(end_of_turn_only=True, condition=_abyss_has_four_or_more_cards),
+    # Remove when a card is placed in the opponent's Abyss; goes to the
+    # Abyss despite its SEND TO POWER star (card text).
+    '04-030': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_opponent_abyss_received_card, destination=AreaEnchantRemovalDestination.ABYSS),
+    # Remove immediately when the opponent has any area enchant fielded.
+    '04-032': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_opponent_fields_area_enchant),
+    # Remove when a card is placed into your Power Charger.
+    '04-033': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_own_card_reached_power_charger),
+    # Remove when the battle character is swapped to a non-(STUDY ME) one.
+    '04-065': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_swapped_to_non_study_me_character),
+    # Remove when the player's own HP becomes 50 or less.
+    '04-091': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_own_hp_at_most(50)),
+    # Remove when 5 or more cards are in the player's Power Charger.
+    '04-094': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_power_charger_has_five_or_more_cards),
+    # Remove immediately when the player loses a battle.
+    '04-095': AreaEnchantRemovalRule(end_of_turn_only=False, condition=_lost_battle_this_turn),
+}
+
+
 class EffectEngine:
     def __init__(self) -> None:
         self.session: Optional[GameSession] = None
@@ -101,6 +278,20 @@ class EffectEngine:
         self.turn_state = TurnEffectState()
         self._player_name_cache.clear()
 
+    @property
+    def random_generator(self) -> Any:
+        """
+        The generator all effect randomness must draw from. Bound sessions
+        provide a seeded per-game random.Random (replay determinism); unbound
+        engines (headless V2 training, tests) fall back to the module random
+        functions, preserving the historical stream for seeded harness runs.
+        """
+        if self.session is not None:
+            generator = getattr(self.session, 'random_generator', None)
+            if generator is not None:
+                return generator
+        return random
+
     def player_label(self, player_index: int) -> str:
         """Return 'P0 (DisplayName)' or just 'P0' if name unavailable."""
         if player_index in self._player_name_cache:
@@ -112,6 +303,10 @@ class EffectEngine:
                 label = f'P{player_index} ({resolve_display_name(self.bot, discord_id)})'
         self._player_name_cache[player_index] = label
         return label
+
+    def opponent_of(self, game_state: GameState, player_index: int) -> Player:
+        """Return the opponent of the given player."""
+        return game_state.players[1 - player_index]
 
     def set_chronos(self, game_state: GameState, new_value: int) -> None:
         """Set chronos to a new value and track any day/night transition."""
@@ -142,6 +337,40 @@ class EffectEngine:
             '%s%s: damage %d (HP %d -> %d)',
             f'[{source}] ' if source else '', self.player_label(player_index),
             amount, old_hp, player.hp,
+        )
+
+    def heal(self, game_state: GameState, player_index: int, amount: int, *, source: str = '') -> int:
+        """
+        Heal a player's HP, clamped to 100. Returns the amount actually healed.
+
+        Healing is not damage: it never touches damage_taken_this_turn.
+        """
+        if amount <= 0:
+            return 0
+        player = game_state.players[player_index]
+        old_hp = player.hp
+        player.hp = min(100, player.hp + amount)
+        healed_amount = player.hp - old_hp
+        log.debug(
+            '%s%s: healed %d (HP %d -> %d)',
+            f'[{source}] ' if source else '', self.player_label(player_index),
+            healed_amount, old_hp, player.hp,
+        )
+        return healed_amount
+
+    def lose_game(self, game_state: GameState, player_index: int, *, source: str = '') -> None:
+        """
+        Make a player lose the game immediately by setting their HP to 0.
+
+        Losing is not damage: it must not route through deal_damage, so it
+        never counts toward 03-058/03-085's damage_taken_this_turn.
+        """
+        player = game_state.players[player_index]
+        old_hp = player.hp
+        player.hp = 0
+        log.debug(
+            '%s%s: loses the game (HP %d -> 0)',
+            f'[{source}] ' if source else '', self.player_label(player_index), old_hp,
         )
 
     def place_in_abyss(self, card_instance: CardInstance, abyss_owner: Player, actor_index: int) -> None:
@@ -185,6 +414,44 @@ class EffectEngine:
             self.turn_state.card_to_power_this_turn[charger_owner.index] = True
             if card_instance.card.card_type == CardType.CHARACTER:
                 self.turn_state.character_to_power_this_turn[charger_owner.index] = True
+
+    def return_to_deck_bottom(self, card_instance: CardInstance, deck_owner: Player) -> None:
+        """
+        Place a card face-down on the bottom of a player's deck (index 0 is
+        the top). The caller removes the card from its source zone first,
+        the same contract as place_in_abyss. Deliberately does not reset
+        attribute_override/effects_disabled: Player.draw clears lingering
+        negation when the card is drawn again.
+        """
+        from zutomayo.enums.zone import Zone
+        card_instance.zone = Zone.DECK
+        card_instance.face_up = False
+        deck_owner.deck.append(card_instance)
+
+    def return_to_deck_top(self, card_instance: CardInstance, deck_owner: Player) -> None:
+        """
+        Place a card face-down on top of a player's deck (index 0 is the
+        top). Same caller contract as return_to_deck_bottom.
+        """
+        from zutomayo.enums.zone import Zone
+        card_instance.zone = Zone.DECK
+        card_instance.face_up = False
+        deck_owner.deck.insert(0, card_instance)
+
+    def mill_deck_top_to_abyss(self, deck_owner: Player, count: int, actor_index: int) -> list[CardInstance]:
+        """
+        Move up to count cards from the top of a player's deck into their
+        own Abyss via place_in_abyss, so the placement triggers fire.
+        Returns the moved cards in the order they were milled.
+        """
+        milled_cards: list[CardInstance] = []
+        for _ in range(count):
+            if not deck_owner.deck:
+                break
+            card_instance = deck_owner.deck.pop(0)
+            self.place_in_abyss(card_instance, deck_owner, actor_index)
+            milled_cards.append(card_instance)
+        return milled_cards
 
     def on_area_enchant_leaves_play(self, game_state: GameState, area_enchant: CardInstance, owner_index: int) -> None:
         """
@@ -230,11 +497,13 @@ class EffectEngine:
         )
 
         if len(eligible) == 1:
+            self._record_effect_order(player_index, 'single', eligible)
             dispatched = await self._dispatch_with_cost_check(game_state, player_index, eligible[0])
             if dispatched:
                 result.resolved.append(eligible[0])
             else:
                 result.skipped_cost.append(eligible[0])
+            self._record_effect_resolution(player_index, 0, eligible[0], dispatched)
             return result
 
         # 2+ eligible effects — let the player choose order
@@ -243,8 +512,9 @@ class EffectEngine:
             '%s: resolution order: %s', self.player_label(player_index),
             ', '.join(f'{ci.card.effect} ({ci.card.name})' for ci in ordered),
         )
+        self._record_effect_order(player_index, 'player_choice', ordered)
 
-        for card_instance in ordered:
+        for order_index, card_instance in enumerate(ordered):
             # Q&A rule: game ends immediately when HP reaches 0
             if any(p.hp <= 0 for p in game_state.players):
                 log.debug('%s: HP reached 0, stopping effect resolution', self.player_label(player_index))
@@ -254,11 +524,48 @@ class EffectEngine:
                 result.resolved.append(card_instance)
             else:
                 result.skipped_cost.append(card_instance)
+            self._record_effect_resolution(player_index, order_index, card_instance, dispatched)
 
         return result
 
-    def apply_attack_modifier(self, game_state: GameState, player_index: int) -> int:
-        return self.turn_state.attack_bonus.get(player_index, 0)
+    def _event_record_store(self):
+        """The session's game record store, or None in headless environments.
+        Recording is observation-only; the store suppresses itself during replay."""
+        if self.session is None:
+            return None
+        return getattr(self.session, 'persistence', None)
+
+    def _record_effect_order(self, player_index: int, source: str, ordered: list[CardInstance]) -> None:
+        record_store = self._event_record_store()
+        if record_store is None:
+            return
+        from zutomayo.engine.game_events import EVENT_EFFECT_ORDER_CHOSEN, describe_card_instance
+
+        record_store.emit_event(EVENT_EFFECT_ORDER_CHOSEN, {
+            'player_index': player_index,
+            'source': source,
+            'ordered': [describe_card_instance(card_instance) for card_instance in ordered],
+        })
+
+    def _record_effect_resolution(
+        self, player_index: int, order_index: int, card_instance: CardInstance, dispatched: bool,
+    ) -> None:
+        record_store = self._event_record_store()
+        if record_store is None:
+            return
+        from zutomayo.engine.game_events import (
+            EVENT_EFFECT_RESOLVED,
+            EVENT_EFFECT_SKIPPED_COST,
+            describe_card_instance,
+        )
+
+        payload = describe_card_instance(card_instance)
+        payload['player_index'] = player_index
+        payload['order_index'] = order_index
+        payload['dispatched'] = dispatched
+        record_store.emit_event(
+            EVENT_EFFECT_RESOLVED if dispatched else EVENT_EFFECT_SKIPPED_COST, payload,
+        )
 
     def get_effective_attack(self, game_state: GameState, player: Player) -> int:
         """
@@ -279,9 +586,7 @@ class EffectEngine:
             return override
 
         card = player.battle_zone.card
-        effective_cost = self.get_effective_power_cost(player.battle_zone, player)
-        total_power = player.total_power + self.turn_state.power_bonus.get(player.index, 0)
-        if total_power < effective_cost:
+        if not self.is_effect_affordable(player.battle_zone, player):
             return 0
 
         force_day = self.should_force_day_attack(game_state, player.index)
@@ -302,7 +607,7 @@ class EffectEngine:
             else:
                 base = card.attack_day
 
-        modifier = self.apply_attack_modifier(game_state, player.index)
+        modifier = self.turn_state.attack_bonus.get(player.index, 0)
         return max(0, base + modifier)
 
     def apply_damage_reduction(self, game_state: GameState, player_index: int) -> int:
@@ -317,8 +622,7 @@ class EffectEngine:
         area_enchant = player.set_zone_c
         if area_enchant is None or area_enchant.card.effect != '02-007':
             return False
-        effective_cost = self.get_effective_power_cost(area_enchant, player)
-        return player.total_power >= effective_cost
+        return self.is_effect_affordable(area_enchant, player)
 
     def is_opponent_clock_disabled(self, game_state: GameState, player_index: int) -> bool:
         """
@@ -331,8 +635,7 @@ class EffectEngine:
         area_enchant = opponent.set_zone_c
         if area_enchant is None or area_enchant.card.effect != '02-005':
             return False
-        effective_cost = self.get_effective_power_cost(area_enchant, opponent)
-        return opponent.total_power >= effective_cost
+        return self.is_effect_affordable(area_enchant, opponent)
 
     def is_effectively_midnight(self, game_state: GameState) -> bool:
         """
@@ -356,8 +659,7 @@ class EffectEngine:
         for player in game_state.players:
             area_enchant = player.set_zone_c
             if area_enchant is not None and area_enchant.card.effect == '03-061':
-                effective_cost = self.get_effective_power_cost(area_enchant, player)
-                if player.total_power >= effective_cost:
+                if self.is_effect_affordable(area_enchant, player):
                     return True
         return False
 
@@ -368,27 +670,36 @@ class EffectEngine:
         # End-of-turn effect damage is applied FIRST so it counts toward the
         # 03-058/03-085 ">=30 damage taken" self-removal threshold (together
         # with the battle damage already accumulated during combat).
+        self._apply_end_of_turn_damage(game_state)
+        self._apply_reflected_reduction_damage(game_state)
+        self._process_03_085_end_of_turn(game_state)
+        self._process_03_058_end_of_turn(game_state)
 
-        # Effect 03-027: end-of-turn damage
+    def _apply_end_of_turn_damage(self, game_state: GameState) -> None:
+        """Effect 03-027: end-of-turn damage."""
         for player_index in (0, 1):
             damage = self.turn_state.end_of_turn_damage.get(player_index, 0)
             self.deal_damage(game_state, player_index, damage, source='03-027')
 
-        # Effect 04-100: reflect reduced damage to opponent
+    def _apply_reflected_reduction_damage(self, game_state: GameState) -> None:
+        """Effect 04-100: reflect this turn's reduced damage to the opponent."""
         for player_index in (0, 1):
             if self.turn_state.reflect_reduction.get(player_index, False):
                 reflected_damage = self.turn_state.damage_reduced_this_turn.get(player_index, 0)
                 self.deal_damage(game_state, 1 - player_index, reflected_damage, source='04-100')
 
-        # Effect 03-085: remove if >=30 total damage taken this turn (battle +
-        # effect), otherwise advance the clock by 2 if daytime. Gated on power
-        # cost like every other area enchant; removal routes through
-        # place_in_abyss so its placement triggers (04-030/03-055/03-091) fire.
+    def _process_03_085_end_of_turn(self, game_state: GameState) -> None:
+        """
+        Effect 03-085: remove if >=30 total damage taken this turn (battle +
+        effect), otherwise advance the clock by 2 if daytime. Gated on power
+        cost like every other area enchant; removal routes through
+        place_in_abyss so its placement triggers (04-030/03-055/03-091) fire.
+        """
         for player in game_state.players:
             area_enchant = player.set_zone_c
             if area_enchant is None or area_enchant.card.effect != '03-085':
                 continue
-            if player.total_power < self.get_effective_power_cost(area_enchant, player):
+            if not self.is_effect_affordable(area_enchant, player):
                 continue
             damage = self.turn_state.damage_taken_this_turn.get(player.index, 0)
             if damage >= 30:
@@ -399,15 +710,18 @@ class EffectEngine:
                 log.debug('[03-085] %s: daytime — advancing clock by 2', self.player_label(player.index))
                 self.set_chronos(game_state, (game_state.chronos + 2) % CHRONOS_SIZE)
 
-        # Effect 03-058: remove if >=30 total damage taken this turn, otherwise
-        # (if still active) heal both players by 10. Gated on power cost;
-        # removal routes through place_in_abyss.
+    def _process_03_058_end_of_turn(self, game_state: GameState) -> None:
+        """
+        Effect 03-058: remove if >=30 total damage taken this turn, otherwise
+        (if still active) heal both players by 10. Gated on power cost;
+        removal routes through place_in_abyss.
+        """
         healed = False
         for player in game_state.players:
             area_enchant = player.set_zone_c
             if area_enchant is None or area_enchant.card.effect != '03-058':
                 continue
-            if player.total_power < self.get_effective_power_cost(area_enchant, player):
+            if not self.is_effect_affordable(area_enchant, player):
                 continue
             damage = self.turn_state.damage_taken_this_turn.get(player.index, 0)
             if damage >= 30:
@@ -418,15 +732,27 @@ class EffectEngine:
                 # Only heal once even if both players somehow have 03-058
                 log.debug('[03-058] %s: still active — healing both players by 10', self.player_label(player.index))
                 for heal_index in (0, 1):
-                    old_hp = game_state.players[heal_index].hp
-                    game_state.players[heal_index].hp = min(100, game_state.players[heal_index].hp + 10)
-                    log.debug('[03-058] %s: HP %d -> %d', self.player_label(heal_index), old_hp, game_state.players[heal_index].hp)
+                    self.heal(game_state, heal_index, 10, source='03-058')
                 healed = True
 
 
     def get_effective_power_cost(self, card_instance: CardInstance, player: Player) -> int:
         cost = card_instance.card.power_cost - card_instance.power_cost_reduction
         return max(0, cost)
+
+    def is_effect_affordable(self, card_instance: CardInstance, player: Player) -> bool:
+        """
+        Whether the player currently meets the card's power cost (checked at
+        the moment the effect is processed, per the rule guide).
+
+        Area enchants count Power Charger power only; enchants and characters
+        also add turn_state.power_bonus.
+        """
+        effective_cost = self.get_effective_power_cost(card_instance, player)
+        total_power = player.total_power
+        if card_instance.card.card_type != CardType.AREA_ENCHANT:
+            total_power += self.turn_state.power_bonus.get(player.index, 0)
+        return total_power >= effective_cost
 
     def check_area_enchant_removal(
         self, game_state: GameState, turn_manager: Any, *, end_of_turn: bool = False,
@@ -438,9 +764,6 @@ class EffectEngine:
         end of turn per Q&A rules.  Pass ``end_of_turn=True`` when calling
         from the END_TURN phase.
         """
-        day_night_at_start = Chronos.NIGHT if 0 <= game_state.chronos_at_turn_start <= NIGHT_END else Chronos.DAY
-        day_night_now = game_state.day_night
-
         for player in game_state.players:
             area_enchant = player.set_zone_c
             if area_enchant is None:
@@ -448,163 +771,27 @@ class EffectEngine:
 
             # Area enchants with insufficient power cost are not removed even
             # when their removal conditions are met (Q&A rule).
-            effective_cost = self.get_effective_power_cost(area_enchant, player)
-            if player.total_power < effective_cost:
+            if not self.is_effect_affordable(area_enchant, player):
                 continue
 
-            should_remove = False
+            rule = _AREA_ENCHANT_REMOVAL_RULES.get(area_enchant.card.effect)
+            if rule is None:
+                continue
+            if rule.end_of_turn_only and not end_of_turn:
+                continue
+            if not rule.condition(self, game_state, player):
+                continue
 
-            if area_enchant.card.effect == '02-005':
-                # Remove when any day/night transition occurred this turn (end of turn only)
-                if end_of_turn and (self.turn_state.day_to_night_occurred or self.turn_state.night_to_day_occurred):
-                    should_remove = True
-
-            elif area_enchant.card.effect == '02-007':
-                # Remove when opponent plays an area enchant this turn (end of turn only)
-                if end_of_turn:
-                    opponent = game_state.players[1 - player.index]
-                    opponent_area_enchant = opponent.set_zone_c
-                    if opponent_area_enchant is not None and opponent_area_enchant.played_this_turn:
-                        should_remove = True
-
-            elif area_enchant.card.effect == '02-058':
-                # Remove when your character card is placed on your Power charger (end of turn only)
-                if end_of_turn:
-                    if self.turn_state.character_to_power_this_turn.get(player.index, False):
-                        should_remove = True
-
-            elif area_enchant.card.effect == '02-064':
-                # Remove when opponent's HP falls to 30 or below (end of turn only per Q&A)
-                if end_of_turn:
-                    opponent = game_state.players[1 - player.index]
-                    if opponent.hp <= 30:
-                        should_remove = True
-
-            elif area_enchant.card.effect == '02-086':
-                # Remove when it's not night (either a transition occurred or it was already day)
-                if self.turn_state.night_to_day_occurred or game_state.day_night != Chronos.NIGHT:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '02-092':
-                # Remove when opponent's character card costs 4 or more
-                opponent = game_state.players[1 - player.index]
-                if opponent.battle_zone is not None and opponent.battle_zone.card.power_cost >= 4:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '02-098':
-                # Remove when it's not daytime (either a transition occurred or it was already night)
-                if self.turn_state.day_to_night_occurred or game_state.day_night != Chronos.DAY:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '02-104':
-                # Remove when your character card costs 4 or more
-                if player.battle_zone is not None and player.battle_zone.card.power_cost >= 4:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '03-055':
-                # Remove when opponent places a card in the Abyss (end of turn only)
-                if end_of_turn and self.turn_state.opponent_card_to_abyss.get(player.index, False):
-                    should_remove = True
-
-            elif area_enchant.card.effect == '03-064':
-                # Remove when opponent's HP falls to 40 or below (end of turn only)
-                if end_of_turn:
-                    opponent = game_state.players[1 - player.index]
-                    if opponent.hp <= 40:
-                        should_remove = True
-
-            elif area_enchant.card.effect == '03-061':
-                # Remove (and send to own Power Charger via send_to_power) when
-                # the opponent has any area enchantment card on the field at
-                # end of turn.
-                if end_of_turn:
-                    opponent = game_state.players[1 - player.index]
-                    if opponent.set_zone_c is not None:
-                        should_remove = True
-
-            elif area_enchant.card.effect == '03-086':
-                # Remove if 4 or more total cards in player's Abyss (end of turn only)
-                if end_of_turn and len(player.abyss) >= 4:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '03-091':
-                # Remove when opponent places a card in the Abyss (end of turn only)
-                if end_of_turn and self.turn_state.opponent_card_to_abyss.get(player.index, False):
-                    should_remove = True
-
-            elif area_enchant.card.effect == '03-092':
-                # Remove if 4 or more total cards in player's Abyss (end of turn only)
-                if end_of_turn and len(player.abyss) >= 4:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '03-098':
-                # Remove if 4 or more total cards in player's Abyss (end of turn only)
-                if end_of_turn and len(player.abyss) >= 4:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '03-104':
-                # Remove if 4 or more total cards in player's Abyss (end of turn only)
-                if end_of_turn and len(player.abyss) >= 4:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '04-030':
-                # Remove when a card is placed in the opponent's Abyss.
-                # Location-based trigger (JP: 置かれた, passive): fires no
-                # matter who caused the placement.
-                if self.turn_state.abyss_received_card.get(1 - player.index, False):
-                    should_remove = True
-
-            elif area_enchant.card.effect == '04-032':
-                # Remove (to own Abyss) immediately when the opponent has any
-                # area enchantment card on the field.
-                opponent = game_state.players[1 - player.index]
-                if opponent.set_zone_c is not None:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '04-033':
-                # Remove when a card is placed into your Power Charger
-                if self.turn_state.card_to_power_this_turn.get(player.index, False):
-                    should_remove = True
-
-            elif area_enchant.card.effect == '04-065':
-                # Remove when battle zone character is swapped to a non-(STUDY ME) character
-                from zutomayo.enums.song import Song
-                swapped_songs = self.turn_state.swapped_from_songs.get(player.index, set())
-                if swapped_songs:  # A swap happened this turn
-                    if (player.battle_zone is None
-                            or player.battle_zone.card.song != Song.STUDY_ME):
-                        should_remove = True
-
-            elif area_enchant.card.effect == '04-091':
-                # Remove when player's HP becomes 50 or less
-                if player.hp <= 50:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '04-094':
-                # Remove when 5 or more cards in player's Power Charger (goes to abyss)
-                if len(player.power_charger) >= 5:
-                    should_remove = True
-
-            elif area_enchant.card.effect == '04-095':
-                # Remove when player loses a battle (immediately). Keyed on the
-                # loss itself, not battle damage: damage reduction can bring
-                # the damage to 0 while the battle is still lost.
-                if self.turn_state.battle_lost.get(player.index, False):
-                    should_remove = True
-
-            if should_remove:
-                log.debug(
-                    '%s: removing area enchant %s (%s) — removal condition met',
-                    self.player_label(player.index), area_enchant.card.effect, area_enchant.card.name,
-                )
-                player.set_zone_c = None
-                self.on_area_enchant_leaves_play(game_state, area_enchant, player.index)
-                if area_enchant.card.effect == '04-030':
-                    # Card text sends this card to the Abyss despite its
-                    # SEND TO POWER star, so bypass the send_to_power routing.
-                    self.place_in_abyss(area_enchant, player, player.index)
-                else:
-                    turn_manager.move_to_power_or_abyss(area_enchant, player)
+            log.debug(
+                '%s: removing area enchant %s (%s) — removal condition met',
+                self.player_label(player.index), area_enchant.card.effect, area_enchant.card.name,
+            )
+            player.set_zone_c = None
+            self.on_area_enchant_leaves_play(game_state, area_enchant, player.index)
+            if rule.destination is AreaEnchantRemovalDestination.ABYSS:
+                self.place_in_abyss(area_enchant, player, player.index)
+            else:
+                turn_manager.move_to_power_or_abyss(area_enchant, player)
 
     def save_battle_characters(self, game_state: GameState) -> None:
         """Snapshot current battle zone characters for next turn (used by effect 02-010)."""
@@ -680,26 +867,23 @@ class EffectEngine:
         Returns True if the effect was dispatched, False if skipped due to cost.
         """
         player = game_state.players[player_index]
-        effective_cost = self.get_effective_power_cost(card_instance, player)
 
-        if card_instance.card.card_type == CardType.AREA_ENCHANT:
-            if player.total_power < effective_cost:
+        if not self.is_effect_affordable(card_instance, player):
+            effective_cost = self.get_effective_power_cost(card_instance, player)
+            if card_instance.card.card_type == CardType.AREA_ENCHANT:
                 log.debug(
                     '%s: skipping %s (%s) — insufficient power (have %d, need %d)',
                     self.player_label(player_index), card_instance.card.effect, card_instance.card.name,
                     player.total_power, effective_cost,
                 )
-                return False
-        else:
-            total_power = player.total_power + self.turn_state.power_bonus.get(player_index, 0)
-            if total_power < effective_cost:
+            else:
                 log.debug(
                     '%s: skipping %s (%s) — insufficient power (have %d+%d bonus, need %d)',
                     self.player_label(player_index), card_instance.card.effect, card_instance.card.name,
                     player.total_power, self.turn_state.power_bonus.get(player_index, 0),
                     effective_cost,
                 )
-                return False
+            return False
 
         await self._dispatch(game_state, player_index, card_instance)
         return True
@@ -753,6 +937,7 @@ class EffectEngine:
                 remaining,
                 prompt_text,
                 placeholder='Select next effect to resolve...',
+                purpose=PURPOSE_EFFECT_ORDER,
             )
 
             if selected is None:
@@ -796,24 +981,14 @@ class EffectEngine:
 
 
     async def _send_dm(self, player_index: int, **kwargs: Any) -> Optional[discord.Message]:
-        if self.session is None or self.bot is None:
+        if self.session is None or self.session.transport is None:
             return None
-        discord_id = self.session.get_discord_id(player_index)
-        if discord_id is None:
-            return None
-        user = self.bot.get_user(discord_id)
-        if user is None:
-            user = await send_with_retry(lambda: self.bot.fetch_user(discord_id), label='fetch_user')
-        dm_channel = await send_with_retry(lambda: user.create_dm(), label='create_dm')
-        return await send_with_retry(lambda: dm_channel.send(**kwargs), label='DM send')
+        return await self.session.transport.send_to_player(self.session, player_index, **kwargs)
 
     async def _send_to_channel(self, **kwargs: Any) -> Optional[discord.Message]:
-        if self.session is None or self.bot is None:
+        if self.session is None or self.session.transport is None:
             return None
-        channel = self.bot.get_channel(self.session.channel_id)
-        if channel is None:
-            return None
-        return await send_with_retry(lambda: channel.send(**kwargs), label='channel send')
+        return await self.session.transport.send_to_channel(self.session, **kwargs)
 
     async def notify_draw(self, game_state: GameState, player_index: int, count: int) -> None:
         """Broadcast a draw notification to the channel and both player DMs."""
@@ -822,13 +997,58 @@ class EffectEngine:
         player_name = game_state.players[player_index].name
         if self.session is not None:
             discord_id = self.session.get_discord_id(player_index)
-            if discord_id:  # falsy 0 is the solo-mode bot sentinel
+            if discord_id:
                 player_name = resolve_display_name(self.bot, discord_id)
+            elif discord_id == 0 and self.session.transport is not None:
+                # Solo-mode bot sentinel: the transport knows the bot's name.
+                resolved_name = self.session.transport.display_name(self.session, player_index)
+                if resolved_name:
+                    player_name = resolved_name
         card_word = 'card' if count == 1 else 'cards'
         msg = f'**{player_name}** drew **{count}** {card_word}.'
         await self._send_to_channel(content=msg)
         await self._send_dm(player_index, content=f'You drew **{count}** {card_word}.')
         await self._send_dm(1 - player_index, content=msg)
+
+    async def broadcast_reveal(
+        self,
+        player_index: int,
+        revealed_cards: list[CardInstance],
+        owner_message: str,
+        opponent_message: str,
+        *,
+        owner_embed: Any = None,
+        channel_message: str | None = None,
+        columns: int | None = None,
+    ) -> None:
+        """
+        Show revealed cards to both players and the channel, in that fixed
+        order: owner DM, opponent DM, channel. channel_message defaults to
+        opponent_message; columns defaults to the number of revealed cards.
+
+        A fresh image is rendered before each send: discord.File is
+        consumed on send, and the regression recorder logs one render
+        event per call, so collapsing the three renders would change
+        transcripts. Rendering resolves through the embeds module
+        attribute at call time so test stubs installed on that module
+        keep applying.
+        """
+        from zutomayo.ui import embeds
+        effective_columns = len(revealed_cards) if columns is None else columns
+        if channel_message is None:
+            channel_message = opponent_message
+        owner_kwargs: dict[str, Any] = {}
+        if owner_embed is not None:
+            owner_kwargs['embed'] = owner_embed
+
+        reveal_image = await embeds.create_deck_grid_image_off_thread(revealed_cards, columns=effective_columns)
+        await self._send_dm(player_index, content=owner_message, **owner_kwargs, file=reveal_image)
+
+        reveal_image = await embeds.create_deck_grid_image_off_thread(revealed_cards, columns=effective_columns)
+        await self._send_dm(1 - player_index, content=opponent_message, file=reveal_image)
+
+        reveal_image = await embeds.create_deck_grid_image_off_thread(revealed_cards, columns=effective_columns)
+        await self._send_to_channel(content=channel_message, file=reveal_image)
 
     async def _prompt_card_selection(
         self,
@@ -836,22 +1056,34 @@ class EffectEngine:
         cards: list[CardInstance],
         prompt_text: str,
         placeholder: str = 'Select a card...',
+        *,
+        purpose: str = '',
     ) -> Optional[CardInstance]:
-        """Send a dropdown to a player's DM and wait for selection. Returns selected CardInstance or None."""
-        if not cards or self.session is None:
+        """
+        Prompt a player to choose one card. Returns the selected
+        CardInstance or None on timeout. purpose is routing context for
+        composed prompts (currently only effect ordering); see
+        BotAgentDecisionAdapter for why it matters.
+        """
+        if not cards or self.session is None or self.session.broker is None:
             return None
 
-        from zutomayo.ui.views import EffectCardSelectView
-
-        self.session.clear_pending_player(player_index)
-        view = EffectCardSelectView(self.session, player_index, cards, placeholder=placeholder)
-        await self._send_dm(player_index, content=prompt_text, view=view)
-
-        received = await self.session.wait_for_player(player_index, timeout=300.0)
-        if not received:
+        request = DecisionRequest(
+            kind=KIND_EFFECT_CARD_SELECT,
+            player_index=player_index,
+            prompt_text=prompt_text,
+            placeholder=placeholder,
+            options=build_card_options(cards),
+            minimum_selections=1,
+            maximum_selections=1,
+            timeout_seconds=300.0,
+            purpose=purpose,
+            live_objects=cards,
+        )
+        response = await self.session.broker.request(request)
+        if response.payload_type != PAYLOAD_INDICES or not response.payload:
             return None
-
-        return self.session.pending_actions.get(player_index)
+        return cards[response.payload[0]]
 
     async def _prompt_card_multiselect(
         self,
@@ -909,24 +1141,24 @@ class EffectEngine:
         placeholder: str = 'Select a number...',
         label_prefix: str | None = None,
     ) -> int | None:
-        """Send a numeric dropdown to a player's DM and wait for selection. Returns selected int or None."""
-        if self.session is None:
+        """Prompt a player to choose a number. Returns the selected int or None on timeout."""
+        if self.session is None or self.session.broker is None:
             return None
 
-        from zutomayo.ui.views import EffectNumberSelectView
-
-        self.session.clear_pending_player(player_index)
-        view = EffectNumberSelectView(
-            self.session, player_index, min_value, max_value,
-            placeholder=placeholder, label_prefix=label_prefix,
+        request = DecisionRequest(
+            kind=KIND_EFFECT_NUMBER_SELECT,
+            player_index=player_index,
+            prompt_text=prompt_text,
+            placeholder=placeholder,
+            minimum_value=min_value,
+            maximum_value=max_value,
+            label_prefix=label_prefix,
+            timeout_seconds=300.0,
         )
-        await self._send_dm(player_index, content=prompt_text, view=view)
-
-        received = await self.session.wait_for_player(player_index, timeout=300.0)
-        if not received:
+        response = await self.session.broker.request(request)
+        if response.payload_type != PAYLOAD_NUMBER or response.payload is None:
             return None
-
-        return self.session.pending_actions.get(player_index)
+        return response.payload
 
     async def _prompt_text_input(
         self,
@@ -938,52 +1170,56 @@ class EffectEngine:
         input_placeholder: str | None = None,
         validator: Callable[[str], str | None] | None = None,
     ) -> str | None:
-        """Send a button that opens a text input modal. Returns the entered text or None on timeout."""
-        if self.session is None:
+        """Prompt a player to type a value. Returns the entered text or None on timeout."""
+        if self.session is None or self.session.broker is None:
             return None
 
-        from zutomayo.ui.views import EffectTextInputView
-
-        self.session.clear_pending_player(player_index)
-        view = EffectTextInputView(
-            self.session, player_index,
+        request = DecisionRequest(
+            kind=KIND_EFFECT_TEXT_INPUT,
+            player_index=player_index,
+            prompt_text=prompt_text,
             modal_title=modal_title,
             button_label=button_label,
-            label=input_label,
-            placeholder=input_placeholder,
+            input_label=input_label,
+            input_placeholder=input_placeholder,
             validator=validator,
-            prompt_text=prompt_text,
+            timeout_seconds=300.0,
         )
-        await self._send_dm(player_index, content=prompt_text, view=view)
-
-        received = await self.session.wait_for_player(player_index, timeout=300.0)
-        if not received:
+        response = await self.session.broker.request(request)
+        if response.payload_type != PAYLOAD_TEXT or response.payload is None:
             return None
-
-        return self.session.pending_actions.get(player_index)
+        return response.payload
 
 
 # ======================================================================
 # Handler registry
 # ======================================================================
 
-_EFFECT_HANDLERS: dict[str, EffectHandler] = {}
-import zutomayo.effects.cards as cards_pkg
-
-# no-op effects that originally weren't imported
+# Modules whose behavior lives entirely inside the engine (removal table
+# and query hooks); their modules stay as documentation but register no
+# handler.
 _EXCLUDED_EFFECT_MODULES = {'effect_02_005', 'effect_02_007', 'effect_02_062'}
 
-for module_info in pkgutil.iter_modules(cards_pkg.__path__):
-    name = module_info.name
 
-    if name.startswith("effect_"):
+def _build_effect_handler_registry() -> dict[str, EffectHandler]:
+    """
+    Discover every effect_XX_YYY module under zutomayo/effects/cards and
+    register the same-named handler function under the key "XX-YYY".
+    """
+    handlers: dict[str, EffectHandler] = {}
+    for module_info in pkgutil.iter_modules(cards_pkg.__path__):
+        name = module_info.name
+        if not name.startswith('effect_'):
+            continue
         if name in _EXCLUDED_EFFECT_MODULES:
             continue
 
-        module = importlib.import_module(f"zutomayo.effects.cards.{name}")
-        handler = getattr(module, name) # assumes the handler has the same name as the module
-        
-        _, set_num, card_num = name.split("_", 2)
-        key = f"{set_num}-{card_num}"
-        
-        _EFFECT_HANDLERS[key] = handler
+        module = importlib.import_module(f'zutomayo.effects.cards.{name}')
+        handler = getattr(module, name)   # the handler has the same name as the module
+
+        _, set_number, card_number = name.split('_', 2)
+        handlers[f'{set_number}-{card_number}'] = handler
+    return handlers
+
+
+_EFFECT_HANDLERS: dict[str, EffectHandler] = _build_effect_handler_registry()
