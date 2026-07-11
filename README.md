@@ -1,8 +1,6 @@
 # Zutoka Discord Bot
 
-A Discord bot implementing the ZUTOMAYO CARD trading card game: 2-player
-matches, solo matches against a reinforcement-learning bot, and best-of-N TCG
-series with side decks. Rules follow the official game
+A Discord bot implementing the ZUTOMAYO CARD trading card game. Rules follow the official game
 (https://zutomayocard.net/start-guide/).
 
 ## Setup
