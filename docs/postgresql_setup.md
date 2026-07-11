@@ -125,6 +125,70 @@ Verify the tables exist:
 psql "postgresql://zutoka_bot:choose-a-strong-password@localhost:5432/zutoka" -c "\dt"
 ```
 
+## Backing up, exporting, and importing
+
+The database lives in the PostgreSQL server, not in this repository, so use
+these scripts to back it up or move it between machines. All four read
+`DATABASE_URL` from `.env` (override with `--database-url`), and the commands
+are identical on Windows, macOS, and Linux.
+
+**Which one to use:**
+
+- `dump_database.py` / `restore_database.py` (pg_dump binary format) — the
+  standard routine backup: compact and exact. Restoring requires PostgreSQL
+  client tools of a version at least as new as the dumping server.
+- `export_database.py` / `import_database.py` (JSON) — portable and
+  human-readable; works across PostgreSQL versions and needs no client
+  tools. The right tool for transferring data between dev and production.
+
+### Binary backup and restore (pg_dump)
+
+```bash
+python scripts/dump_database.py                          # writes zutoka-<timestamp>.dump
+python scripts/dump_database.py --output backups/friday.dump
+
+python scripts/restore_database.py backups/friday.dump   # into DATABASE_URL
+python scripts/restore_database.py backups/friday.dump --database-url postgresql://zutoka_bot:...@localhost:5432/zutoka_test
+```
+
+The restore drops and recreates the dumped tables in the target database
+(the database itself must already exist). The scripts find `pg_dump` /
+`pg_restore` automatically: first the `PGBIN` environment variable, then
+PATH, then the default install locations —
+
+- Windows: `C:\Program Files\PostgreSQL\<version>\bin`
+- macOS (Homebrew): `/opt/homebrew/opt/postgresql@<version>/bin`
+- Linux (Debian/Ubuntu): `/usr/lib/postgresql/<version>/bin`
+
+If your installation lives elsewhere, set `PGBIN` to the directory containing
+the binaries.
+
+### Portable JSON export and import
+
+```bash
+python scripts/export_database.py                        # writes zutoka-export-<timestamp>.json
+python scripts/export_database.py --output sunday.json
+
+python scripts/import_database.py sunday.json --dry-run  # verify counts, write nothing
+python scripts/import_database.py sunday.json            # upsert over existing data
+python scripts/import_database.py sunday.json --replace  # wipe first: exact copy of the export
+```
+
+The import applies the schema automatically, upserts by primary key (so
+importing twice is safe), and refuses export files written by a newer schema
+version than the target installation.
+
+### Worked example: copying dev (Windows) to production (Linux)
+
+1. On the dev machine: `python scripts/export_database.py --output zutoka.json`
+2. Copy `zutoka.json` to the production host (scp, rsync, etc.).
+3. On the production host, with the bot stopped:
+   `python scripts/import_database.py zutoka.json --replace`
+4. Start the bot.
+
+Neither mechanism is scheduled automatically; wire `dump_database.py` into
+cron or Windows Task Scheduler if you want periodic backups.
+
 ## Cutover from the JSON storage (one time)
 
 1. `git pull` the latest `main` from the remote so the JSON data (decks, TCG

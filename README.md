@@ -37,7 +37,12 @@ python main.py
 ```
 
 The schema is applied automatically at startup (or manually with
-`python scripts/apply_schema.py`).
+`python scripts/apply_schema.py`). The database lives in the PostgreSQL
+server, not in this repository — back it up or move it between machines with
+the export/import scripts described in
+[docs/postgresql_setup.md](docs/postgresql_setup.md) (`dump_database.py` /
+`restore_database.py` for binary backups, `export_database.py` /
+`import_database.py` for portable JSON transfers).
 
 ## Commands
 
