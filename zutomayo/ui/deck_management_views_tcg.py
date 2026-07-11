@@ -128,11 +128,19 @@ class EditDeckTcgModal(discord.ui.Modal):
         deck_name: str,
         user_id: int,
         card_index: dict[tuple[int, int], Card],
+        current_main_cards: list[Card] | None = None,
+        current_side_cards: list[Card] | None = None,
     ):
         super().__init__(title=f'Edit TCG Deck: {deck_name[:33]}', timeout=750)
         self.deck_name = deck_name
         self.user_id = user_id
         self.card_index = card_index
+        from zutomayo.ui.deck_management_views import format_card_ids_line
+
+        if current_main_cards:
+            self.deck_input.default = format_card_ids_line(current_main_cards)
+        if current_side_cards:
+            self.side_deck_input.default = format_card_ids_line(current_side_cards)
 
     async def on_submit(self, interaction: discord.Interaction):
         result, errors = parse_tcg_deck_input(
@@ -171,230 +179,82 @@ class EditDeckTcgModal(discord.ui.Modal):
             await interaction.followup.send(content='**Side Deck:**', file=side_grid, ephemeral=True)
 
 
-class ManageDecksTcgView(DeckNamePaginationMixin, discord.ui.View):
-    """Paginated dropdown to select a TCG deck, then Edit or Delete."""
+class ManageDeckTcgActionsView(discord.ui.View):
+    """Edit / Delete actions for one TCG deck chosen through command autocomplete."""
 
     def __init__(
         self,
         user_id: int,
-        deck_names: list[str],
+        deck_name: str,
         card_index: dict[tuple[int, int], Card],
-        page: int = 0,
     ):
         super().__init__(timeout=750)
         self.user_id = user_id
-        self.all_deck_names = deck_names
+        self.deck_name = deck_name
         self.card_index = card_index
-        self.page = page
-        self.selected_deck_name: str | None = None
-        self._build_page()
+        self._build_action_buttons()
 
-    def _build_page(self) -> None:
-        names = self._page_slice()
-        options = [
-            discord.SelectOption(label=name[:100], value=name[:100])
-            for name in names
-        ]
-        select = discord.ui.Select(
-            placeholder='Select a TCG deck to manage...',
-            options=options,
-        )
-        select.callback = self._deck_selected
-        self.add_item(select)
-
-        if self.total_pages > 1:
-            prev_btn = discord.ui.Button(
-                label='<< Prev', style=discord.ButtonStyle.grey,
-                disabled=(self.page == 0), row=1,
-            )
-            prev_btn.callback = self._prev_page
-            self.add_item(prev_btn)
-
-            next_btn = discord.ui.Button(
-                label='Next >>', style=discord.ButtonStyle.grey,
-                disabled=(self.page >= self.total_pages - 1), row=1,
-            )
-            next_btn.callback = self._next_page
-            self.add_item(next_btn)
-
-    async def _deck_selected(self, interaction: discord.Interaction):
-        self.selected_deck_name = interaction.data['values'][0]
+    def _build_action_buttons(self) -> None:
         self.clear_items()
 
-        edit_btn = discord.ui.Button(label='Edit', style=discord.ButtonStyle.primary)
-        edit_btn.callback = self._edit_deck
-        self.add_item(edit_btn)
+        edit_button = discord.ui.Button(label='Edit', style=discord.ButtonStyle.primary)
+        edit_button.callback = self._edit_deck
+        self.add_item(edit_button)
 
-        delete_btn = discord.ui.Button(label='Delete', style=discord.ButtonStyle.danger)
-        delete_btn.callback = self._delete_deck
-        self.add_item(delete_btn)
-
-        back_btn = discord.ui.Button(label='Go Back', style=discord.ButtonStyle.grey)
-        back_btn.callback = self._go_back
-        self.add_item(back_btn)
-
-        await interaction.response.edit_message(
-            content=f'Selected TCG deck: **{self.selected_deck_name}**\nChoose an action:',
-            view=self,
-        )
+        delete_button = discord.ui.Button(label='Delete', style=discord.ButtonStyle.danger)
+        delete_button.callback = self._delete_deck
+        self.add_item(delete_button)
 
     async def _edit_deck(self, interaction: discord.Interaction):
-        modal = EditDeckTcgModal(self.selected_deck_name, self.user_id, self.card_index)
+        deck_data = await get_tcg_deck_by_name(self.user_id, self.deck_name)
+        if deck_data is None:
+            await interaction.response.send_message(
+                f'TCG deck **{self.deck_name}** no longer exists.', ephemeral=True,
+            )
+            return
+        main_cards, side_cards = resolve_tcg_deck_cards(deck_data, self.card_index)
+        modal = EditDeckTcgModal(
+            self.deck_name, self.user_id, self.card_index,
+            current_main_cards=main_cards, current_side_cards=side_cards,
+        )
         await interaction.response.send_modal(modal)
 
     async def _delete_deck(self, interaction: discord.Interaction):
         self.clear_items()
 
-        confirm_btn = discord.ui.Button(label='Confirm Delete', style=discord.ButtonStyle.danger)
-        confirm_btn.callback = self._confirm_delete
-        self.add_item(confirm_btn)
+        confirm_button = discord.ui.Button(label='Confirm Delete', style=discord.ButtonStyle.danger)
+        confirm_button.callback = self._confirm_delete
+        self.add_item(confirm_button)
 
-        cancel_btn = discord.ui.Button(label='Cancel', style=discord.ButtonStyle.grey)
-        cancel_btn.callback = self._go_back
-        self.add_item(cancel_btn)
+        cancel_button = discord.ui.Button(label='Cancel', style=discord.ButtonStyle.grey)
+        cancel_button.callback = self._cancel_delete
+        self.add_item(cancel_button)
 
         await interaction.response.edit_message(
-            content=f'Are you sure you want to delete **{self.selected_deck_name}**?',
+            content=f'Are you sure you want to delete **{self.deck_name}**?',
             view=self,
         )
 
     async def _confirm_delete(self, interaction: discord.Interaction):
         try:
-            await delete_tcg_deck(self.user_id, self.selected_deck_name)
+            await delete_tcg_deck(self.user_id, self.deck_name)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
 
-        self.all_deck_names = await get_tcg_deck_names(self.user_id)
-        if not self.all_deck_names:
-            await interaction.response.edit_message(
-                content=f'TCG Deck **{self.selected_deck_name}** deleted. You have no more saved TCG decks.',
-                view=None,
-            )
-            self.stop()
-            return
-
-        if self.page >= self.total_pages:
-            self.page = self.total_pages - 1
-
-        self.clear_items()
-        self._build_page()
         await interaction.response.edit_message(
-            content=f'TCG Deck **{self.selected_deck_name}** deleted. Select another deck to manage:',
+            content=f'TCG deck **{self.deck_name}** deleted.',
+            embed=None,
+            view=None,
+        )
+        self.stop()
+
+    async def _cancel_delete(self, interaction: discord.Interaction):
+        self._build_action_buttons()
+        await interaction.response.edit_message(
+            content='Choose an action:',
             view=self,
         )
-
-    async def _go_back(self, interaction: discord.Interaction):
-        self.selected_deck_name = None
-        self.clear_items()
-        self._build_page()
-        await interaction.response.edit_message(
-            content='Select a TCG deck to manage:',
-            view=self,
-        )
-
-    async def _prev_page(self, interaction: discord.Interaction):
-        self.page = max(0, self.page - 1)
-        self.clear_items()
-        self._build_page()
-        await interaction.response.edit_message(
-            content=f'Select a TCG deck to manage (Page {self.page + 1}/{self.total_pages}):',
-            view=self,
-        )
-
-    async def _next_page(self, interaction: discord.Interaction):
-        self.page = min(self.total_pages - 1, self.page + 1)
-        self.clear_items()
-        self._build_page()
-        await interaction.response.edit_message(
-            content=f'Select a TCG deck to manage (Page {self.page + 1}/{self.total_pages}):',
-            view=self,
-        )
-
-
-# ---------------------------------------------------------------------------
-# /zutomayo viewdecktcg
-# ---------------------------------------------------------------------------
-
-
-class ViewDeckTcgView(discord.ui.View):
-    """Paginated TCG deck viewer. Shows one deck at a time with Prev/Next buttons."""
-
-    def __init__(
-        self,
-        user_id: int,
-        decks: list[dict],
-        card_index: dict[tuple[int, int], Card],
-        page: int = 0,
-    ):
-        super().__init__(timeout=750)
-        self.user_id = user_id
-        self.decks = decks
-        self.card_index = card_index
-        self.page = page
-        self._build_buttons()
-
-    def _build_buttons(self) -> None:
-        if len(self.decks) > 1:
-            prev_btn = discord.ui.Button(
-                label='<< Prev Deck', style=discord.ButtonStyle.grey,
-                disabled=(self.page == 0),
-            )
-            prev_btn.callback = self._prev_deck
-            self.add_item(prev_btn)
-
-            next_btn = discord.ui.Button(
-                label='Next Deck >>', style=discord.ButtonStyle.grey,
-                disabled=(self.page >= len(self.decks) - 1),
-            )
-            next_btn.callback = self._next_deck
-            self.add_item(next_btn)
-
-    def current_cards(self) -> tuple[list, list]:
-        """Return the resolved (main, side) cards for the currently displayed deck."""
-        deck = self.decks[self.page]
-        return resolve_tcg_deck_cards(deck, self.card_index)
-
-    def current_embeds(self) -> list[discord.Embed]:
-        deck = self.decks[self.page]
-        main_cards, side_cards = resolve_tcg_deck_cards(deck, self.card_index)
-        title = f'{deck["name"]} ({self.page + 1}/{len(self.decks)})'
-
-        main_embed = build_deck_list_embed(f'{title} - Main Deck', main_cards)
-        main_ids = ' '.join(f'{c.pack:02d}-{c.id:03d}' for c in main_cards)
-        main_embed.description += f'\n\n{main_ids}'
-
-        side_embed = build_deck_list_embed(f'{title} - Side Deck', side_cards)
-        side_ids = ' '.join(f'{c.pack:02d}-{c.id:03d}' for c in side_cards)
-        side_embed.description += f'\n\n{side_ids}'
-
-        return [main_embed, side_embed]
-
-    async def _prev_deck(self, interaction: discord.Interaction):
-        self.page = max(0, self.page - 1)
-        self.clear_items()
-        self._build_buttons()
-        await interaction.response.edit_message(embeds=self.current_embeds(), view=self)
-        main_cards, side_cards = self.current_cards()
-        grid = await create_deck_grid_image_off_thread(main_cards)
-        if grid:
-            await interaction.followup.send(content='**Main Deck:**', file=grid, ephemeral=True)
-        side_grid = await create_deck_grid_image_off_thread(side_cards, columns=4)
-        if side_grid:
-            await interaction.followup.send(content='**Side Deck:**', file=side_grid, ephemeral=True)
-
-    async def _next_deck(self, interaction: discord.Interaction):
-        self.page = min(len(self.decks) - 1, self.page + 1)
-        self.clear_items()
-        self._build_buttons()
-        await interaction.response.edit_message(embeds=self.current_embeds(), view=self)
-        main_cards, side_cards = self.current_cards()
-        grid = await create_deck_grid_image_off_thread(main_cards)
-        if grid:
-            await interaction.followup.send(content='**Main Deck:**', file=grid, ephemeral=True)
-        side_grid = await create_deck_grid_image_off_thread(side_cards, columns=4)
-        if side_grid:
-            await interaction.followup.send(content='**Side Deck:**', file=side_grid, ephemeral=True)
 
 
 # ---------------------------------------------------------------------------
