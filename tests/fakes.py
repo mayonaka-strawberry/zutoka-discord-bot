@@ -276,6 +276,35 @@ class InMemoryGameRecordBackend:
         matching.sort(key=lambda row: (row['saved_at'] is None, row['saved_at']), reverse=True)
         return matching[:limit]
 
+    async def list_recent_games_for_player(self, discord_id: int, limit: int = 15) -> list[dict]:
+        matching = []
+        for row in self.games.values():
+            if row['status'] not in ('completed', 'quit', 'abandoned'):
+                continue
+            seats = {
+                pair[0]: pair[1] for pair in row['manifest'].get('player_discord_ids', [])
+            }
+            if discord_id not in seats:
+                continue
+            player_index = seats[discord_id]
+            opponent_discord_id = next(
+                (other_id for other_id, index in seats.items() if index == 1 - player_index),
+                None,
+            )
+            matching.append({
+                'game_id': row['game_id'],
+                'mode': row['mode'],
+                'is_tcg': row['is_tcg'],
+                'best_of': row['best_of'],
+                'status': row['status'],
+                'created_at': row['created_at'],
+                'winner_index': row['winner_index'],
+                'player_index': player_index,
+                'opponent_discord_id': opponent_discord_id,
+            })
+        matching.sort(key=lambda row: row['created_at'], reverse=True)
+        return matching[:limit]
+
     async def search_finished_games(self, prefix: str = '', limit: int = 25) -> list[dict]:
         matching = [
             {
