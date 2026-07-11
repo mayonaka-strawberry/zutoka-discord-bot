@@ -3,7 +3,7 @@
 A Discord bot implementing the ZUTOMAYO CARD trading card game: 2-player
 matches, solo matches against a reinforcement-learning bot, and best-of-N TCG
 series with side decks. Rules follow the official game
-(https://zutomayocard.net/start-guide/, rule guide PDF, errata, and Q&A pages).
+(https://zutomayocard.net/start-guide/).
 
 ## Setup
 
@@ -62,7 +62,7 @@ All slash commands live under `/zutomayo`:
   pings), `leaderboard`, `leaderboardtcg`, `editname`.
 - Extras: `gacha`, `gachabox`, `ranksongs`.
 
-Game ids are `YYYYMMDD-NNNNN` (UTC date plus a daily counter starting at
+Game ids are `YYYYMMDD-XXXXX` (UTC date plus a daily counter starting at
 00000). Saving a game keeps no partial results; resuming a 2-player game
 requires both players to confirm and replays the game deterministically from
 its decision log, so saved games are best-effort across bot updates (a
