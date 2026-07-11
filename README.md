@@ -18,7 +18,6 @@ migrates decks, TCG decks, and display names; player statistics start fresh).
 ```
 python -m venv .venv
 .venv/Scripts/pip install -r requirements.txt
-.venv/Scripts/pip install -r requirements-dev.txt   # test tooling
 ```
 
 Create a `.env` file at the repository root containing:
