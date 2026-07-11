@@ -7,13 +7,28 @@ series with side decks. Rules follow the official game
 
 ## Setup
 
+The bot requires PostgreSQL: all player data (profiles, decks, display names,
+game records, decision logs, game events) lives in a PostgreSQL database.
+Card definitions stay in `zutomayo/data/cards.json`. Follow
+[docs/postgresql_setup.md](docs/postgresql_setup.md) for a from-scratch
+install on Windows, macOS, or Linux, database/role creation, and the one-time
+cutover from the old JSON storage (`scripts/migrate_json_to_postgresql.py`
+migrates decks, TCG decks, and display names; player statistics start fresh).
+
 ```
 python -m venv .venv
 .venv/Scripts/pip install -r requirements.txt
 .venv/Scripts/pip install -r requirements-dev.txt   # test tooling
 ```
 
-Create a `.env` file at the repository root containing `DISCORD_TOKEN=<bot token>`
+Create a `.env` file at the repository root containing:
+
+```
+DISCORD_TOKEN=<bot token>
+DATABASE_URL=postgresql://zutoka_bot:<password>@localhost:5432/zutoka
+ZUTOKA_TEST_DATABASE_URL=postgresql://zutoka_bot:<password>@localhost:5432/zutoka_test   # optional, integration tests
+```
+
 (the local token is the development bot; production runs as a separate app),
 then start the bot with:
 
@@ -21,17 +36,47 @@ then start the bot with:
 python main.py
 ```
 
-All slash commands live under `/zutomayo` (create, join, playuniguri,
-createtcg, makedeck, viewdeck, managedecks and their TCG twins, gacha,
-leaderboard, profilestats, editname, end, quit, ranksongs).
+The schema is applied automatically at startup (or manually with
+`python scripts/apply_schema.py`).
+
+## Commands
+
+All slash commands live under `/zutomayo`:
+
+- Games: `create`, `createtcg`, `join`, `playuniguri`, `playunigurieasy`,
+  `quit`, `end` (ends a live game, or abandons one of your saved games with a
+  forfeit), `saveandquit`, `resume`.
+- Game records: `summary` (full replay of a finished game — phases, every
+  decision, effect priority and order, hands, battle results, TCG side-deck
+  swaps; searchable by game id), `history` (recent finished games for you or
+  a searched player — the easy way to find a game id).
+- Decks: `makedeck`, `viewdeck`, `managedecks` and their TCG twins
+  (`makedecktcg`, `viewdecktcg`, `managedeckstcg`). View/manage take a deck
+  name with autocomplete search; the edit modal is pre-filled with the deck's
+  current card list.
+- Players: `profilestats` (your own, or search another player by name — never
+  pings), `leaderboard`, `leaderboardtcg`, `editname`.
+- Extras: `gacha`, `gachabox`, `ranksongs`.
+
+Game ids are `YYYYMMDD-NNNNN` (UTC date plus a daily counter starting at
+00000). Saving a game keeps no partial results; resuming a 2-player game
+requires both players to confirm and replays the game deterministically from
+its decision log, so saved games are best-effort across bot updates (a
+diverged game is marked unrecoverable, but its summary keeps working).
 
 ## Architecture
 
 - `zutomayo/models/` — plain dataclasses: `Card` (immutable catalog entry),
   `CardInstance` (a card in play), `Player`, `GameState`.
+- `zutomayo/data/database.py` + `schema.sql` — the asyncpg connection pool
+  (created in `setup_hook`, JSONB codecs installed per connection) and the
+  idempotent schema. Every storage module exposes a swappable `backend`
+  attribute; tests install in-memory fakes (`tests/fakes.py`).
 - `zutomayo/engine/` — game orchestration:
   - `game_session.py`: per-game `GameSession` (players, seeded RNG, runtime
-    slots) and the global `session_manager`.
+    slots) and the global `session_manager`. Game ids come from
+    `zutomayo/data/game_id_allocator.py` (atomic per-day counter in
+    PostgreSQL).
   - `game_flow.py`: the full match driver (setup, redraw, turns, battle,
     game end). `solo_game_flow.py` only adds agent construction and the bot's
     deck selection; `tcg_match_flow.py` wraps matches into a best-of-N series
@@ -41,16 +86,25 @@ leaderboard, profilestats, editname, end, quit, ranksongs).
     for each player: `adapters/discord_adapter.py` renders the Discord views,
     `adapters/bot_agent_adapter.py` asks the solo bot agent.
   - `match_transport.py`: all outgoing messages flow through a
-    `MatchTransport` (Discord DMs and channel sends, or test recorders).
-  - `game_persistence.py` / `resume_manager.py`: every match writes a manifest
-    (identity, RNG seed, deck lists) and an append-only decision log under
-    `zutomayo/active_games/<game_id>/`. On startup the bot deterministically
-    replays in-flight games from those logs (transport muted) and continues
-    them live, so games survive restarts. Replays that no longer match the
-    log (after a code change) end the game gracefully with no recorded result.
+    `MatchTransport` (Discord DMs and channel sends, or test recorders);
+    channel narration is mirrored into the game event stream.
+  - `game_persistence.py` / `resume_manager.py`: every game owns a permanent
+    record in PostgreSQL — a manifest (identity, RNG seed, deck lists), an
+    append-only decision log, and a live event stream (`game_events.py`:
+    every phase, decision, day/night effect priority, effect resolution
+    order, hands, battle results, state snapshots). Lifecycle is tracked by
+    status (active, saved, completed, quit, abandoned, divergence_failed);
+    nothing is deleted. On startup the bot deterministically replays active
+    games from their logs (transport muted) and continues them live, so games
+    survive restarts; `/zutomayo resume` runs the same machinery on demand
+    for saved games. Replays that no longer match the log (after a code
+    change) end the game gracefully with no recorded result.
   - `turn_manager.py`: mechanical rules (chronos, swaps, battle, end turn).
   - `bot_agent.py` + `rl_model_v2.py` + `uniguri_env_v2.py`: the solo
-    opponent (メカうにぐり), driven by trained V2 PyTorch checkpoints.
+    opponent (メカうにぐり), driven by trained V2 PyTorch checkpoints. The
+    headless training stack needs no database; the generated deck pools
+    (`bot_decks.json`, `best_decks_v2*.json`, `default_decks.json`) stay as
+    files.
 - `zutomayo/effects/` — three layers:
   - `effect_engine.py`: effect collection and ordering, the cost gate
     (`is_effect_affordable`), the declarative `_AREA_ENCHANT_REMOVAL_RULES`
@@ -67,15 +121,20 @@ leaderboard, profilestats, editname, end, quit, ranksongs).
     engine). Cards that share a shape are thin wrappers over a template;
     cards with unique text keep bespoke handlers.
 - `zutomayo/data/` — card catalog loading (cached), deck persistence
-  (`deck_repository.py` serves both the standard and TCG formats), validators,
-  player profiles and Elo, display-name storage, gacha.
-- `zutomayo/ui/` — embeds, the PIL board renderer (run off-thread), and the
-  interactive Discord views.
+  (`deck_repository.py` serves both the standard and TCG formats over the
+  `decks` / `decks_tcg` tables), validators, player profiles with Elo and
+  per-game `elo_history` rows, display-name storage (write-through cache),
+  gacha.
+- `zutomayo/ui/` — embeds, the PIL board renderer (run off-thread), the
+  interactive Discord views, the game summary renderer
+  (`game_summary_view.py`), and the resume confirmation view.
 
 Determinism contract: all game randomness (coin flip, shuffles, the four
 shuffling effects) draws from the session's seeded generator, and every player
-decision is logged by sequence number, which is what makes restart replay and
-the transcript regression suites possible.
+decision is logged by sequence number, which is what makes restart replay,
+`/zutomayo resume`, and the transcript regression suites possible. Event
+recording is observation-only and suppressed during replay, so it can never
+affect game behavior.
 
 ## Tests and verification
 
@@ -85,6 +144,10 @@ python -m pytest tests/ -q                       # unit and characterization sui
 python tests/run_engine_regression.py compare    # Tier A: 1528 seeded headless engine games vs baselines
 python tests/run_flow_regression.py compare      # Tier B: full flow matches (2-player, solo, TCG) vs baselines
 ```
+
+The suite runs without a database (in-memory backends are installed by
+`tests/conftest.py`). PostgreSQL integration tests run additionally when
+`ZUTOKA_TEST_DATABASE_URL` is set.
 
 Baselines live in `tests/baselines/` as gzip JSONL transcripts. Regenerate
 with `write` instead of `compare` only when a behavior change is intended;
