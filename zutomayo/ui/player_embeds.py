@@ -81,10 +81,14 @@ def _top_rivals(opponent_stats: dict, limit: int = 10) -> list[tuple[str, int, i
 
 def build_profile_embed(
     bot: discord.Client,
-    member: discord.abc.User,
     profile: dict,
+    *,
+    display_name: str,
+    avatar_url: str | None = None,
+    viewing_own: bool = True,
 ) -> discord.Embed:
     stats = profile.get('stats', {})
+    title = f'Your Profile — {display_name}' if viewing_own else f'Profile — {display_name}'
 
     pvp_wins, pvp_losses = _aggregate_pvp_record(stats)
     total_decided = pvp_wins + pvp_losses
@@ -92,19 +96,25 @@ def build_profile_embed(
         stats.get(bucket, {}).get('wins', 0) + stats.get(bucket, {}).get('losses', 0)
         for bucket in ('solo_easy', 'solo_normal')
     ) == 0:
+        if viewing_own:
+            description = 'No games played yet. Start with `/zutomayo create` or `/zutomayo playuniguri`.'
+        else:
+            description = 'This player has not finished any games yet.'
         embed = discord.Embed(
-            title=f"Your Profile — {member.display_name}",
-            description='No games played yet. Start with `/zutomayo create` or `/zutomayo playuniguri`.',
+            title=title,
+            description=description,
             color=discord.Color.blurple(),
         )
-        embed.set_thumbnail(url=member.display_avatar.url)
+        if avatar_url:
+            embed.set_thumbnail(url=avatar_url)
         return embed
 
     embed = discord.Embed(
-        title=f"Your Profile — {member.display_name}",
+        title=title,
         color=discord.Color.blurple(),
     )
-    embed.set_thumbnail(url=member.display_avatar.url)
+    if avatar_url:
+        embed.set_thumbnail(url=avatar_url)
 
     elo = profile.get('elo', 1000)
     elo_peak = profile.get('elo_peak', 1000)

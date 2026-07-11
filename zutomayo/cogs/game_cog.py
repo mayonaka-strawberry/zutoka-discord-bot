@@ -828,21 +828,169 @@ class GameCog(commands.Cog):
             log.exception('summary autocomplete failed')
             return []
 
+    async def _resolve_player_option(
+        self, interaction: discord.Interaction, player: str | None,
+    ) -> tuple[int, str, str | None, bool] | None:
+        """
+        Resolve the optional player search option to
+        (user_id, display_name, avatar_url, viewing_own). The option value is
+        a user id string from autocomplete, but a typed display name is also
+        accepted. Sends the not-found reply itself and returns None on failure.
+        """
+        from zutomayo.data.name_storage import resolve_display_name, search_known_players
+
+        if player is None or not player.strip():
+            return (
+                interaction.user.id,
+                interaction.user.display_name,
+                interaction.user.display_avatar.url,
+                True,
+            )
+
+        player = player.strip()
+        if player.isdigit():
+            target_id = int(player)
+        else:
+            matches = await search_known_players(player, limit=2)
+            exact = [pair for pair in matches if pair[1].lower() == player.lower()]
+            if len(exact) == 1:
+                target_id = exact[0][0]
+            elif len(matches) == 1:
+                target_id = matches[0][0]
+            else:
+                await interaction.response.send_message(
+                    f'No player named **{player}** was found. Start typing to '
+                    'search known players.',
+                    ephemeral=True,
+                )
+                return None
+
+        if target_id == interaction.user.id:
+            return (
+                interaction.user.id,
+                interaction.user.display_name,
+                interaction.user.display_avatar.url,
+                True,
+            )
+
+        display_name = resolve_display_name(self.bot, target_id)
+        user = self.bot.get_user(target_id)
+        avatar_url = user.display_avatar.url if user is not None else None
+        return target_id, display_name, avatar_url, False
+
+    async def _player_search_autocomplete(
+        self, interaction: discord.Interaction, current: str,
+    ) -> list[app_commands.Choice[str]]:
+        try:
+            from zutomayo.data.name_storage import search_known_players
+
+            matches = await search_known_players(current)
+            return [
+                app_commands.Choice(name=name[:100], value=str(user_id))
+                for user_id, name in matches[:25]
+            ]
+        except Exception:
+            log.exception('player search autocomplete failed')
+            return []
+
     @group.command(
         name='profilestats',
-        description='Show your own ZUTOMAYO CARD player profile (Elo, win/loss, top decks, top rivals)',
+        description='Show a player profile (Elo, win/loss, top decks, top rivals); defaults to your own',
     )
-    async def profile_stats(self, interaction: discord.Interaction) -> None:
+    @app_commands.describe(player='Another player to look up (search by name); leave empty for yourself')
+    async def profile_stats(self, interaction: discord.Interaction, player: str | None = None) -> None:
+        resolved = await self._resolve_player_option(interaction, player)
+        if resolved is None:
+            return
+        target_id, display_name, avatar_url, viewing_own = resolved
+
         await interaction.response.defer()
-        profile = await load_profile(interaction.user.id)
+        profile = await load_profile(target_id)
         rival_ids = [
             int(opponent_id_str)
             for opponent_id_str in profile.get('opponent_stats', {})
             if opponent_id_str.isdigit()
         ]
         await ensure_display_names(self.bot, rival_ids)
-        embed = build_profile_embed(self.bot, interaction.user, profile)
-        await interaction.followup.send(embed=embed)
+        embed = build_profile_embed(
+            self.bot, profile,
+            display_name=display_name,
+            avatar_url=avatar_url,
+            viewing_own=viewing_own,
+        )
+        await interaction.followup.send(
+            embed=embed, allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @profile_stats.autocomplete('player')
+    async def profile_stats_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._player_search_autocomplete(interaction, current)
+
+    @group.command(
+        name='history',
+        description='List recent finished games (yours or another player’s) with their game ids',
+    )
+    @app_commands.describe(player='Another player to look up (search by name); leave empty for yourself')
+    async def game_history(self, interaction: discord.Interaction, player: str | None = None) -> None:
+        from zutomayo.data.name_storage import resolve_display_name
+        from zutomayo.engine.bot_agent import BOT_NAME
+        from zutomayo.engine.game_persistence import list_recent_games_for_player
+
+        resolved = await self._resolve_player_option(interaction, player)
+        if resolved is None:
+            return
+        target_id, display_name, _, viewing_own = resolved
+
+        await interaction.response.defer()
+        recent_games = await list_recent_games_for_player(target_id, limit=15)
+        if not recent_games:
+            subject = 'You have' if viewing_own else f'**{display_name}** has'
+            await interaction.followup.send(
+                f'{subject} no finished games yet.',
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            return
+
+        opponent_ids = [
+            row['opponent_discord_id'] for row in recent_games
+            if row['opponent_discord_id'] not in (None, 0)
+        ]
+        await ensure_display_names(self.bot, opponent_ids)
+
+        lines = []
+        for row in recent_games:
+            if row['opponent_discord_id'] in (None, 0):
+                opponent_name = BOT_NAME
+            else:
+                opponent_name = resolve_display_name(self.bot, row['opponent_discord_id'])
+            if row['status'] != 'completed':
+                outcome = row['status']
+            elif row['winner_index'] is None:
+                outcome = 'draw'
+            elif row['winner_index'] == row['player_index']:
+                outcome = 'won'
+            else:
+                outcome = 'lost'
+            mode_label = f'TCG bo{row["best_of"]}' if row['is_tcg'] else row['mode']
+            played_date = row['created_at'].date().isoformat() if row['created_at'] else ''
+            lines.append(
+                f'`{row["game_id"]}` — {mode_label} vs {opponent_name} — {outcome} ({played_date})'
+            )
+
+        title = 'Your Recent Games' if viewing_own else f'Recent Games — {display_name}'
+        embed = discord.Embed(
+            title=title,
+            description='\n'.join(lines),
+            color=discord.Color.blurple(),
+        )
+        embed.set_footer(text='Use /zutomayo summary <game id> to replay any of these games.')
+        await interaction.followup.send(
+            embed=embed, allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @game_history.autocomplete('player')
+    async def game_history_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._player_search_autocomplete(interaction, current)
 
     async def _send_leaderboard(
         self,
