@@ -9,6 +9,10 @@ from zutomayo.data import database
 from zutomayo.data import name_storage
 
 
+# Do not use Privileged Intents
+# https://support-dev.discord.com/hc/en-us/articles/6207308062871-What-are-Privileged-Intents
+# https://support-dev.discord.com/hc/en-us/articles/40281523410967-Changes-to-Privileged-Intent-Access-for-Discord-Apps
+
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
