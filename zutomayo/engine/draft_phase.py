@@ -21,6 +21,8 @@ from zutomayo.data.gacha import draw_gachabox
 from zutomayo.ui.embeds import create_deck_grid_image_off_thread
 
 if TYPE_CHECKING:
+    import discord
+
     from zutomayo.engine.game_flow import GameFlow
     from zutomayo.engine.game_session import GameSession
     from zutomayo.models.card import Card
@@ -108,34 +110,38 @@ async def send_box_reveal(
     pack_number: int,
     box_cards: list['Card'],
 ) -> None:
-    """Reveal one opened box as two 25-card grid images.
+    """Reveal one opened box as a single message holding both 25-card grid images.
 
     The owning player always gets the images in their DM. When the draft is
-    public, the same images are also posted in the game channel. A fresh
-    ``discord.File`` is rendered per destination because a File cannot be sent
-    twice. The final deck a player builds is never revealed here.
+    public, the same images are also posted in the game channel. A fresh set of
+    ``discord.File`` objects is rendered per destination because a File cannot be
+    sent twice. The final deck a player builds is never revealed here.
     """
     header = f'**{player_name}** - Box {box_number} of {total_boxes} (Pack {pack_number})'
-    halves = ((box_cards[:CARDS_PER_PAGE], '1/2'), (box_cards[CARDS_PER_PAGE:], '2/2'))
+    halves = ((box_cards[:CARDS_PER_PAGE], '1'), (box_cards[CARDS_PER_PAGE:], '2'))
 
-    for half_cards, half_label in halves:
-        dm_file = await create_deck_grid_image_off_thread(
-            half_cards, columns=5, filename=f'draft_box_{box_number}_{half_label[0]}.webp',
-        )
-        if dm_file is not None:
-            await session.transport.send_to_player(
-                session, player_index, content=f'{header} ({half_label})', file=dm_file,
+    async def render_box_files() -> list['discord.File']:
+        files: list['discord.File'] = []
+        for half_cards, half_label in halves:
+            rendered = await create_deck_grid_image_off_thread(
+                half_cards, columns=5, filename=f'draft_box_{box_number}_{half_label}.webp',
             )
+            if rendered is not None:
+                files.append(rendered)
+        return files
+
+    dm_files = await render_box_files()
+    if dm_files:
+        await session.transport.send_to_player(
+            session, player_index, content=header, files=dm_files,
+        )
 
     if session.draft_visibility == 'public':
-        for half_cards, half_label in halves:
-            channel_file = await create_deck_grid_image_off_thread(
-                half_cards, columns=5, filename=f'draft_box_{box_number}_{half_label[0]}.webp',
+        channel_files = await render_box_files()
+        if channel_files:
+            await session.transport.send_to_channel(
+                session, content=header, files=channel_files,
             )
-            if channel_file is not None:
-                await session.transport.send_to_channel(
-                    session, content=f'{header} ({half_label})', file=channel_file,
-                )
 
 
 def _standard_intro(session: 'GameSession') -> str:

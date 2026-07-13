@@ -280,9 +280,17 @@ class DraftCardPickerView(discord.ui.View):
             'view': self,
         }
         if self.is_box_mode:
+            # Rendering a page's grid image on first visit can exceed Discord's
+            # 3-second interaction window, so acknowledge the click first, then
+            # edit the original message once the image is ready.
+            if page not in self._page_image_bytes:
+                await interaction.response.defer()
             image = await self.render_page_image(page)
             message_kwargs['attachments'] = [image] if image is not None else []
-        await interaction.response.edit_message(**message_kwargs)
+        if interaction.response.is_done():
+            await interaction.edit_original_response(**message_kwargs)
+        else:
+            await interaction.response.edit_message(**message_kwargs)
 
     async def _confirm(self, interaction: discord.Interaction) -> None:
         if len(self.selected_values) != self.target_count:
