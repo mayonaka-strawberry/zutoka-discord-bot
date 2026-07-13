@@ -65,6 +65,9 @@ class TcgMatchFlow:
             # Phase 1: TCG deck selection
             if resumed_decks is not None:
                 deck_0, side_0, deck_1, side_1 = resumed_decks
+            elif session.is_draft:
+                from zutomayo.engine.draft_phase import run_tcg_draft_phase
+                deck_0, side_0, deck_1, side_1 = await run_tcg_draft_phase(self.game_flow, session)
             else:
                 decks = await self._do_tcg_deck_selection(session)
                 deck_0, side_0, deck_1, side_1 = decks

@@ -100,6 +100,113 @@ class GameCog(commands.Cog):
             view=view,
         )
 
+    @group.command(
+        name='createdraft',
+        description='Create a draft game: open gacha boxes and build a deck from them',
+    )
+    @app_commands.guild_only()
+    @app_commands.describe(
+        boxes='Gacha boxes each player opens (1-5, default: 2)',
+        visibility='Whether opened boxes are shown in the channel (default: public)',
+    )
+    @app_commands.choices(visibility=[
+        app_commands.Choice(name='Public', value='public'),
+        app_commands.Choice(name='Private', value='private'),
+    ])
+    async def create_draft_game(
+        self,
+        interaction: discord.Interaction,
+        boxes: app_commands.Range[int, 1, 5] = 2,
+        visibility: str = 'public',
+    ):
+        if boxes < 1 or boxes > 5:
+            await interaction.response.send_message('boxes must be between 1 and 5.', ephemeral=True)
+            return
+        if visibility not in ('public', 'private'):
+            await interaction.response.send_message(
+                'visibility must be public or private.', ephemeral=True,
+            )
+            return
+
+        try:
+            session = await session_manager.create_game(interaction.channel_id, interaction.user.id)
+        except ValueError as e:
+            await interaction.response.send_message(str(e), ephemeral=True)
+            return
+
+        session.is_draft = True
+        session.draft_boxes = boxes
+        session.draft_visibility = visibility
+
+        view = GameLobbyView(session.game_id)
+        await interaction.response.send_message(
+            f'**ZUTOMAYO CARD DRAFT** - {boxes}-box ({visibility}) draft created by '
+            f'**{interaction.user.display_name}**!\n'
+            f'Game ID: `{session.game_id}`\n'
+            f'Click the button below or use `/zutomayo join {session.game_id}` to join.',
+            view=view,
+        )
+
+    @group.command(
+        name='createdrafttcg',
+        description='Create a Best of N TCG draft game: open gacha boxes and build a deck from them',
+    )
+    @app_commands.guild_only()
+    @app_commands.describe(
+        best_of='Best of 3 or 5 (default: 3)',
+        boxes='Gacha boxes each player opens (1-5, default: 3)',
+        visibility='Whether opened boxes are shown in the channel (default: public)',
+    )
+    @app_commands.choices(
+        best_of=[
+            app_commands.Choice(name='Best of 3', value=3),
+            app_commands.Choice(name='Best of 5', value=5),
+        ],
+        visibility=[
+            app_commands.Choice(name='Public', value='public'),
+            app_commands.Choice(name='Private', value='private'),
+        ],
+    )
+    async def create_draft_tcg_game(
+        self,
+        interaction: discord.Interaction,
+        best_of: int = 3,
+        boxes: app_commands.Range[int, 1, 5] = 3,
+        visibility: str = 'public',
+    ):
+        if best_of not in (3, 5):
+            await interaction.response.send_message('best_of must be 3 or 5.', ephemeral=True)
+            return
+        if boxes < 1 or boxes > 5:
+            await interaction.response.send_message('boxes must be between 1 and 5.', ephemeral=True)
+            return
+        if visibility not in ('public', 'private'):
+            await interaction.response.send_message(
+                'visibility must be public or private.', ephemeral=True,
+            )
+            return
+
+        try:
+            session = await session_manager.create_game(interaction.channel_id, interaction.user.id)
+        except ValueError as e:
+            await interaction.response.send_message(str(e), ephemeral=True)
+            return
+
+        session.is_tcg = True
+        session.best_of = best_of
+        session.is_draft = True
+        session.draft_boxes = boxes
+        session.draft_visibility = visibility
+
+        view = GameLobbyView(session.game_id)
+        await interaction.response.send_message(
+            f'**ZUTOMAYO CARD TCG DRAFT** - Best of {best_of}, {boxes}-box ({visibility}) draft '
+            f'created by **{interaction.user.display_name}**!\n'
+            f'Game ID: `{session.game_id}`\n'
+            f'Click the button below or use `/zutomayo join {session.game_id}` to join.',
+            view=view,
+        )
+
     @group.command(name='playuniguri', description='Play a solo game against メカうにぐり')
     @app_commands.dm_only()
     async def play_uniguri(self, interaction: discord.Interaction):
@@ -149,29 +256,32 @@ class GameCog(commands.Cog):
             solo_flow.run_solo_game(session)
         )
 
-    @group.command(name='ranksongs', description='Rank your favourite ZUTOMAYO songs')
-    @app_commands.dm_only()
-    async def rank_songs(self, interaction: discord.Interaction):
-        checkpoint_path = get_checkpoint_path(interaction.user.id)
-        if checkpoint_path.exists():
-            progress_info = ''
-            try:
-                data = json.loads(checkpoint_path.read_text(encoding='utf-8'))
-                votes_done = len(data['recorded_votes'])
-                total = data['total_matchups']
-                percentage = round(votes_done / total * 100)
-                progress_info = f' You are {percentage}% complete ({votes_done}/{total} matchups done).'
-            except (KeyError, json.JSONDecodeError):
-                pass
-            view = CheckpointChoiceView(user_id=interaction.user.id, number_of_rounds=DEFAULT_NUMBER_OF_ROUNDS)
-            await interaction.response.send_message(
-                f'A saved checkpoint was found.{progress_info} Choose to resume or start from scratch.',
-                view=view,
-            )
-        else:
-            log.info('User %s started a new song ranking', interaction.user.id)
-            view = RankSongsView(number_of_rounds=DEFAULT_NUMBER_OF_ROUNDS, user_id=interaction.user.id)
-            await interaction.response.send_message(content=view._build_matchup_content(), view=view)
+    # Commented out to free a slot within Discord's 25-subcommand-per-group
+    # limit so the draft commands fit. Re-enable by uncommenting; the supporting
+    # code (RankSongsView, CheckpointChoiceView, get_checkpoint_path) is intact.
+    # @group.command(name='ranksongs', description='Rank your favourite ZUTOMAYO songs')
+    # @app_commands.dm_only()
+    # async def rank_songs(self, interaction: discord.Interaction):
+    #     checkpoint_path = get_checkpoint_path(interaction.user.id)
+    #     if checkpoint_path.exists():
+    #         progress_info = ''
+    #         try:
+    #             data = json.loads(checkpoint_path.read_text(encoding='utf-8'))
+    #             votes_done = len(data['recorded_votes'])
+    #             total = data['total_matchups']
+    #             percentage = round(votes_done / total * 100)
+    #             progress_info = f' You are {percentage}% complete ({votes_done}/{total} matchups done).'
+    #         except (KeyError, json.JSONDecodeError):
+    #             pass
+    #         view = CheckpointChoiceView(user_id=interaction.user.id, number_of_rounds=DEFAULT_NUMBER_OF_ROUNDS)
+    #         await interaction.response.send_message(
+    #             f'A saved checkpoint was found.{progress_info} Choose to resume or start from scratch.',
+    #             view=view,
+    #         )
+    #     else:
+    #         log.info('User %s started a new song ranking', interaction.user.id)
+    #         view = RankSongsView(number_of_rounds=DEFAULT_NUMBER_OF_ROUNDS, user_id=interaction.user.id)
+    #         await interaction.response.send_message(content=view._build_matchup_content(), view=view)
 
     @group.command(name='join', description='Join an existing ZUTOMAYO CARD game')
     @app_commands.guild_only()

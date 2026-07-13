@@ -302,7 +302,11 @@ class GameFlow:
     async def run_game(self, session: GameSession) -> None:
         try:
             self._ensure_decision_runtime(session)
-            deck_1_cards, deck_2_cards = await self._do_deck_building_phase(session)
+            if session.is_draft:
+                from zutomayo.engine.draft_phase import run_standard_draft_phase
+                deck_1_cards, deck_2_cards = await run_standard_draft_phase(self, session)
+            else:
+                deck_1_cards, deck_2_cards = await self._do_deck_building_phase(session)
             await self.run_single_match(session, deck_1_cards, deck_2_cards)
 
             await self.finalize_completed_game(session)

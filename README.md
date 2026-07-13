@@ -45,9 +45,9 @@ the export/import scripts described in
 
 All slash commands live under `/zutomayo`:
 
-- Games: `create`, `createtcg`, `join`, `playuniguri`, `playunigurieasy`,
-  `quit`, `end` (ends a live game, or abandons one of your saved games with a
-  forfeit), `saveandquit`, `resume`.
+- Games: `create`, `createtcg`, `createdraft`, `createdrafttcg`, `join`,
+  `playuniguri`, `playunigurieasy`, `quit`, `end` (ends a live game, or
+  abandons one of your saved games with a forfeit), `saveandquit`, `resume`.
 - Game records: `summary` (full replay of a finished game — phases, every
   decision, effect priority and order, hands, battle results, TCG side-deck
   swaps; searchable by game id), `history` (recent finished games for you or
@@ -58,7 +58,7 @@ All slash commands live under `/zutomayo`:
   current card list.
 - Players: `profilestats` (your own, or search another player by name — never
   pings), `leaderboard`, `leaderboardtcg`, `editname`.
-- Extras: `gacha`, `gachabox`, `ranksongs`.
+- Extras: `gacha`, `gachabox`.
 
 Game ids are `YYYYMMDD-XXXXX` (UTC date plus a daily counter starting at
 00000). Saving a game keeps no partial results; resuming a 2-player game
@@ -165,3 +165,11 @@ has been verified against the official rules; do not "fix" rules in tests.
   8-card side deck; between matches both players may swap cards between main
   and side decks. Per-match stats are tracked separately; the TCG Elo ladder
   moves once per completed series.
+- Draft (`/zutomayo createdraft`, `/zutomayo createdrafttcg`): sealed variants
+  of the standard and TCG formats. Instead of a prebuilt deck, each player
+  opens a chosen number of gacha boxes (1-5) and builds their deck only from
+  the cards they open, picking through a paginated menu in DM (up to 2 copies
+  per card, capped by how many were opened). Opened boxes are shown in the
+  channel by default (`visibility: private` keeps them in DM). Downstream play,
+  Elo, and leaderboards are identical to the non-draft formats — a draft game
+  records as `standard`/`tcg`, indistinguishable from a built-deck game.

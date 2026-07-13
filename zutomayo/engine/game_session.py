@@ -63,6 +63,13 @@ class GameSession:
         self.is_solo: bool = False
         self.solo_difficulty: str = 'normal'  # 'normal' | 'easy', only meaningful when is_solo
 
+        # Draft mode: each player opens gacha boxes and builds a deck only from
+        # the cards they open. These flags are consumed by the draft phase,
+        # which runs before persistence exists, so nothing in resume needs them.
+        self.is_draft: bool = False
+        self.draft_boxes: int = 0
+        self.draft_visibility: str = 'public'  # 'public' | 'private'
+
         # Deck name chosen by each player (populated by deck-selection views).
         # None means the player used a random/manual/no-saved-deck path.
         self.player_deck_names: dict[int, str | None] = {0: None, 1: None}
@@ -127,7 +134,7 @@ class GameSession:
         self.pending_actions[player_index] = action
         self.player_events[player_index].set()
 
-    async def wait_for_both_players(self, timeout: float = 300.0) -> bool:
+    async def wait_for_both_players(self, timeout: float | None = 300.0) -> bool:
         try:
             await asyncio.wait_for(
                 asyncio.gather(
