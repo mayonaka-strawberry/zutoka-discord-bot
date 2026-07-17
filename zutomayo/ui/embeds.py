@@ -287,6 +287,87 @@ def build_game_over_embed(game_state: GameState, player_names: dict[int, str] = 
     return embed
 
 
+def build_field_embed_from_board_view(board_view) -> discord.Embed:
+    """Field embed for engine_alpha matches, built from a BoardView."""
+    day_night_label = 'NIGHT [夜]' if board_view.is_night else 'DAY [昼]'
+
+    embed = discord.Embed(
+        title=f'ZUTOMAYO CARD — TURN {board_view.turn}',
+        color=discord.Color.dark_purple() if board_view.is_night else discord.Color.gold(),
+    )
+    embed.add_field(
+        name=f'Chronos ({day_night_label})',
+        value=_build_chronos_bar(board_view.chronos),
+        inline=False,
+    )
+    for player in board_view.players:
+        side_label = '(Night [夜])' if player.side_is_night else '(Day [昼])'
+        embed.add_field(
+            name=f'{side_label}: {player.name}',
+            value=(
+                f'HP: {player.hp} | Power: {player.total_power}'
+                f' | Deck: {player.deck_count} | Hand: {len(player.hand)}'
+            ),
+            inline=False,
+        )
+    embed.set_footer(text=f'Phase: {board_view.phase_name}')
+    return embed
+
+
+def build_battle_result_embed_from_board_view(
+    battle_result: dict,
+    board_view,
+) -> discord.Embed:
+    """Battle result embed for engine_alpha matches.
+
+    ``battle_result`` carries player_0_attack / player_1_attack / winner /
+    damage (the loser's damage taken; the winner takes none)."""
+    player_0, player_1 = board_view.players
+    winner = battle_result['winner']
+    if winner == 0:
+        title = f'Last Round Result: {player_0.name} WON'
+        color = discord.Color.green()
+    elif winner == 1:
+        title = f'Last Round Result: {player_1.name} WON'
+        color = discord.Color.green()
+    else:
+        title = 'Last Round Result: DRAW'
+        color = discord.Color.greyple()
+
+    damage = battle_result.get('damage', 0)
+    damage_to_0 = damage if winner == 1 else 0
+    damage_to_1 = damage if winner == 0 else 0
+
+    embed = discord.Embed(title=title, color=color)
+    embed.add_field(
+        name=player_0.name,
+        value=f'ATK: {battle_result["player_0_attack"]}\nDamage taken: {damage_to_0}\nHP: {player_0.hp}',
+        inline=True,
+    )
+    embed.add_field(
+        name=player_1.name,
+        value=f'ATK: {battle_result["player_1_attack"]}\nDamage taken: {damage_to_1}\nHP: {player_1.hp}',
+        inline=True,
+    )
+    return embed
+
+
+def build_game_over_embed_from_board_view(board_view) -> discord.Embed:
+    """Game over embed for engine_alpha matches (winner 0/1, 2 = draw)."""
+    player_0, player_1 = board_view.players
+    if board_view.winner == 0:
+        winner_name = player_0.name
+    elif board_view.winner == 1:
+        winner_name = player_1.name
+    else:
+        winner_name = 'Nobody'
+
+    embed = discord.Embed(title=f'GAME COMPLETE — {winner_name} WINS!')
+    embed.add_field(name=player_0.name, value=f'HP: {player_0.hp}', inline=True)
+    embed.add_field(name=player_1.name, value=f'HP: {player_1.hp}', inline=True)
+    return embed
+
+
 def build_effect_resolution_embed(
     player_name: str,
     resolved: list[CardInstance],
@@ -356,7 +437,7 @@ def create_deck_grid_image(
     """
     image_paths: list[Path] = []
     for item in cards:
-        card = item.card if isinstance(item, CardInstance) else item
+        card = getattr(item, 'card', item)
         if not card.image:
             continue
         image_path = _PROJECT_ROOT / card.image

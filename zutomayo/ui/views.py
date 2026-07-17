@@ -668,3 +668,143 @@ class GameLobbyView(discord.ui.View):
                 )
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
+
+
+class ActionSelectView(discord.ui.View):
+    """Dropdown over card options that submits a single engine action int
+    (payload type 'action'). Options index into `cards`; when `allow_pass`
+    is set, an extra row submits the pass action (len(cards)). With
+    `confirm`, a confirm/reselect step precedes submission (the set-cards
+    and initial-card flows); without it the selection submits immediately
+    (effect prompts)."""
+
+    PASS_SENTINEL = '__PASS__'
+
+    def __init__(
+        self,
+        session,
+        player_index: int,
+        cards: list,
+        placeholder: str = 'Select a card...',
+        allow_pass: bool = False,
+        pass_label: str = 'Pass',
+        confirm: bool = False,
+        opponent_name: str = 'opponent',
+        submit_callback: SubmitCallback | None = None,
+    ):
+        super().__init__(timeout=750)
+        self.session = session
+        self.player_index = player_index
+        self.cards = cards
+        self.placeholder = placeholder
+        self.allow_pass = allow_pass
+        self.pass_label = pass_label
+        self.confirm = confirm
+        self.opponent_name = opponent_name
+        self.submit_callback = submit_callback
+        self.selected_action: int | None = None
+        self._build_dropdown()
+
+    def _build_dropdown(self) -> None:
+        options = []
+        for index, item in enumerate(self.cards):
+            label, description = _build_select_option(item)
+            options.append(discord.SelectOption(label=label, description=description, value=str(index)))
+        if self.allow_pass:
+            options.append(discord.SelectOption(label=self.pass_label, value=self.PASS_SENTINEL))
+        select = discord.ui.Select(
+            placeholder=self.placeholder,
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+        select.callback = self._select_callback
+        self.add_item(select)
+
+    def _selection_name(self) -> str:
+        if self.selected_action is not None and self.selected_action < len(self.cards):
+            return self.cards[self.selected_action].card.name
+        return self.pass_label
+
+    async def _select_callback(self, interaction: discord.Interaction):
+        value = interaction.data['values'][0]
+        self.selected_action = len(self.cards) if value == self.PASS_SENTINEL else int(value)
+
+        if not self.confirm:
+            self._submit()
+            await interaction.response.edit_message(
+                content=f'You selected: **{self._selection_name()}**',
+                view=None,
+            )
+            self.stop()
+            return
+
+        self.clear_items()
+        confirm_button = discord.ui.Button(label='Confirm', style=discord.ButtonStyle.green)
+        confirm_button.callback = self._confirm_callback
+        self.add_item(confirm_button)
+        reselect_button = discord.ui.Button(label='Select Again', style=discord.ButtonStyle.grey)
+        reselect_button.callback = self._reselect_callback
+        self.add_item(reselect_button)
+        await interaction.response.edit_message(
+            content=f'You selected: **{self._selection_name()}**. Confirm or select again?',
+            embed=None,
+            view=self,
+        )
+
+    def _submit(self) -> None:
+        if self.submit_callback is not None:
+            self.submit_callback('action', self.selected_action)
+
+    async def _confirm_callback(self, interaction: discord.Interaction):
+        self._submit()
+        await interaction.response.edit_message(
+            content=f'You selected: **{self._selection_name()}**. Waiting for {self.opponent_name}...',
+            view=None,
+        )
+        self.stop()
+
+    async def _reselect_callback(self, interaction: discord.Interaction):
+        self.selected_action = None
+        self.clear_items()
+        self._build_dropdown()
+        await interaction.response.edit_message(
+            content='Select your card:',
+            view=self,
+        )
+
+
+class BinaryChoiceView(discord.ui.View):
+    """Two buttons submitting engine action 0 or 1 (payload type 'action')."""
+
+    def __init__(
+        self,
+        session,
+        player_index: int,
+        labels: tuple[str, str] = ('No', 'Yes'),
+        submit_callback: SubmitCallback | None = None,
+    ):
+        super().__init__(timeout=750)
+        self.session = session
+        self.player_index = player_index
+        self.submit_callback = submit_callback
+
+        button_zero = discord.ui.Button(label=labels[0], style=discord.ButtonStyle.primary)
+        button_zero.callback = self._make_callback(0, labels[0])
+        self.add_item(button_zero)
+
+        button_one = discord.ui.Button(label=labels[1], style=discord.ButtonStyle.secondary)
+        button_one.callback = self._make_callback(1, labels[1])
+        self.add_item(button_one)
+
+    def _make_callback(self, action: int, label: str):
+        async def callback(interaction: discord.Interaction):
+            if self.submit_callback is not None:
+                self.submit_callback('action', action)
+            await interaction.response.edit_message(
+                content=f'You selected: **{label}**',
+                view=None,
+            )
+            self.stop()
+
+        return callback
