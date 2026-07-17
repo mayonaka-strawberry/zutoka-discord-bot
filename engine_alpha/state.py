@@ -199,6 +199,7 @@ class GameState:
         # Chance
         "rng_key", "rng_ctr",
         "draft",                # DraftState or None
+        "event_sink",           # list for engine events, or None (detached)
     )
 
     def __init__(self, rng_key: int) -> None:
@@ -223,6 +224,7 @@ class GameState:
         self.rng_key = rng_key
         self.rng_ctr = 0
         self.draft = None
+        self.event_sink = None
 
     def fast_clone(self) -> "GameState":
         clone = GameState.__new__(GameState)
@@ -247,6 +249,7 @@ class GameState:
         clone.rng_key = self.rng_key
         clone.rng_ctr = self.rng_ctr
         clone.draft = self.draft.fast_clone() if self.draft is not None else None
+        clone.event_sink = None
         return clone
 
     # -- instance management ------------------------------------------------

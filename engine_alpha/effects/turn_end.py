@@ -10,6 +10,7 @@ Order matters and matches the old engine exactly:
 from __future__ import annotations
 
 from ..cards import EFFECT_T, EFFECT_TO_INDEX
+from ..events import EVENT_HP_CHANGED
 from ..state import GameState, PF_END_OF_TURN_DAMAGE, PF_REFLECT_REDUCTION, PF_DAMAGE_REDUCED, PF_DAMAGE_TAKEN
 from ..zones import place_in_abyss
 
@@ -55,5 +56,10 @@ def process_end_of_turn_effects(state: GameState) -> None:
         elif not healed:
             for heal_index in (0, 1):
                 heal_player = state.players[heal_index]
+                old_hp = heal_player.hp
                 heal_player.hp = min(100, heal_player.hp + 10)
+                if state.event_sink is not None and heal_player.hp != old_hp:
+                    state.event_sink.append(
+                        (EVENT_HP_CHANGED, heal_index, heal_player.hp - old_hp,
+                         heal_player.hp))
             healed = True

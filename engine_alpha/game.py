@@ -38,6 +38,10 @@ from .cards import (
 )
 from .draft import DECK_SIZE, legal_picks, validate_deck
 from .effects import dispatch
+from .events import (
+    EVENT_AREA_PLACED, EVENT_CHARACTER_SWAP, EVENT_EFFECT_SKIPPED_COST,
+    EVENT_GAME_OVER, EVENT_MULLIGAN_DONE, EVENT_PHASE_CHANGED,
+)
 from .effects.removal import check_area_removal, on_area_enchant_leaves_play
 from .effects.turn_end import process_end_of_turn_effects
 from .rng import random_below, shuffled
@@ -159,13 +163,18 @@ class Game:
                     state.pending = pending
                     return
                 continue  # frames drained; phase handler resumes from its ctx
+            phase_before = state.phase
             pending = handlers[state.phase](self, state, request, answer)
+            if state.event_sink is not None and state.phase != phase_before:
+                state.event_sink.append((EVENT_PHASE_CHANGED, state.phase, state.turn))
             if pending is not None:
                 state.pending = pending
                 return
         state.phase = PH_GAME_OVER
         state.pending = None
         state.acting = -1
+        if state.event_sink is not None:
+            state.event_sink.append((EVENT_GAME_OVER, state.winner))
 
     # ------------------------------------------------------------------
     # Setup
@@ -219,6 +228,9 @@ class Game:
                     player.deck.extend(marked)
                     player.deck = shuffled(player.deck, state.rng_key, state.rng_ctr)
                     state.rng_ctr += 1
+                if state.event_sink is not None:
+                    state.event_sink.append(
+                        (EVENT_MULLIGAN_DONE, player.index, len(marked)))
                 ctx[0] += 1
                 ctx[1] = []
             else:
@@ -363,6 +375,7 @@ class Game:
                 _clear_set_slot(player, new_area)
                 _to_power_or_abyss(state, new_area, player.index)
                 continue
+            old_area_definition = state.inst_def[player.set_c] if player.set_c != -1 else -1
             if player.set_c != -1:
                 old_area = player.set_c
                 player.set_c = -1
@@ -371,6 +384,10 @@ class Game:
             state.inst_face_up[new_area] = 1
             player.set_c = new_area
             _clear_set_slot(player, new_area)
+            if state.event_sink is not None:
+                state.event_sink.append(
+                    (EVENT_AREA_PLACED, player.index, old_area_definition,
+                     state.inst_def[new_area]))
         check_area_removal(state)
         state.phase = PH_PROCESS_EFFECTS
         state.phase_ctx = [0, state.priority_player, 0, [], [], 0, 0]
@@ -595,6 +612,7 @@ def _skip_swap_prompt_needed(state: GameState, player: PlayerState) -> bool:
 
 
 def _perform_character_swap(state: GameState, player: PlayerState, new_character: int) -> None:
+    old_definition = state.inst_def[player.battle] if player.battle != -1 else -1
     if player.battle != -1:
         old_character = player.battle
         player.swapped_from_songs |= 1 << SONG_T[state.inst_def[old_character]]
@@ -603,6 +621,10 @@ def _perform_character_swap(state: GameState, player: PlayerState, new_character
     state.inst_face_up[new_character] = 1
     player.battle = new_character
     _clear_set_slot(player, new_character)
+    if state.event_sink is not None:
+        state.event_sink.append(
+            (EVENT_CHARACTER_SWAP, player.index, old_definition,
+             state.inst_def[new_character]))
 
 
 def _collect_eligible(state: GameState, player: PlayerState) -> list[int]:
@@ -640,9 +662,15 @@ def _dispatch_with_cost_check(state: GameState, player: PlayerState, instance_id
     cost = effective_power_cost(state, instance_id)
     if CARD_TYPE_T[state.inst_def[instance_id]] == TYPE_AREA_ENCHANT:
         if total_power(state, player) < cost:
+            if state.event_sink is not None:
+                state.event_sink.append(
+                    (EVENT_EFFECT_SKIPPED_COST, player.index, state.inst_def[instance_id]))
             return False
     else:
         if total_power(state, player) + player.flags[PF_POWER_BONUS] < cost:
+            if state.event_sink is not None:
+                state.event_sink.append(
+                    (EVENT_EFFECT_SKIPPED_COST, player.index, state.inst_def[instance_id]))
             return False
     dispatch.start_effect(state, player.index, instance_id)
     return True

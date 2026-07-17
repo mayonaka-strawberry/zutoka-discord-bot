@@ -17,6 +17,7 @@ from ..cards import (
     CARD_TYPE_T, EFFECT_T, NO_EFFECT, POWER_COST_T, SEND_TO_POWER_T, SONG_T,
     SONG_NAMES, TYPE_CHARACTER, TYPE_ENCHANT,
 )
+from ..events import EVENT_HP_CHANGED
 from ..state import PF_ATTACK_BONUS, PF_POWER_BONUS
 from ..zones import place_in_abyss, place_in_charger
 from .interpreter import (
@@ -166,7 +167,10 @@ def chaos_04_006(state, frame, request, answer):
     opponent = state.players[1 - frame.owner]
     if frame.step == 0:
         if len(owner.abyss) < 4:
+            old_hp = owner.hp
             owner.hp = 0
+            if state.event_sink is not None and old_hp != 0:
+                state.event_sink.append((EVENT_HP_CHANGED, frame.owner, -old_hp, 0))
             return None
         frame.data = [list(owner.abyss), []]  # [remaining, picked]
         frame.step = 1
@@ -211,7 +215,10 @@ def chaos_04_088(state, frame, request, answer):
     opponent = state.players[1 - frame.owner]
     if frame.step == 0:
         if not owner.abyss:
+            old_hp = owner.hp
             owner.hp = 0
+            if state.event_sink is not None and old_hp != 0:
+                state.event_sink.append((EVENT_HP_CHANGED, frame.owner, -old_hp, 0))
             return None
         frame.step = 1
         return select_card(P_EFFECT_TARGET, list(owner.abyss))

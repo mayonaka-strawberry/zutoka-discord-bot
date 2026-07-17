@@ -19,6 +19,7 @@ source container is the caller's responsibility (matching the old engine).
 from __future__ import annotations
 
 from .cards import SEND_TO_POWER_T, CARD_TYPE_T, TYPE_CHARACTER
+from .events import EVENT_DRAW, EVENT_PLACED_IN_ABYSS, EVENT_PLACED_IN_CHARGER
 from .state import GameState, PF_ABYSS_RECEIVED, PF_OPP_CARD_TO_ABYSS, PF_CARD_TO_POWER, PF_CHAR_TO_POWER
 
 
@@ -29,6 +30,9 @@ def place_in_abyss(state: GameState, instance_id: int, owner_index: int, actor_i
     state.players[owner_index].abyss.append(instance_id)
     state.players[owner_index].flags[PF_ABYSS_RECEIVED] = 1
     state.players[1 - actor_index].flags[PF_OPP_CARD_TO_ABYSS] = 1
+    if state.event_sink is not None:
+        state.event_sink.append(
+            (EVENT_PLACED_IN_ABYSS, owner_index, actor_index, state.inst_def[instance_id]))
 
 
 def place_in_charger(state: GameState, instance_id: int, owner_index: int, actor_index: int) -> None:
@@ -41,6 +45,9 @@ def place_in_charger(state: GameState, instance_id: int, owner_index: int, actor
         flags[PF_CARD_TO_POWER] = 1
         if CARD_TYPE_T[state.inst_def[instance_id]] == TYPE_CHARACTER:
             flags[PF_CHAR_TO_POWER] = 1
+    if state.event_sink is not None:
+        state.event_sink.append(
+            (EVENT_PLACED_IN_CHARGER, owner_index, actor_index, state.inst_def[instance_id]))
 
 
 def to_power_or_abyss(state: GameState, instance_id: int, owner_index: int,
@@ -66,4 +73,6 @@ def draw_cards(state: GameState, player_index: int, count: int) -> int:
         state.inst_face_up[instance_id] = 0
         state.inst_neg[instance_id] = 0
     player.hand.extend(drawn)
+    if state.event_sink is not None and drawn:
+        state.event_sink.append((EVENT_DRAW, player_index, len(drawn)))
     return len(drawn)

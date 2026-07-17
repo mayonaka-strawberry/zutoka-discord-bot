@@ -14,6 +14,10 @@ from .cards import (
     ATK_DAY_T, ATK_NIGHT_T, POWER_COST_T, SEND_TO_POWER_T, EFFECT_T,
     EFFECT_TO_INDEX,
 )
+from .events import (
+    EVENT_BATTLE_RESULT, EVENT_CHRONOS_ADVANCED, EVENT_CHRONOS_SET,
+    EVENT_HP_CHANGED,
+)
 from .state import (
     GameState, PlayerState,
     PF_ATTACK_BONUS, PF_DAMAGE_REDUCTION, PF_DAY_NIGHT_REVERSED, PF_POWER_BONUS,
@@ -82,6 +86,8 @@ def set_chronos(state: GameState, new_value: int) -> None:
     elif not old_is_night and new_is_night:
         state.gflags[GF_DAY_TO_NIGHT] = 1
     state.chronos = new_value
+    if state.event_sink is not None:
+        state.event_sink.append((EVENT_CHRONOS_SET, new_value))
 
 
 def advance_chronos_by(state: GameState, steps: int) -> None:
@@ -96,6 +102,8 @@ def advance_chronos_by(state: GameState, steps: int) -> None:
         elif not old_is_night and new_is_night:
             state.gflags[GF_DAY_TO_NIGHT] = 1
     state.chronos = chronos
+    if state.event_sink is not None and steps > 0:
+        state.event_sink.append((EVENT_CHRONOS_ADVANCED, steps, chronos))
 
 
 def get_effective_attack(state: GameState, player: PlayerState) -> int:
@@ -150,8 +158,12 @@ def deal_damage(state: GameState, player_index: int, amount: int) -> None:
     if amount <= 0:
         return
     player = state.players[player_index]
+    old_hp = player.hp
     player.hp = max(0, player.hp - amount)
     player.flags[PF_DAMAGE_TAKEN] += amount
+    if state.event_sink is not None:
+        state.event_sink.append(
+            (EVENT_HP_CHANGED, player_index, player.hp - old_hp, player.hp))
 
 
 def resolve_battle(state: GameState) -> None:
@@ -163,6 +175,8 @@ def resolve_battle(state: GameState) -> None:
         state.last_battle_winner = -1
         player_0.flags[PF_BATTLE_DAMAGE] = 0
         player_1.flags[PF_BATTLE_DAMAGE] = 0
+        if state.event_sink is not None:
+            state.event_sink.append((EVENT_BATTLE_RESULT, attack_0, attack_1, -1, 0))
         return
 
     winner, loser = (player_0, player_1) if attack_0 > attack_1 else (player_1, player_0)
@@ -180,6 +194,9 @@ def resolve_battle(state: GameState) -> None:
     loser.flags[PF_DAMAGE_TAKEN] += damage
     loser.flags[PF_BATTLE_LOST] = 1
     state.last_battle_winner = winner.index
+    if state.event_sink is not None:
+        state.event_sink.append(
+            (EVENT_BATTLE_RESULT, attack_0, attack_1, winner.index, damage))
 
 
 def check_win(state: GameState) -> None:

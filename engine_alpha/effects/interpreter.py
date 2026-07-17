@@ -25,6 +25,7 @@ from ..actions import (
     select_card, select_identity, select_number,
 )
 from ..cards import CARD_TYPE_T, NUM_CARDS, SONG_T, TYPE_CHARACTER
+from ..events import EVENT_EFFECT_STARTED, EVENT_HP_CHANGED
 from ..state import (
     Frame, GameState,
     PF_ATTACK_BONUS, PF_DAMAGE_REDUCTION, PF_DAY_NIGHT_REVERSED,
@@ -118,6 +119,9 @@ def start_effect(state: GameState, owner_index: int, instance_id: int, effect_in
     if not eval_cond(state, owner_index, cond):
         return
     state.frame_stack.append(Frame(effect_index, instance_id, owner_index))
+    if state.event_sink is not None:
+        state.event_sink.append(
+            (EVENT_EFFECT_STARTED, owner_index, state.inst_def[instance_id], effect_index))
 
 
 def resume(state: GameState, request: DecisionRequest | None, answer: int | None) -> DecisionRequest | None:
@@ -326,7 +330,11 @@ def _op_power_bonus(state, frame, op, request, answer):
 
 def _op_heal(state, frame, op, request, answer):
     player = _side_player(state, frame, op[1])
+    old_hp = player.hp
     player.hp = min(100, player.hp + eval_expr(state, frame, op[2]))
+    if state.event_sink is not None and player.hp != old_hp:
+        state.event_sink.append(
+            (EVENT_HP_CHANGED, player.index, player.hp - old_hp, player.hp))
     frame.pc += 1
     return None
 
@@ -504,7 +512,11 @@ def _op_shuffle_reg(state, frame, op, request, answer):
 
 def _op_lose_game(state, frame, op, request, answer):
     """CHAOS bomb failure: the old code sets the owner's HP to 0."""
-    state.players[frame.owner].hp = 0
+    owner = state.players[frame.owner]
+    old_hp = owner.hp
+    owner.hp = 0
+    if state.event_sink is not None and old_hp != 0:
+        state.event_sink.append((EVENT_HP_CHANGED, frame.owner, -old_hp, 0))
     frame.pc += 1
     return None
 
