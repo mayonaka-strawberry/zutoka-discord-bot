@@ -1,4 +1,4 @@
-import json
+﻿import json
 import logging
 import discord
 from discord import app_commands
@@ -52,112 +52,25 @@ class GameCog(commands.Cog):
             return
         remember_user(interaction.user.id, interaction.user.global_name or interaction.user.name)
 
-    @group.command(name='create', description='Create a new ZUTOMAYO CARD game')
-    @app_commands.guild_only()
-    async def create_game(self, interaction: discord.Interaction):
-        try:
-            session = await session_manager.create_game(interaction.channel_id, interaction.user.id)
-        except ValueError as e:
-            await interaction.response.send_message(str(e), ephemeral=True)
-            return
-
-        view = GameLobbyView(session.game_id)
-        await interaction.response.send_message(
-            f'**ZUTOMAYO CARD** - Game created by **{interaction.user.display_name}**!\n'
-            f'Game ID: `{session.game_id}`\n'
-            f'Click the button below or use `/zutomayo join {session.game_id}` to join.',
-            view=view,
-        )
-
-    @group.command(name='createtcg', description='Create a new ZUTOMAYO CARD game (Best of N TCG format)')
-    @app_commands.guild_only()
-    @app_commands.describe(best_of='Best of 3 or 5 (default: 3)')
-    @app_commands.choices(best_of=[
-        app_commands.Choice(name='Best of 3', value=3),
-        app_commands.Choice(name='Best of 5', value=5),
-    ])
-    async def create_tcg_game(self, interaction: discord.Interaction, best_of: int = 3):
-        if best_of not in (3, 5):
-            await interaction.response.send_message(
-                'best_of must be 3 or 5.', ephemeral=True,
-            )
-            return
-
-        try:
-            session = await session_manager.create_game(interaction.channel_id, interaction.user.id)
-        except ValueError as e:
-            await interaction.response.send_message(str(e), ephemeral=True)
-            return
-
-        session.is_tcg = True
-        session.best_of = best_of
-
-        view = GameLobbyView(session.game_id)
-        await interaction.response.send_message(
-            f'**ZUTOMAYO CARD TCG** - Best of {best_of} created by **{interaction.user.display_name}**!\n'
-            f'Game ID: `{session.game_id}`\n'
-            f'Click the button below or use `/zutomayo join {session.game_id}` to join.',
-            view=view,
-        )
-
-    @group.command(
-        name='createdraft',
-        description='Create a draft game: open gacha boxes and build a deck from them',
-    )
-    @app_commands.guild_only()
+    @group.command(name='create', description='Create a ZUTOMAYO CARD game (standard or TCG, built decks or draft, versus a player or solo)')
     @app_commands.describe(
-        boxes='Gacha boxes each player opens (1-5, default: 2)',
-        visibility='Whether opened boxes are shown in the channel (default: public)',
+        game_format='Standard single game or TCG best-of-N series (default: standard)',
+        deck='Use saved/built decks, or draft from opened gacha boxes (default: saved)',
+        opponent='Another player (default), or a solo game against a trained opponent (DMs only)',
+        best_of='TCG only: best of 3 or 5 (default: 3)',
+        boxes='Draft only: gacha boxes each player opens (1-5; default 2, TCG 3)',
+        visibility='Draft only: whether opened boxes are shown in the channel (default: public)',
     )
-    @app_commands.choices(visibility=[
-        app_commands.Choice(name='Public', value='public'),
-        app_commands.Choice(name='Private', value='private'),
-    ])
-    async def create_draft_game(
-        self,
-        interaction: discord.Interaction,
-        boxes: app_commands.Range[int, 1, 5] = 2,
-        visibility: str = 'public',
-    ):
-        if boxes < 1 or boxes > 5:
-            await interaction.response.send_message('boxes must be between 1 and 5.', ephemeral=True)
-            return
-        if visibility not in ('public', 'private'):
-            await interaction.response.send_message(
-                'visibility must be public or private.', ephemeral=True,
-            )
-            return
-
-        try:
-            session = await session_manager.create_game(interaction.channel_id, interaction.user.id)
-        except ValueError as e:
-            await interaction.response.send_message(str(e), ephemeral=True)
-            return
-
-        session.is_draft = True
-        session.draft_boxes = boxes
-        session.draft_visibility = visibility
-
-        view = GameLobbyView(session.game_id)
-        await interaction.response.send_message(
-            f'**ZUTOMAYO CARD DRAFT** - {boxes}-box ({visibility}) draft created by '
-            f'**{interaction.user.display_name}**!\n'
-            f'Game ID: `{session.game_id}`\n'
-            f'Click the button below or use `/zutomayo join {session.game_id}` to join.',
-            view=view,
-        )
-
-    @group.command(
-        name='createdrafttcg',
-        description='Create a Best of N TCG draft game: open gacha boxes and build a deck from them',
-    )
-    @app_commands.guild_only()
-    @app_commands.describe(
-        best_of='Best of 3 or 5 (default: 3)',
-        boxes='Gacha boxes each player opens (1-5, default: 3)',
-        visibility='Whether opened boxes are shown in the channel (default: public)',
-    )
+    @app_commands.rename(game_format='format')
     @app_commands.choices(
+        game_format=[
+            app_commands.Choice(name='Standard', value='standard'),
+            app_commands.Choice(name='TCG (best of N)', value='tcg'),
+        ],
+        deck=[
+            app_commands.Choice(name='Saved or built deck', value='saved'),
+            app_commands.Choice(name='Draft from gacha boxes', value='draft'),
+        ],
         best_of=[
             app_commands.Choice(name='Best of 3', value=3),
             app_commands.Choice(name='Best of 5', value=5),
@@ -167,22 +80,35 @@ class GameCog(commands.Cog):
             app_commands.Choice(name='Private', value='private'),
         ],
     )
-    async def create_draft_tcg_game(
+    async def create_game(
         self,
         interaction: discord.Interaction,
-        best_of: int = 3,
-        boxes: app_commands.Range[int, 1, 5] = 3,
-        visibility: str = 'public',
+        game_format: str = 'standard',
+        deck: str = 'saved',
+        opponent: str = 'player',
+        best_of: int | None = None,
+        boxes: app_commands.Range[int, 1, 5] | None = None,
+        visibility: str | None = None,
     ):
-        if best_of not in (3, 5):
-            await interaction.response.send_message('best_of must be 3 or 5.', ephemeral=True)
-            return
-        if boxes < 1 or boxes > 5:
-            await interaction.response.send_message('boxes must be between 1 and 5.', ephemeral=True)
-            return
-        if visibility not in ('public', 'private'):
+        if game_format != 'tcg' and best_of is not None:
             await interaction.response.send_message(
-                'visibility must be public or private.', ephemeral=True,
+                'best_of only applies to TCG games (format: TCG).', ephemeral=True,
+            )
+            return
+        if deck != 'draft' and (boxes is not None or visibility is not None):
+            await interaction.response.send_message(
+                'boxes and visibility only apply to draft games (deck: Draft).', ephemeral=True,
+            )
+            return
+
+        if opponent != 'player':
+            await self._create_solo_game(interaction, game_format, deck, opponent)
+            return
+
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                'Two-player games are created in a server channel. '
+                'For a solo game, set the opponent option.', ephemeral=True,
             )
             return
 
@@ -192,73 +118,94 @@ class GameCog(commands.Cog):
             await interaction.response.send_message(str(e), ephemeral=True)
             return
 
-        session.is_tcg = True
-        session.best_of = best_of
-        session.is_draft = True
-        session.draft_boxes = boxes
-        session.draft_visibility = visibility
+        title_parts = ['**ZUTOMAYO CARD']
+        if game_format == 'tcg':
+            session.is_tcg = True
+            session.best_of = best_of or 3
+            title_parts.append(' TCG')
+        if deck == 'draft':
+            session.is_draft = True
+            session.draft_boxes = boxes if boxes is not None else (3 if game_format == 'tcg' else 2)
+            session.draft_visibility = visibility or 'public'
+            title_parts.append(' DRAFT')
+        title_parts.append('**')
+        details = []
+        if session.is_tcg:
+            details.append(f'Best of {session.best_of}')
+        if session.is_draft:
+            details.append(f'{session.draft_boxes}-box ({session.draft_visibility}) draft')
+        detail_text = f' - {", ".join(details)}' if details else ''
 
         view = GameLobbyView(session.game_id)
         await interaction.response.send_message(
-            f'**ZUTOMAYO CARD TCG DRAFT** - Best of {best_of}, {boxes}-box ({visibility}) draft '
-            f'created by **{interaction.user.display_name}**!\n'
+            f'{"".join(title_parts)}{detail_text} created by **{interaction.user.display_name}**!\n'
             f'Game ID: `{session.game_id}`\n'
             f'Click the button below or use `/zutomayo join {session.game_id}` to join.',
             view=view,
         )
 
-    @group.command(name='playuniguri', description='Play a solo game against メカうにぐり')
-    @app_commands.dm_only()
-    async def play_uniguri(self, interaction: discord.Interaction):
-        channel_id = 0
+    @create_game.autocomplete('opponent')
+    async def create_opponent_autocomplete(
+        self, interaction: discord.Interaction, current: str,
+    ) -> list[app_commands.Choice[str]]:
+        from zutomayo.match.agents import available_solo_opponents
+
         try:
-            session = await session_manager.create_solo_game(channel_id, interaction.user.id)
+            names = ['player'] + available_solo_opponents()
+        except Exception:
+            names = ['player']
+        return [
+            app_commands.Choice(name=name, value=name)
+            for name in names if current.lower() in name.lower()
+        ][:25]
+
+    async def _create_solo_game(
+        self, interaction: discord.Interaction, game_format: str, deck: str, opponent: str,
+    ) -> None:
+        from zutomayo.match.agents import available_solo_opponents
+
+        if interaction.guild is not None:
+            await interaction.response.send_message(
+                'Solo games run in DMs - use this command in a DM with the bot.', ephemeral=True,
+            )
+            return
+        if game_format == 'tcg':
+            await interaction.response.send_message(
+                'TCG series are not available for solo games.', ephemeral=True,
+            )
+            return
+        if deck == 'draft':
+            await interaction.response.send_message(
+                'Draft is not available for solo games.', ephemeral=True,
+            )
+            return
+        if opponent not in available_solo_opponents():
+            await interaction.response.send_message(
+                f'The solo opponent `{opponent}` is not available yet.', ephemeral=True,
+            )
+            return
+
+        try:
+            session = await session_manager.create_solo_game(0, interaction.user.id)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
 
-        session.solo_difficulty = 'normal'
+        session.solo_difficulty = opponent
 
         await interaction.response.send_message(
-            f'**メカうにぐり** has accepted **{interaction.user.display_name}**\'s challenge!\n'
+            f'**ãƒ¡ã‚«ã†ã«ãã‚Š** has accepted **{interaction.user.display_name}**\'s challenge!\n'
             f'Game ID: `{session.game_id}`\n'
             f'Starting solo game...'
         )
 
-        from zutomayo.engine.solo_game_flow import SoloGameFlow
-        solo_flow = SoloGameFlow(self.bot)
-        session.game_task = self.bot.loop.create_task(
-            solo_flow.run_solo_game(session)
-        )
+        from zutomayo.match.solo_flow import run_solo_game
 
-    @group.command(name='playunigurieasy', description='Play a solo game against an easier メカうにぐり')
-    @app_commands.dm_only()
-    async def play_uniguri_easy(self, interaction: discord.Interaction):
-        channel_id = 0
-        try:
-            session = await session_manager.create_solo_game(channel_id, interaction.user.id)
-        except ValueError as e:
-            await interaction.response.send_message(str(e), ephemeral=True)
-            return
+        session.game_task = self.bot.loop.create_task(run_solo_game(self.bot, session, opponent))
 
-        session.solo_difficulty = 'easy'
-
-        await interaction.response.send_message(
-            f'**メカうにぐり** has accepted **{interaction.user.display_name}**\'s challenge!\n'
-            f'Game ID: `{session.game_id}`\n'
-            f'Starting solo game...'
-        )
-
-        from zutomayo.engine.bot_agent import create_bot_agent_easy
-        from zutomayo.engine.solo_game_flow import SoloGameFlow
-        solo_flow = SoloGameFlow(self.bot, bot_agent=create_bot_agent_easy(), use_easy_decks=True)
-        session.game_task = self.bot.loop.create_task(
-            solo_flow.run_solo_game(session)
-        )
-
-    # Commented out to free a slot within Discord's 25-subcommand-per-group
-    # limit so the draft commands fit. Re-enable by uncommenting; the supporting
-    # code (RankSongsView, CheckpointChoiceView, get_checkpoint_path) is intact.
+    # Disabled feature; re-enable by uncommenting (the command tree has free
+    # slots). The supporting code (RankSongsView, CheckpointChoiceView,
+    # get_checkpoint_path) is intact.
     # @group.command(name='ranksongs', description='Rank your favourite ZUTOMAYO songs')
     # @app_commands.dm_only()
     # async def rank_songs(self, interaction: discord.Interaction):
@@ -427,7 +374,7 @@ class GameCog(commands.Cog):
         duplicate_message: str,
         modal_class,
     ) -> None:
-        """Shared body of the makedeck / makedecktcg commands."""
+        """Shared body of the deck make command (standard and TCG formats)."""
         from zutomayo.data.deck_validator import get_card_index
 
         if len(name) > 50:
@@ -445,9 +392,31 @@ class GameCog(commands.Cog):
         modal = modal_class(deck_name=name, user_id=interaction.user.id, card_index=card_index)
         await interaction.response.send_modal(modal)
 
-    @group.command(name='makedeck', description='Create and save a new deck')
-    @app_commands.describe(name='A unique name for this deck (max 50 characters)')
-    async def make_deck(self, interaction: discord.Interaction, name: str):
+    deck_group = app_commands.Group(
+        name='deck', description='Create, view, and manage your decks', parent=group,
+    )
+
+    @deck_group.command(name='make', description='Create and save a new deck')
+    @app_commands.describe(
+        name='A unique name for this deck (max 50 characters)',
+        deck_format='Standard (20 cards) or TCG (20 main + 8 side); default: standard',
+    )
+    @app_commands.rename(deck_format='format')
+    @app_commands.choices(deck_format=[
+        app_commands.Choice(name='Standard', value='standard'),
+        app_commands.Choice(name='TCG', value='tcg'),
+    ])
+    async def deck_make(self, interaction: discord.Interaction, name: str, deck_format: str = 'standard'):
+        if deck_format == 'tcg':
+            from zutomayo.data.deck_storage_tcg import get_tcg_deck_names
+            from zutomayo.ui.deck_management_views_tcg import MakeDeckTcgModal
+
+            await self._start_make_deck(
+                interaction, name, get_tcg_deck_names,
+                f'A TCG deck named **{name}** already exists. Please choose a different name.',
+                MakeDeckTcgModal,
+            )
+            return
         from zutomayo.data.deck_storage import get_deck_names
         from zutomayo.ui.deck_management_views import MakeDeckModal
 
@@ -466,7 +435,7 @@ class GameCog(commands.Cog):
         if deck_data is None:
             await interaction.response.send_message(
                 f'You have no deck named **{deck}**. Start typing to search your '
-                'saved decks, or use `/zutomayo makedeck` to create one.',
+                'saved decks, or use `/zutomayo deck make` to create one.',
                 ephemeral=True,
             )
             return None, None
@@ -485,9 +454,78 @@ class GameCog(commands.Cog):
             log.exception('deck name autocomplete failed')
             return []
 
-    @group.command(name='managedecks', description='Edit or delete one of your saved decks')
-    @app_commands.describe(deck='The deck to manage (search by name)')
-    async def manage_decks(self, interaction: discord.Interaction, deck: str):
+    @deck_group.command(name='view', description='View one of your saved decks')
+    @app_commands.describe(
+        deck='The deck to view (search by name)',
+        deck_format='Standard or TCG deck list; default: standard',
+    )
+    @app_commands.rename(deck_format='format')
+    @app_commands.choices(deck_format=[
+        app_commands.Choice(name='Standard', value='standard'),
+        app_commands.Choice(name='TCG', value='tcg'),
+    ])
+    async def deck_view(self, interaction: discord.Interaction, deck: str, deck_format: str = 'standard'):
+        if deck_format == 'tcg':
+            main_cards, side_cards, _ = await self._load_tcg_deck_or_report(interaction, deck)
+            if main_cards is None:
+                return
+            await interaction.response.send_message(
+                embeds=self._build_tcg_deck_embeds(deck, main_cards, side_cards),
+                ephemeral=True,
+            )
+            await self._send_tcg_deck_grids(interaction, main_cards, side_cards)
+            return
+
+        from zutomayo.ui.deck_management_views import format_card_ids_line
+        from zutomayo.ui.embeds import build_deck_list_embed, create_deck_grid_image_off_thread
+
+        cards, _ = await self._load_deck_or_report(interaction, deck)
+        if cards is None:
+            return
+
+        embed = build_deck_list_embed(deck, cards)
+        embed.description += f'\n\n{format_card_ids_line(cards)}'
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        grid = await create_deck_grid_image_off_thread(cards)
+        if grid:
+            await interaction.followup.send(file=grid, ephemeral=True)
+
+    @deck_view.autocomplete('deck')
+    async def deck_view_autocomplete(self, interaction: discord.Interaction, current: str):
+        selected_format = getattr(interaction.namespace, 'format', None) or 'standard'
+        return await self._deck_name_autocomplete(interaction, current, tcg=(selected_format == 'tcg'))
+
+    @deck_group.command(name='manage', description='Edit or delete one of your saved decks')
+    @app_commands.describe(
+        deck='The deck to manage (search by name)',
+        deck_format='Standard or TCG deck list; default: standard',
+    )
+    @app_commands.rename(deck_format='format')
+    @app_commands.choices(deck_format=[
+        app_commands.Choice(name='Standard', value='standard'),
+        app_commands.Choice(name='TCG', value='tcg'),
+    ])
+    async def deck_manage(self, interaction: discord.Interaction, deck: str, deck_format: str = 'standard'):
+        if deck_format == 'tcg':
+            from zutomayo.ui.deck_management_views_tcg import ManageDeckTcgActionsView
+
+            main_cards, side_cards, card_index = await self._load_tcg_deck_or_report(interaction, deck)
+            if main_cards is None:
+                return
+            view = ManageDeckTcgActionsView(
+                user_id=interaction.user.id,
+                deck_name=deck,
+                card_index=card_index,
+            )
+            await interaction.response.send_message(
+                'Choose an action:',
+                embeds=self._build_tcg_deck_embeds(deck, main_cards, side_cards),
+                view=view,
+                ephemeral=True,
+            )
+            await self._send_tcg_deck_grids(interaction, main_cards, side_cards)
+            return
+
         from zutomayo.ui.deck_management_views import ManageDeckActionsView, format_card_ids_line
         from zutomayo.ui.embeds import build_deck_list_embed, create_deck_grid_image_off_thread
 
@@ -509,42 +547,10 @@ class GameCog(commands.Cog):
         if grid:
             await interaction.followup.send(file=grid, ephemeral=True)
 
-    @manage_decks.autocomplete('deck')
-    async def manage_decks_autocomplete(self, interaction: discord.Interaction, current: str):
-        return await self._deck_name_autocomplete(interaction, current, tcg=False)
-
-    @group.command(name='viewdeck', description='View one of your saved decks')
-    @app_commands.describe(deck='The deck to view (search by name)')
-    async def view_deck(self, interaction: discord.Interaction, deck: str):
-        from zutomayo.ui.deck_management_views import format_card_ids_line
-        from zutomayo.ui.embeds import build_deck_list_embed, create_deck_grid_image_off_thread
-
-        cards, _ = await self._load_deck_or_report(interaction, deck)
-        if cards is None:
-            return
-
-        embed = build_deck_list_embed(deck, cards)
-        embed.description += f'\n\n{format_card_ids_line(cards)}'
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        grid = await create_deck_grid_image_off_thread(cards)
-        if grid:
-            await interaction.followup.send(file=grid, ephemeral=True)
-
-    @view_deck.autocomplete('deck')
-    async def view_deck_autocomplete(self, interaction: discord.Interaction, current: str):
-        return await self._deck_name_autocomplete(interaction, current, tcg=False)
-
-    @group.command(name='makedecktcg', description='Create and save a new TCG deck (20 main + 8 side)')
-    @app_commands.describe(name='A unique name for this deck (max 50 characters)')
-    async def make_deck_tcg(self, interaction: discord.Interaction, name: str):
-        from zutomayo.data.deck_storage_tcg import get_tcg_deck_names
-        from zutomayo.ui.deck_management_views_tcg import MakeDeckTcgModal
-
-        await self._start_make_deck(
-            interaction, name, get_tcg_deck_names,
-            f'A TCG deck named **{name}** already exists. Please choose a different name.',
-            MakeDeckTcgModal,
-        )
+    @deck_manage.autocomplete('deck')
+    async def deck_manage_autocomplete(self, interaction: discord.Interaction, current: str):
+        selected_format = getattr(interaction.namespace, 'format', None) or 'standard'
+        return await self._deck_name_autocomplete(interaction, current, tcg=(selected_format == 'tcg'))
 
     async def _load_tcg_deck_or_report(self, interaction: discord.Interaction, deck: str):
         """Resolve a TCG deck by name; sends the not-found reply itself."""
@@ -555,7 +561,7 @@ class GameCog(commands.Cog):
         if deck_data is None:
             await interaction.response.send_message(
                 f'You have no TCG deck named **{deck}**. Start typing to search your '
-                'saved TCG decks, or use `/zutomayo makedecktcg` to create one.',
+                'saved TCG decks, or use `/zutomayo deck make format:TCG` to create one.',
                 ephemeral=True,
             )
             return None, None, None
@@ -583,52 +589,16 @@ class GameCog(commands.Cog):
         if side_grid:
             await interaction.followup.send(content='**Side Deck:**', file=side_grid, ephemeral=True)
 
-    @group.command(name='viewdecktcg', description='View one of your saved TCG decks')
-    @app_commands.describe(deck='The TCG deck to view (search by name)')
-    async def view_deck_tcg(self, interaction: discord.Interaction, deck: str):
-        main_cards, side_cards, _ = await self._load_tcg_deck_or_report(interaction, deck)
-        if main_cards is None:
-            return
-
-        await interaction.response.send_message(
-            embeds=self._build_tcg_deck_embeds(deck, main_cards, side_cards),
-            ephemeral=True,
-        )
-        await self._send_tcg_deck_grids(interaction, main_cards, side_cards)
-
-    @view_deck_tcg.autocomplete('deck')
-    async def view_deck_tcg_autocomplete(self, interaction: discord.Interaction, current: str):
-        return await self._deck_name_autocomplete(interaction, current, tcg=True)
-
-    @group.command(name='managedeckstcg', description='Edit or delete one of your saved TCG decks')
-    @app_commands.describe(deck='The TCG deck to manage (search by name)')
-    async def manage_decks_tcg(self, interaction: discord.Interaction, deck: str):
-        from zutomayo.ui.deck_management_views_tcg import ManageDeckTcgActionsView
-
-        main_cards, side_cards, card_index = await self._load_tcg_deck_or_report(interaction, deck)
-        if main_cards is None:
-            return
-
-        view = ManageDeckTcgActionsView(
-            user_id=interaction.user.id,
-            deck_name=deck,
-            card_index=card_index,
-        )
-        await interaction.response.send_message(
-            'Choose an action:',
-            embeds=self._build_tcg_deck_embeds(deck, main_cards, side_cards),
-            view=view,
-            ephemeral=True,
-        )
-        await self._send_tcg_deck_grids(interaction, main_cards, side_cards)
-
-    @manage_decks_tcg.autocomplete('deck')
-    async def manage_decks_tcg_autocomplete(self, interaction: discord.Interaction, current: str):
-        return await self._deck_name_autocomplete(interaction, current, tcg=True)
-
-    @group.command(name='gacha', description='Open a card pack and draw 5 cards')
-    @app_commands.describe(pack='Pack number (1-4)')
-    async def gacha(self, interaction: discord.Interaction, pack: int):
+    @group.command(name='gacha', description='Open a card pack (5 cards) or a full box (10 packs)')
+    @app_commands.describe(
+        pack='Pack number (1-4)',
+        amount='One pack of 5 cards, or a box of 10 packs (default: pack)',
+    )
+    @app_commands.choices(amount=[
+        app_commands.Choice(name='Pack (5 cards)', value='pack'),
+        app_commands.Choice(name='Box (10 packs)', value='box'),
+    ])
+    async def gacha(self, interaction: discord.Interaction, pack: int, amount: str = 'pack'):
         if pack < 1 or pack > 4:
             await interaction.response.send_message(
                 'Pack must be between 1 and 4.', ephemeral=True,
@@ -636,10 +606,26 @@ class GameCog(commands.Cog):
             return
 
         from zutomayo.data.card_loader import load_cards
-        from zutomayo.data.gacha import draw_gacha
+        from zutomayo.data.gacha import draw_gacha, draw_gachabox
         from zutomayo.ui.embeds import create_deck_grid_image_off_thread
 
         all_cards = load_cards()
+
+        if amount == 'box':
+            await interaction.response.defer()
+            drawn = draw_gachabox(pack, all_cards)
+            half = len(drawn) // 2
+            image1 = await create_deck_grid_image_off_thread(drawn[:half], columns=5, filename='gachabox_1.webp')
+            image2 = await create_deck_grid_image_off_thread(drawn[half:], columns=5, filename='gachabox_2.webp')
+            files = [f for f in (image1, image2) if f]
+            if files:
+                await interaction.followup.send(files=files)
+            else:
+                await interaction.followup.send(
+                    'Something went wrong generating the gacha box image.',
+                )
+            return
+
         drawn = draw_gacha(pack, all_cards)
         image = await create_deck_grid_image_off_thread(drawn, columns=5, filename='gacha.webp')
         if image:
@@ -650,40 +636,16 @@ class GameCog(commands.Cog):
                 ephemeral=True,
             )
 
-    @group.command(name='gachabox', description='Open a gacha box: 10 packs of 5 cards')
-    @app_commands.describe(pack='Pack number (1-4)')
-    async def gachabox(self, interaction: discord.Interaction, pack: int):
-        if pack < 1 or pack > 4:
-            await interaction.response.send_message(
-                'Pack must be between 1 and 4.', ephemeral=True,
-            )
-            return
-
-        await interaction.response.defer()
-
-        from zutomayo.data.card_loader import load_cards
-        from zutomayo.data.gacha import draw_gachabox
-        from zutomayo.ui.embeds import create_deck_grid_image_off_thread
-
-        all_cards = load_cards()
-        drawn = draw_gachabox(pack, all_cards)
-        half = len(drawn) // 2
-        image1 = await create_deck_grid_image_off_thread(drawn[:half], columns=5, filename='gachabox_1.webp')
-        image2 = await create_deck_grid_image_off_thread(drawn[half:], columns=5, filename='gachabox_2.webp')
-        files = [f for f in (image1, image2) if f]
-        if files:
-            await interaction.followup.send(files=files)
-        else:
-            await interaction.followup.send(
-                'Something went wrong generating the gacha box image.',
-            )
-
-    @group.command(name='quit', description='Quit your current game')
-    @app_commands.guild_only()
-    async def quit_game(self, interaction: discord.Interaction):
+    @group.command(name='quit', description='Quit your current game, optionally saving it to resume later')
+    @app_commands.describe(save='Save the game so it can be resumed later (default: no, forfeit)')
+    async def quit_game(self, interaction: discord.Interaction, save: bool = False):
         session = session_manager.get_session_by_player(interaction.user.id)
         if session is None:
             await interaction.response.send_message('You are not in a game.', ephemeral=True)
+            return
+
+        if save:
+            await self._save_and_quit(interaction, session)
             return
 
         if session.game_task and not session.game_task.done():
@@ -697,22 +659,14 @@ class GameCog(commands.Cog):
             f'**{interaction.user.display_name}** quit the game. Game `{session.game_id}` has been removed.'
         )
 
-    @group.command(
-        name='saveandquit',
-        description='Save your current game and quit; resume it later with /zutomayo resume',
-    )
-    async def save_and_quit(self, interaction: discord.Interaction) -> None:
+    async def _save_and_quit(self, interaction: discord.Interaction, session) -> None:
         from zutomayo.engine.game_events import EVENT_GAME_SAVED
         from zutomayo.engine.game_persistence import STATUS_SAVED
 
-        session = session_manager.get_session_by_player(interaction.user.id)
-        if session is None:
-            await interaction.response.send_message('You are not in a game.', ephemeral=True)
-            return
         if session.persistence is None:
             await interaction.response.send_message(
                 'This game has not started yet, so there is nothing to save. '
-                'Use `/zutomayo quit` instead.',
+                'Use `/zutomayo quit` without the save option instead.',
                 ephemeral=True,
             )
             return
@@ -756,7 +710,7 @@ class GameCog(commands.Cog):
         if row['is_solo']:
             if interaction.guild is not None:
                 await interaction.response.send_message(
-                    'Solo games are resumed in DMs — use this command in a DM with the bot.',
+                    'Solo games are resumed in DMs â€” use this command in a DM with the bot.',
                     ephemeral=True,
                 )
                 return
@@ -790,7 +744,7 @@ class GameCog(commands.Cog):
                 STATUS_ACTIVE, channel_id=channel_id,
             )
             await button_interaction.response.edit_message(
-                content=f'Both players agreed — resuming game `{game_id}`...', view=None,
+                content=f'Both players agreed â€” resuming game `{game_id}`...', view=None,
             )
             await resume_game(
                 bot, game_id,
@@ -807,7 +761,7 @@ class GameCog(commands.Cog):
         mode_label = f'TCG best of {row["best_of"]}' if row['is_tcg'] else 'standard'
         saved_date = row['saved_at'].date().isoformat() if row['saved_at'] else 'unknown date'
         await interaction.response.send_message(
-            f'<@{opponent_id}> — **{interaction.user.display_name}** wants to resume '
+            f'<@{opponent_id}> â€” **{interaction.user.display_name}** wants to resume '
             f'saved game `{game_id}` ({mode_label}, saved {saved_date}). '
             'Both players must agree before the game continues.',
             view=view,
@@ -1039,7 +993,7 @@ class GameCog(commands.Cog):
 
     @group.command(
         name='history',
-        description='List recent finished games (yours or another player’s) with their game ids',
+        description='List recent finished games (yours or another playerâ€™s) with their game ids',
     )
     @app_commands.describe(player='Another player to look up (search by name); leave empty for yourself')
     async def game_history(self, interaction: discord.Interaction, player: str | None = None) -> None:
@@ -1085,10 +1039,10 @@ class GameCog(commands.Cog):
             mode_label = f'TCG bo{row["best_of"]}' if row['is_tcg'] else row['mode']
             played_date = row['created_at'].date().isoformat() if row['created_at'] else ''
             lines.append(
-                f'`{row["game_id"]}` — {mode_label} vs {opponent_name} — {outcome} ({played_date})'
+                f'`{row["game_id"]}` â€” {mode_label} vs {opponent_name} â€” {outcome} ({played_date})'
             )
 
-        title = 'Your Recent Games' if viewing_own else f'Recent Games — {display_name}'
+        title = 'Your Recent Games' if viewing_own else f'Recent Games â€” {display_name}'
         embed = discord.Embed(
             title=title,
             description='\n'.join(lines),
@@ -1143,35 +1097,36 @@ class GameCog(commands.Cog):
         name='leaderboard',
         description='Show the server leaderboard ranked by Elo rating',
     )
-    async def leaderboard(self, interaction: discord.Interaction) -> None:
+    @app_commands.describe(board_format='Standard or TCG ladder; default: standard')
+    @app_commands.rename(board_format='format')
+    @app_commands.choices(board_format=[
+        app_commands.Choice(name='Standard', value='standard'),
+        app_commands.Choice(name='TCG', value='tcg'),
+    ])
+    async def leaderboard(self, interaction: discord.Interaction, board_format: str = 'standard') -> None:
         await interaction.response.defer()
+        if board_format == 'tcg':
+            ranked_rows = await list_ranked_profiles(
+                rating_field='tcg_elo',
+                games_field='tcg_elo_games',
+                minimum_games=LEADERBOARD_MINIMUM_GAMES,
+            )
+            await self._send_leaderboard(
+                interaction,
+                ranked_rows,
+                title='Zutoka TCG Leaderboard',
+                elo_field='tcg_elo',
+                elo_games_field='tcg_elo_games',
+                record_stats_bucket='tcg_series',
+                empty_message='No ranked players yet. Finish a TCG series with `/zutomayo create format:TCG` to appear here.',
+            )
+            return
         ranked_rows = await list_ranked_profiles(
             rating_field='elo',
             games_field='elo_games',
             minimum_games=LEADERBOARD_MINIMUM_GAMES,
         )
         await self._send_leaderboard(interaction, ranked_rows)
-
-    @group.command(
-        name='leaderboardtcg',
-        description='Show the server leaderboard ranked by TCG Elo rating',
-    )
-    async def leaderboard_tcg(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer()
-        ranked_rows = await list_ranked_profiles(
-            rating_field='tcg_elo',
-            games_field='tcg_elo_games',
-            minimum_games=LEADERBOARD_MINIMUM_GAMES,
-        )
-        await self._send_leaderboard(
-            interaction,
-            ranked_rows,
-            title='Zutoka TCG Leaderboard',
-            elo_field='tcg_elo',
-            elo_games_field='tcg_elo_games',
-            record_stats_bucket='tcg_series',
-            empty_message='No ranked players yet. Finish a TCG series with `/zutomayo createtcg` to appear here.',
-        )
 
     @staticmethod
     async def _mark_session_quit(session) -> None:

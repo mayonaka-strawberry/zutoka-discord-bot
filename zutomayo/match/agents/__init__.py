@@ -2,10 +2,30 @@
 
 from __future__ import annotations
 
+import importlib
 import random
 from typing import Any
 
 BOT_NAME = 'メカうにぐり'
+
+SOLO_OPPONENT_MODULES = {
+    'alphazero': 'alpha_zero.inference',
+    'ppo': 'ppo_transformer.inference',
+}
+
+
+def available_solo_opponents() -> list[str]:
+    """Solo opponent identifiers whose inference module reports a usable
+    trained checkpoint. Empty until a model has been trained and deployed."""
+    available = []
+    for opponent_name, module_name in SOLO_OPPONENT_MODULES.items():
+        try:
+            module = importlib.import_module(module_name)
+            if module.find_checkpoint() is not None:
+                available.append(opponent_name)
+        except Exception:
+            continue
+    return available
 
 
 def load_random_fallback_deck(card_index: dict[tuple[int, int], Any]) -> list[Any]:
