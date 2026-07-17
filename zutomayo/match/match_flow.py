@@ -105,12 +105,13 @@ class SingleMatchFlow:
         try:
             self._ensure_decision_runtime(session)
             if session.is_draft:
-                from zutomayo.engine.draft_phase import run_standard_draft_phase
+                from zutomayo.match.draft_flow import run_standard_draft_phase
 
                 deck_1_cards, deck_2_cards = await run_standard_draft_phase(self, session)
             else:
                 deck_1_cards, deck_2_cards = await self._do_deck_building_phase(session)
             await self.run_single_match(session, deck_1_cards, deck_2_cards)
+            await self.finalize_completed_game(session)
             session_manager.remove_game(session.game_id)
         except MatchResumeDivergenceError:
             raise
@@ -127,9 +128,11 @@ class SingleMatchFlow:
         deck_2_cards: Optional[list['Card']],
         *,
         record_store: Any = None,
+        engine_seed: Optional[int] = None,
     ) -> MatchOutcome:
-        """Run one match from engine construction through result recording.
-        Does NOT remove the session from the session manager."""
+        """Run one match from engine construction through result recording
+        (game-over embed, Elo). Does NOT set the final game status and does
+        NOT remove the session - the caller owns the series/game lifecycle."""
         from engine_alpha.game import Game
         from zutomayo.data.deck_validator import get_card_index
         from zutomayo.match.agents import load_random_fallback_deck
@@ -148,7 +151,10 @@ class SingleMatchFlow:
             definition_indices_for_cards(deck_1_cards),
             definition_indices_for_cards(deck_2_cards),
         )
-        game = Game(seed=session.random_seed, mode='fixed_decks', decks=decks)
+        game = Game(
+            seed=session.random_seed if engine_seed is None else engine_seed,
+            mode='fixed_decks', decks=decks,
+        )
         session.game = game
         names = self._player_names(session)
 
@@ -247,7 +253,6 @@ class SingleMatchFlow:
             await session.transport.send_to_player(session, index, embed=embed)
 
         await self._record_match_stats(session)
-        await self.finalize_completed_game(session)
 
     async def _record_match_stats(self, session: 'GameSession') -> None:
         from zutomayo.data.player_storage import record_match_result

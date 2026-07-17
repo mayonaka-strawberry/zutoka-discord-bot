@@ -1,4 +1,4 @@
-"""Construction and behaviour smoke tests for the draft views.
+﻿"""Construction and behaviour smoke tests for the draft views.
 
 These exercise the picker's option building, page slicing, the cross-page
 selection diff with copy-limit enforcement, Confirm gating, and the TCG

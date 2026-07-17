@@ -90,17 +90,35 @@ async def resume_game(
     from zutomayo.match.match_flow import SingleMatchFlow
     from zutomayo.match.persistence import MatchRecordStore
 
-    if manifest.get('is_tcg'):
-        raise ValueError('TCG series resume for engine_alpha games arrives with the series flow.')
-
     session = _rebuild_session(manifest)
     session_manager.active_games[session.game_id] = session
     for discord_id, player_index in manifest['player_discord_ids']:
         if discord_id != 0:
             session_manager.player_to_game[discord_id] = session.game_id
 
-    flow = SingleMatchFlow(bot)
-    flow._ensure_decision_runtime(session)
+    from zutomayo.data.deck_validator import get_card_index
+    from zutomayo.engine.game_persistence import resolve_card_keys
+
+    _, card_index = get_card_index()
+
+    if manifest.get('is_tcg'):
+        from zutomayo.match.series_flow import TcgSeriesFlow
+
+        series_flow = TcgSeriesFlow(bot, manifest['best_of'])
+        series_flow.match_flow._ensure_decision_runtime(session)
+        resumed_decks = (
+            resolve_card_keys(manifest['deck_0'], card_index),
+            resolve_card_keys(manifest['side_0'], card_index),
+            resolve_card_keys(manifest['deck_1'], card_index),
+            resolve_card_keys(manifest['side_1'], card_index),
+        )
+        entry_coroutine = series_flow.run_tcg(session, resumed_decks=resumed_decks)
+    else:
+        flow = SingleMatchFlow(bot)
+        flow._ensure_decision_runtime(session)
+        deck_0 = resolve_card_keys(manifest['deck_0'], card_index)
+        deck_1 = resolve_card_keys(manifest['deck_1'], card_index)
+        entry_coroutine = _run_single_resumed_match(flow, session, deck_0, deck_1)
 
     session.persistence = MatchRecordStore.attach_for_resume(game_id, session)
     session.persistence.next_event_index = await next_event_index(game_id)
@@ -109,15 +127,8 @@ async def resume_game(
     session.transport.muted = True
     session.broker.on_go_live = _make_go_live_callback(session, announcement)
 
-    from zutomayo.data.deck_validator import get_card_index
-    from zutomayo.engine.game_persistence import resolve_card_keys
-
-    _, card_index = get_card_index()
-    deck_0 = resolve_card_keys(manifest['deck_0'], card_index)
-    deck_1 = resolve_card_keys(manifest['deck_1'], card_index)
-
     session.game_task = asyncio.get_running_loop().create_task(
-        _run_resumed_game(flow, session, deck_0, deck_1)
+        _run_resumed_game(session, entry_coroutine)
     )
     log.info(
         'Resuming game %s (%s, %d logged decisions)',
@@ -149,15 +160,23 @@ def _rebuild_session(manifest: dict[str, Any]) -> Any:
     return session
 
 
-async def _run_resumed_game(flow: Any, session: Any, deck_0: list, deck_1: list) -> None:
+async def _run_single_resumed_match(flow: Any, session: Any, deck_0: list, deck_1: list) -> None:
+    """Mirror run_game without the pre-persistence deck-building phase."""
+    from zutomayo.engine.game_session import session_manager
+
+    await flow.run_single_match(session, deck_0, deck_1)
+    await flow.finalize_completed_game(session)
+    session_manager.remove_game(session.game_id)
+
+
+async def _run_resumed_game(session: Any, entry_coroutine: Any) -> None:
     import asyncio
 
     from zutomayo.engine.game_session import session_manager
     from zutomayo.match.broker import MatchResumeDivergenceError
 
     try:
-        await flow.run_single_match(session, deck_0, deck_1)
-        session_manager.remove_game(session.game_id)
+        await entry_coroutine
     except MatchResumeDivergenceError:
         log.warning('Replay divergence for game %s; ending it without a result', session.game_id)
         await _announce_divergence(session)

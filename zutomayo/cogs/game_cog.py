@@ -298,8 +298,8 @@ class GameCog(commands.Cog):
         )
 
         if session.is_tcg:
-            from zutomayo.engine.tcg_match_flow import TcgMatchFlow
-            flow = TcgMatchFlow(self.bot, session.best_of)
+            from zutomayo.match.series_flow import TcgSeriesFlow
+            flow = TcgSeriesFlow(self.bot, session.best_of)
             session.game_task = self.bot.loop.create_task(
                 flow.run_tcg(session)
             )

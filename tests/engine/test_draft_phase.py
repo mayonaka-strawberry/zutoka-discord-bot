@@ -1,4 +1,4 @@
-"""Unit tests for the pure draft-phase logic.
+﻿"""Unit tests for the pure draft-phase logic.
 
 Covers box opening, the box/page slicing that lines picker pages up with the
 grid images, copy-limit enforcement (max two copies, never more than opened),
@@ -15,7 +15,7 @@ if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from zutomayo.data.deck_validator import get_card_index  # noqa: E402
-from zutomayo.engine.draft_phase import (  # noqa: E402
+from zutomayo.match.draft_flow import (  # noqa: E402
     CARDS_PER_BOX,
     MAXIMUM_COPIES_PER_CARD,
     box_page_title,

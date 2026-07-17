@@ -120,6 +120,18 @@ def _describe_decision_line(payload: dict, player_names: dict[int, str]) -> str:
     label = payload.get('purpose') or payload.get('kind') or 'decision'
     if payload.get('payload_type') == 'timeout':
         return f'{player} — {label}: timed out'
+    if 'action' in payload or 'card_keys' in payload:
+        # engine_alpha decision shape: one action, optionally labeled.
+        if 'card_keys' in payload:
+            keys = payload['card_keys'] or {}
+            chosen_text = f'{len(keys.get("removed", []))} out, {len(keys.get("added", []))} in'
+        elif payload.get('chosen_label'):
+            description = payload.get('chosen_description')
+            chosen_text = payload['chosen_label'] + (f' {description}' if description else '')
+        else:
+            chosen_text = str(payload['action'])
+        suffix = ' (timed out)' if payload.get('timed_out') else ''
+        return f'{player} — {label}: {chosen_text}{suffix}'
     chosen = payload.get('chosen') or []
     if chosen and isinstance(chosen[0], dict):
         # TCG switch payloads carry removed/added key lists.
@@ -145,10 +157,13 @@ def _match_opening_lines(
             lines.append(f'**{player} opening hand:** {_cards_line(payload["cards"], card_index)}')
         elif event['event_type'] == 'redraw':
             player = player_names.get(payload['player_index'], '?')
-            lines.append(
-                f'**{player} redraw:** returned {_cards_line(payload["discarded"], card_index)}; '
-                f'drew {_cards_line(payload["drawn"], card_index)}'
-            )
+            if 'count' in payload:
+                lines.append(f'**{player} redraw:** redrew {payload["count"]} card(s)')
+            else:
+                lines.append(
+                    f'**{player} redraw:** returned {_cards_line(payload["discarded"], card_index)}; '
+                    f'drew {_cards_line(payload["drawn"], card_index)}'
+                )
         elif event['event_type'] == 'initial_battle_card':
             player = player_names.get(payload['player_index'], '?')
             lines.append(f'**{player} initial battle card:** {_card_label(payload["card"], card_index)}')
@@ -180,34 +195,51 @@ def _turn_lines(
             lines.append(f'- {player} effect order{source}: {ordered}')
         elif event_type == 'effect_resolved':
             player = player_names.get(payload['player_index'], '?')
-            lines.append(
-                f'  {payload["order_index"] + 1}. {player} resolved '
-                f'{_card_label(payload["card"], card_index)}'
-            )
+            if 'order_index' in payload:
+                prefix = f'  {payload["order_index"] + 1}.'
+            else:
+                prefix = '  -'
+            lines.append(f'{prefix} {player} resolved {_card_label(payload["card"], card_index)}')
         elif event_type == 'effect_skipped_cost':
             player = player_names.get(payload['player_index'], '?')
-            lines.append(
-                f'  {payload["order_index"] + 1}. {player} could not pay for '
-                f'{_card_label(payload["card"], card_index)}'
-            )
-        elif event_type == 'battle_result':
-            attacks = payload['attacks']
-            damage = payload['damage']
-            hp_after = payload['hp_after']
-            winner_index = payload.get('winner_index')
-            if winner_index is None:
-                outcome = 'draw'
+            if 'order_index' in payload:
+                prefix = f'  {payload["order_index"] + 1}.'
             else:
-                dealt = damage['1'] if winner_index == 0 else damage['0']
-                outcome = f'**{player_names.get(winner_index, "?")}** wins, {dealt} damage'
-            lines.append(
-                f'- Battle: {player_names.get(0, "?")} {attacks["0"]} vs '
-                f'{player_names.get(1, "?")} {attacks["1"]} — {outcome}'
-            )
-            lines.append(
-                f'- HP after battle: {player_names.get(0, "?")} {hp_after["0"]} / '
-                f'{player_names.get(1, "?")} {hp_after["1"]}'
-            )
+                prefix = '  -'
+            lines.append(f'{prefix} {player} could not pay for {_card_label(payload["card"], card_index)}')
+        elif event_type == 'battle_result':
+            if 'player_0_attack' in payload:
+                # engine_alpha shape: flat attacks, single damage value.
+                winner_index = payload.get('winner')
+                if winner_index in (None, -1):
+                    outcome = 'draw'
+                else:
+                    outcome = (
+                        f'**{player_names.get(winner_index, "?")}** wins, '
+                        f'{payload.get("damage", 0)} damage'
+                    )
+                lines.append(
+                    f'- Battle: {player_names.get(0, "?")} {payload["player_0_attack"]} vs '
+                    f'{player_names.get(1, "?")} {payload["player_1_attack"]} — {outcome}'
+                )
+            else:
+                attacks = payload['attacks']
+                damage = payload['damage']
+                hp_after = payload['hp_after']
+                winner_index = payload.get('winner_index')
+                if winner_index is None:
+                    outcome = 'draw'
+                else:
+                    dealt = damage['1'] if winner_index == 0 else damage['0']
+                    outcome = f'**{player_names.get(winner_index, "?")}** wins, {dealt} damage'
+                lines.append(
+                    f'- Battle: {player_names.get(0, "?")} {attacks["0"]} vs '
+                    f'{player_names.get(1, "?")} {attacks["1"]} — {outcome}'
+                )
+                lines.append(
+                    f'- HP after battle: {player_names.get(0, "?")} {hp_after["0"]} / '
+                    f'{player_names.get(1, "?")} {hp_after["1"]}'
+                )
         elif event_type == 'state_snapshot':
             players = payload['players']
             lines.append(
@@ -216,9 +248,14 @@ def _turn_lines(
                 f'decks {players[0]["deck_count"]} / {players[1]["deck_count"]}'
             )
         elif event_type == 'game_end':
-            winner_index = payload.get('winner_index')
-            winner = player_names.get(winner_index, 'draw') if winner_index is not None else 'draw'
-            lines.append(f'- **Game end:** {payload["result"]} (winner: {winner})')
+            if 'winner' in payload:
+                winner_index = payload['winner']
+                winner = player_names.get(winner_index, 'draw') if winner_index in (0, 1) else 'draw'
+                lines.append(f'- **Game end** (winner: {winner})')
+            else:
+                winner_index = payload.get('winner_index')
+                winner = player_names.get(winner_index, 'draw') if winner_index is not None else 'draw'
+                lines.append(f'- **Game end:** {payload["result"]} (winner: {winner})')
         elif event_type == 'forfeit':
             player = player_names.get(payload.get('player_index'), '?')
             lines.append(f'- **Forfeit** by {player}')

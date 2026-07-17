@@ -20,6 +20,14 @@ def _splitmix64(x: int) -> int:
     return (z ^ (z >> 31)), x
 
 
+def derive_seed(key: int, salt: int) -> int:
+    """A decorrelated 64-bit seed from (key, salt); used to give each game in
+    a series its own engine seed derived from one persisted series seed."""
+    x = ((key * 0x2545F4914F6CDD1D) ^ (salt * 0xD1342543DE82EF95)) & _MASK
+    value, _ = _splitmix64(x)
+    return value
+
+
 def _stream(key: int, counter: int, count: int) -> list[int]:
     """`count` pseudo-random uint64s for chance event number `counter`."""
     x = ((key * 0x2545F4914F6CDD1D) ^ (counter * 0xD1342543DE82EF95)) & _MASK

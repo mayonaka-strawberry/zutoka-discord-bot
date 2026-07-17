@@ -655,8 +655,8 @@ class GameLobbyView(discord.ui.View):
             )
             # Start the game flow
             if session.is_tcg:
-                from zutomayo.engine.tcg_match_flow import TcgMatchFlow
-                flow = TcgMatchFlow(interaction.client, session.best_of)
+                from zutomayo.match.series_flow import TcgSeriesFlow
+                flow = TcgSeriesFlow(interaction.client, session.best_of)
                 session.game_task = interaction.client.loop.create_task(
                     flow.run_tcg(session)
                 )

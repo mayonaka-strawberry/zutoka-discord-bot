@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 
 import discord
 
-from zutomayo.engine.draft_phase import (
+from zutomayo.match.draft_flow import (
     CARDS_PER_PAGE,
     MAXIMUM_COPIES_PER_CARD,
     TCG_DRAFT_SIDE_DECK_SIZE,
