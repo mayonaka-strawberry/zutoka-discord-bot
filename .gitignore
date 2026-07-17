@@ -226,7 +226,6 @@ zutomayo/progress/*
 # Model training code and artifacts (tracked files are limited to what the
 # bot needs to play from a checkpoint: engine, model definitions, configs,
 # inference modules, device selection)
-engine_alpha/eval/
 engine_alpha/runs/
 engine_alpha/.env
 alpha_zero/train/
@@ -242,15 +241,6 @@ ppo_transformer/.env
 model_common/arena.py
 model_common/opponent_pool.py
 model_common/migrate_checkpoint.py
-
-# Temporary until Stage 3 moves these into alpha_zero/
-engine_alpha/selfplay/
-engine_alpha/train/
-engine_alpha/net/wrapper.py
-engine_alpha/scripts/run_train.py
-engine_alpha/scripts/run_selfplay.py
-engine_alpha/scripts/run_gate_m3.py
-engine_alpha/scripts/inspect_decks.py
 
 # In-flight game persistence (runtime state, recreated on demand)
 zutomayo/active_games/

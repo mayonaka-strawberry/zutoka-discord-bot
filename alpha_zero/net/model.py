@@ -17,12 +17,12 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from ..cards import NUM_CARDS, NUM_EFFECTS, NUM_SONGS
+from engine_alpha.cards import NUM_CARDS, NUM_EFFECTS, NUM_SONGS
 from ..config import NetConfig
-from ..encoding.observation import (
+from engine_alpha.encoding.observation import (
     N_FLOAT_FEATURES, N_GLOBALS, N_NUMBER_ACTIONS, N_ZONE_SLOTS,
 )
-from ..effects.features import EFFECT_FEATURES, FEATURE_DIM
+from engine_alpha.effects.features import EFFECT_FEATURES, FEATURE_DIM
 
 
 class UniguriNet(nn.Module):
@@ -118,7 +118,7 @@ def priors_for_request(request, candidate_positions, pointer_scores,
     legal_actions() order.
     """
     import torch.nn.functional as functional
-    from ..actions import SELECT_CARD, SELECT_IDENTITY
+    from engine_alpha.actions import SELECT_CARD, SELECT_IDENTITY
 
     if request.kind == SELECT_CARD:
         logits = pointer_scores[list(candidate_positions)]
