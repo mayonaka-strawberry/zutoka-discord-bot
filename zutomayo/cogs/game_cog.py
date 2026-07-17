@@ -304,8 +304,8 @@ class GameCog(commands.Cog):
                 flow.run_tcg(session)
             )
         else:
-            from zutomayo.engine.game_flow import GameFlow
-            game_flow = GameFlow(self.bot)
+            from zutomayo.match.match_flow import SingleMatchFlow
+            game_flow = SingleMatchFlow(self.bot)
             session.game_task = self.bot.loop.create_task(
                 game_flow.run_game(session)
             )
@@ -743,7 +743,8 @@ class GameCog(commands.Cog):
     @app_commands.describe(game_id='The saved game to resume')
     async def resume_saved_game(self, interaction: discord.Interaction, game_id: str) -> None:
         from zutomayo.engine.game_persistence import STATUS_ACTIVE, GameRecordStore
-        from zutomayo.engine.resume_manager import load_saved_game_for_resume, resume_game
+        from zutomayo.engine.resume_manager import load_saved_game_for_resume
+        from zutomayo.match.resume import resume_game
         from zutomayo.ui.resume_views import ResumeConfirmationView
 
         try:
@@ -891,7 +892,7 @@ class GameCog(commands.Cog):
         await ensure_display_names(self.bot, human_ids)
 
         from zutomayo.data.name_storage import resolve_display_name
-        from zutomayo.engine.bot_agent import BOT_NAME
+        from zutomayo.match.agents import BOT_NAME
 
         player_names = {
             index: (BOT_NAME if player_id == 0 else resolve_display_name(self.bot, player_id))
@@ -1043,7 +1044,7 @@ class GameCog(commands.Cog):
     @app_commands.describe(player='Another player to look up (search by name); leave empty for yourself')
     async def game_history(self, interaction: discord.Interaction, player: str | None = None) -> None:
         from zutomayo.data.name_storage import resolve_display_name
-        from zutomayo.engine.bot_agent import BOT_NAME
+        from zutomayo.match.agents import BOT_NAME
         from zutomayo.engine.game_persistence import list_recent_games_for_player
 
         resolved = await self._resolve_player_option(interaction, player)

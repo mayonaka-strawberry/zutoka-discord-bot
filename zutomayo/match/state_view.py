@@ -95,6 +95,13 @@ class PlayerView:
     def deck_count(self) -> int:
         return len(self.deck)
 
+    @property
+    def side(self):
+        """Legacy Chronos side enum, read by the board renderer."""
+        from zutomayo.enums.chronos import Chronos
+
+        return Chronos.NIGHT if self.side_is_night else Chronos.DAY
+
 
 @dataclass(frozen=True)
 class BoardView:

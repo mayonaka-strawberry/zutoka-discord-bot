@@ -58,7 +58,7 @@ async def on_ready():
     global resumed_games_once
     if not resumed_games_once:
         resumed_games_once = True
-        from zutomayo.engine.resume_manager import resume_all
+        from zutomayo.match.resume import resume_all
         try:
             await resume_all(bot)
         except Exception:

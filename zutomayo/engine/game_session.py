@@ -34,6 +34,10 @@ class GameSession:
         self.broker: Optional['DecisionBroker'] = None
         self.transport: Optional['MatchTransport'] = None
 
+        # engine_alpha game, set by the match flow (replaces game_state for
+        # matches driven by the new engine).
+        self.game: Any = None
+
         # Permanent game record store, created when the match is initialized.
         # Records are never deleted; game lifecycle is tracked by games.status.
         self.persistence: Optional['GameRecordStore'] = None

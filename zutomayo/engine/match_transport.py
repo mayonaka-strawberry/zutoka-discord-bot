@@ -106,7 +106,7 @@ class DiscordMatchTransport:
 
     def display_name(self, session: 'GameSession', player_index: int) -> Optional[str]:
         from zutomayo.data.name_storage import resolve_display_name
-        from zutomayo.engine.bot_agent import BOT_NAME
+        from zutomayo.match.agents import BOT_NAME
 
         discord_id = session.get_discord_id(player_index)
         if discord_id is None:
