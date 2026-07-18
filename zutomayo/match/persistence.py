@@ -19,7 +19,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from zutomayo.engine.game_persistence import GameRecordStore, backend
+from zutomayo.engine import game_persistence
+from zutomayo.engine.game_persistence import GameRecordStore
 from zutomayo.match.decisions import (
     PAYLOAD_ACTION,
     MatchDecisionRequest,
@@ -128,7 +129,7 @@ class MatchRecordStore(GameRecordStore):
         extra_fields: Optional[dict[str, Any]] = None,
     ) -> 'MatchRecordStore':
         manifest = build_match_manifest(session, mode, engine_seed, deck_card_keys, extra_fields)
-        await backend.insert_game(manifest)
+        await game_persistence.backend.insert_game(manifest)
         return cls(session.game_id, session)
 
     async def append_decision(
@@ -145,7 +146,7 @@ class MatchRecordStore(GameRecordStore):
                 'timed_out': response.timed_out,
             },
         }
-        await backend.insert_decision(self.game_id, record)
+        await game_persistence.backend.insert_decision(self.game_id, record)
 
         from zutomayo.engine.game_events import EVENT_DECISION_MADE
 
@@ -158,7 +159,7 @@ async def load_match_decision_log(
 ) -> dict[int, tuple[dict, MatchDecisionResponse]]:
     """Load a schema-version-2 decision log in broker replay format."""
     replay_log: dict[int, tuple[dict, MatchDecisionResponse]] = {}
-    for record in await backend.load_decision_records(game_id):
+    for record in await game_persistence.backend.load_decision_records(game_id):
         payload = record['payload']
         value = payload.get('action') if 'action' in payload else payload.get('card_keys')
         response = MatchDecisionResponse(

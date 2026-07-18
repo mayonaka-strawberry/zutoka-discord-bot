@@ -23,8 +23,8 @@ from zutomayo.ui.embeds import create_deck_grid_image_off_thread
 if TYPE_CHECKING:
     import discord
 
-    from zutomayo.engine.game_flow import GameFlow
     from zutomayo.engine.game_session import GameSession
+    from zutomayo.match.match_flow import SingleMatchFlow
     from zutomayo.models.card import Card
 
 

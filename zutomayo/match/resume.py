@@ -57,6 +57,40 @@ async def resume_all(bot: Any) -> None:
             await _mark_divergence_failed(game_id)
 
 
+async def load_saved_game_for_resume(game_id: str, requester_discord_id: int) -> dict[str, Any]:
+    """
+    Validate that a saved game can be resumed by this player right now.
+    Returns the game row. Raises ValueError with a user-facing message when
+    the game is missing, not saved, not theirs, or a participant is busy.
+    """
+    from zutomayo.engine.game_persistence import STATUS_SAVED, get_game_row
+    from zutomayo.engine.game_session import session_manager
+    from zutomayo.match.persistence import SCHEMA_VERSION_ENGINE_ALPHA
+
+    row = await get_game_row(game_id)
+    if row is None:
+        raise ValueError(f'Game `{game_id}` was not found.')
+    if row['status'] != STATUS_SAVED:
+        raise ValueError(f'Game `{game_id}` is not a saved game (status: {row["status"]}).')
+    if row['schema_version'] < SCHEMA_VERSION_ENGINE_ALPHA:
+        raise ValueError(
+            f'Game `{game_id}` predates the engine update and can no longer be resumed.'
+        )
+
+    manifest = row['manifest']
+    player_ids = [pair[0] for pair in manifest.get('player_discord_ids', [])]
+    if requester_discord_id not in player_ids:
+        raise ValueError('You are not a player in that game.')
+
+    for player_id in player_ids:
+        if player_id != 0 and player_id in session_manager.player_to_game:
+            raise ValueError(
+                'A player of that game is currently in another game. '
+                'Finish or save it first.'
+            )
+    return row
+
+
 async def resume_game(
     bot: Any,
     game_id: str,
@@ -64,9 +98,7 @@ async def resume_game(
     channel_id_override: int | None = None,
     announcement: str = RESUME_ANNOUNCEMENT,
 ) -> Any:
-    """Rebuild and replay one persisted game, dispatching by manifest schema
-    version: engine_alpha games run here; legacy records go to the legacy
-    resume manager (which exists until the legacy engine is deleted)."""
+    """Rebuild and replay one persisted engine_alpha game."""
     from zutomayo.engine.game_persistence import load_manifest
     from zutomayo.match.persistence import SCHEMA_VERSION_ENGINE_ALPHA
 
@@ -74,11 +106,8 @@ async def resume_game(
     if manifest is None:
         raise ValueError(f'No game record found for {game_id}.')
     if manifest.get('schema_version', 1) < SCHEMA_VERSION_ENGINE_ALPHA:
-        from zutomayo.engine import resume_manager as legacy_resume_manager
-
-        return await legacy_resume_manager.resume_game(
-            bot, game_id,
-            channel_id_override=channel_id_override, announcement=announcement,
+        raise ValueError(
+            f'Game `{game_id}` predates the engine update and can no longer be resumed.'
         )
     if channel_id_override is not None:
         manifest['channel_id'] = channel_id_override

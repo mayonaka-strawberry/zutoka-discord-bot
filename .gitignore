@@ -208,16 +208,10 @@ __marimo__/
 
 .claude/
 
-train_uniguri_v2.py
-best_decks_uniguri_v2.py
-best_decks_uniguri_v2_easy.py
-
 zutomayo/.DS_Store
 .DS_Store
 
 zutomayo/bot_decks.json
-
-training_hyperparameters.json
 
 zutomayo/progress/*
 !zutomayo/progress/.gitkeep
@@ -241,9 +235,6 @@ ppo_transformer/.env
 model_common/arena.py
 model_common/opponent_pool.py
 model_common/migrate_checkpoint.py
-
-# In-flight game persistence (runtime state, recreated on demand)
-zutomayo/active_games/
 
 # Coverage artifacts
 .coverage

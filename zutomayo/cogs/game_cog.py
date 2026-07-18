@@ -697,8 +697,7 @@ class GameCog(commands.Cog):
     @app_commands.describe(game_id='The saved game to resume')
     async def resume_saved_game(self, interaction: discord.Interaction, game_id: str) -> None:
         from zutomayo.engine.game_persistence import STATUS_ACTIVE, GameRecordStore
-        from zutomayo.engine.resume_manager import load_saved_game_for_resume
-        from zutomayo.match.resume import resume_game
+        from zutomayo.match.resume import load_saved_game_for_resume, resume_game
         from zutomayo.ui.resume_views import ResumeConfirmationView
 
         try:

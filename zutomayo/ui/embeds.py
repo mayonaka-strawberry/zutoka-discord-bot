@@ -5,12 +5,7 @@ from PIL import Image
 from zutomayo.ui.image_utils import save_image_for_discord
 from constants import CHRONOS_SIZE, NIGHT_END
 from zutomayo.enums.card_type import CardType
-from zutomayo.enums.chronos import Chronos
-from zutomayo.enums.phase import Phase
 from zutomayo.models.card import Card
-from zutomayo.models.card_instance import CardInstance
-from zutomayo.models.game_state import GameState
-from zutomayo.models.player import Player
 
 
 CARD_TYPE_LABEL = {
@@ -49,39 +44,13 @@ PACK_NAME = {
 }
 
 
-def card_short_description(card_instance: CardInstance) -> str:
-    card = card_instance.card
-    attr_en = ATTRIBUTE_EN.get(card.attribute.value, card.attribute.value)
-    attr_jp = ATTRIBUTE_JP.get(card.attribute.value, '')
-    type_en = CARD_TYPE_LABEL.get(card.card_type, '')
-    type_jp = CARD_TYPE_JP.get(card.card_type, '')
-    pack_name = PACK_NAME.get(card.pack, '')
-
-    parts = [
-        f'**{card.name}** [{card.name_jp}]',
-        card.rarity.value,
-        f'{type_en} [{type_jp}]',
-        f'{attr_en} [{attr_jp}]',
-        f'Clock [時計]: {card.clock}',
-    ]
-    if card.card_type == CardType.CHARACTER:
-        parts.append(f'NIGHT: {card.attack_night}')
-        parts.append(f'DAY: {card.attack_day}')
-    if card.effect_text_jp:
-        parts.append(f'<Effect [効果]: {card.effect_text_jp}>')
-    parts.append(f'Cost: {_stars(card.power_cost)}')
-    parts.append(f'STP: {_stars(card.send_to_power)}')
-    parts.append(f'{pack_name} {card.id:03d}/104')
-
-    return ' | '.join(parts)
-
-
 def _stars(count: int) -> str:
     return '★' * count if count > 0 else '-'
 
 
-def card_detail_description(card_instance: CardInstance) -> str:
-    card = card_instance.card
+def card_detail_description(card_holder) -> str:
+    """Full card description. Accepts any object with a `.card` attribute."""
+    card = card_holder.card
     attr_en = ATTRIBUTE_EN.get(card.attribute.value, card.attribute.value)
     attr_jp = ATTRIBUTE_JP.get(card.attribute.value, '')
     type_en = CARD_TYPE_LABEL.get(card.card_type, '')
@@ -110,33 +79,20 @@ def card_detail_description(card_instance: CardInstance) -> str:
     return '\n'.join(lines)
 
 
-def build_hand_embed(player: Player) -> discord.Embed:
+def build_hand_embed(player_view) -> discord.Embed:
+    """Hand embed from any object with a `.hand` of card holders."""
     embed = discord.Embed(
         title='Your Hand',
         color=discord.Color.blue(),
     )
-    if not player.hand:
+    if not player_view.hand:
         embed.description = 'Your hand is empty.'
         return embed
 
     lines = []
-    for card_instance in player.hand:
-        lines.append(card_detail_description(card_instance))
+    for card_holder in player_view.hand:
+        lines.append(card_detail_description(card_holder))
     embed.description = '\n\n'.join(lines)
-    return embed
-
-
-def build_deck_reveal_embed(player_name: str, deck: list[CardInstance]) -> discord.Embed:
-    embed = discord.Embed(
-        title=f'{player_name} \u2014 Deck Reveal [デッキ公開]',
-        color=discord.Color.orange(),
-    )
-    lines = []
-    for i, card_instance in enumerate(deck, 1):
-        card = card_instance.card
-        pack_name = PACK_NAME.get(card.pack, '')
-        lines.append(f'{i}. [{card.rarity.value}] {card.name} [{card.name_jp}] | {pack_name} - {card.id:03d}/104')
-    embed.description = '\n'.join(lines)
     return embed
 
 
@@ -151,63 +107,6 @@ def build_deck_list_embed(title: str, cards: list[Card]) -> discord.Embed:
         pack_name = PACK_NAME.get(card.pack, '')
         lines.append(f'{i}. [{card.rarity.value}] {card.name} [{card.name_jp}] | {pack_name} - {card.id:03d}/104')
     embed.description = '\n'.join(lines)
-    return embed
-
-
-def build_field_embed(game_state: GameState, player_names: dict[int, str] = None) -> discord.Embed:
-    player_0 = game_state.players[0]
-    player_1 = game_state.players[1]
-    day_night = game_state.day_night
-    day_night_label = 'NIGHT [夜]' if day_night == Chronos.NIGHT else 'DAY [昼]'
-
-    name_0 = (player_names or {}).get(0, player_0.name)
-    name_1 = (player_names or {}).get(1, player_1.name)
-
-    embed = discord.Embed(
-        title=f'ZUTOMAYO CARD \u2014 TURN {game_state.turn}',
-        color=discord.Color.dark_purple() if day_night == Chronos.NIGHT else discord.Color.gold(),
-    )
-
-    # Chronos
-    chronos_bar = _build_chronos_bar(game_state.chronos)
-    embed.add_field(
-        name=f'Chronos ({day_night_label})',
-        value=chronos_bar,
-        inline=False,
-    )
-
-    # Player 0
-    player_0_side = '(Night [夜])' if player_0.side == Chronos.NIGHT else '(Day [昼])'
-    embed.add_field(
-        name=f'{player_0_side}: {name_0}',
-        value=f'HP: {player_0.hp} | Power: {player_0.total_power} | Deck: {len(player_0.deck)} | Hand: {len(player_0.hand)}',
-        inline=False,
-    )
-
-    # Player 1
-    player_1_side = '(Night [夜])' if player_1.side == Chronos.NIGHT else '(Day [昼])'
-    embed.add_field(
-        name=f'{player_1_side}: {name_1}',
-        value=f'HP: {player_1.hp} | Power: {player_1.total_power} | Deck: {len(player_1.deck)} | Hand: {len(player_1.hand)}',
-        inline=False,
-    )
-
-    # Phase label
-    phase_labels = {
-        Phase.SETUP: 'Setup',
-        Phase.SET_CARDS: 'Set Cards',
-        Phase.REVEAL: 'Reveal',
-        Phase.ADVANCE_CHRONOS: 'Advance Chronos',
-        Phase.CHARACTER_SWAP: 'Character Swap',
-        Phase.AREA_ENCHANT_SWAP: 'Area Enchant Swap',
-        Phase.PROCESS_EFFECTS: 'Process Effects',
-        Phase.BATTLE: 'Battle',
-        Phase.TURN_END_EFFECTS: 'Turn End Effects',
-        Phase.END_TURN: 'End Turn',
-    }
-    phase_name = phase_labels.get(game_state.current_phase, str(game_state.current_phase))
-    embed.set_footer(text=f'Phase: {phase_name}')
-
     return embed
 
 
@@ -227,64 +126,6 @@ def _build_chronos_bar(position: int) -> str:
     # Bottom row: day (9-17), right to left (counter-clockwise)
     bottom = ''.join(chronos_emoji(i, position) for i in range(CHRONOS_SIZE - 1, NIGHT_END, -1))
     return f'{top}\n{bottom}'
-
-
-def build_battle_result_embed(
-    battle_result: dict,
-    game_state: GameState,
-    player_names: dict[int, str] = None,
-) -> discord.Embed:
-    player_0 = game_state.players[0]
-    player_1 = game_state.players[1]
-    name_0 = (player_names or {}).get(0, player_0.name)
-    name_1 = (player_names or {}).get(1, player_1.name)
-
-    winner = battle_result['winner']
-    if winner == 0:
-        title = f'Last Round Result: {name_0} WON'
-        color = discord.Color.green()
-    elif winner == 1:
-        title = f'Last Round Result: {name_1} WON'
-        color = discord.Color.green()
-    else:
-        title = 'Last Round Result: DRAW'
-        color = discord.Color.greyple()
-
-    embed = discord.Embed(title=title, color=color)
-
-    embed.add_field(
-        name=name_0,
-        value=f'ATK: {battle_result["player_0_attack"]}\nDamage taken: {battle_result["damage_to_0"]}\nHP: {player_0.hp}',
-        inline=True,
-    )
-    embed.add_field(
-        name=name_1,
-        value=f'ATK: {battle_result["player_1_attack"]}\nDamage taken: {battle_result["damage_to_1"]}\nHP: {player_1.hp}',
-        inline=True,
-    )
-
-    return embed
-
-
-def build_game_over_embed(game_state: GameState, player_names: dict[int, str] = None) -> discord.Embed:
-    from zutomayo.enums.result import Result
-
-    name_0 = (player_names or {}).get(0, game_state.players[0].name)
-    name_1 = (player_names or {}).get(1, game_state.players[1].name)
-
-    if game_state.result == Result.PLAYER_1_WIN:
-        winner_name = name_0
-    elif game_state.result == Result.PLAYER_2_WIN:
-        winner_name = name_1
-    else:
-        winner_name = 'Nobody'
-
-    embed = discord.Embed(
-        title=f'GAME COMPLETE \u2014 {winner_name} WINS!',
-    )
-    embed.add_field(name=name_0, value=f'HP: {game_state.players[0].hp}', inline=True)
-    embed.add_field(name=name_1, value=f'HP: {game_state.players[1].hp}', inline=True)
-    return embed
 
 
 def build_field_embed_from_board_view(board_view) -> discord.Embed:
@@ -370,8 +211,8 @@ def build_game_over_embed_from_board_view(board_view) -> discord.Embed:
 
 def build_effect_resolution_embed(
     player_name: str,
-    resolved: list[CardInstance],
-    skipped_cost: list[CardInstance],
+    resolved: list,
+    skipped_cost: list,
 ) -> discord.Embed:
     """Build an embed summarizing a player's effect resolution results."""
     embed = discord.Embed(
@@ -469,7 +310,7 @@ def create_deck_grid_image(
     return save_image_for_discord(grid, filename)
 
 
-def create_hand_image(hand: list[CardInstance]) -> discord.File | None:
+def create_hand_image(hand: list) -> discord.File | None:
     """Create a single-row image of the cards in a player's hand."""
     if not hand:
         return None
@@ -486,6 +327,6 @@ async def create_deck_grid_image_off_thread(
     return await asyncio.to_thread(create_deck_grid_image, cards, columns, padding, filename)
 
 
-async def create_hand_image_off_thread(hand: list[CardInstance]) -> discord.File | None:
+async def create_hand_image_off_thread(hand: list) -> discord.File | None:
     """Run create_hand_image in a worker thread so the event loop stays responsive."""
     return await asyncio.to_thread(create_hand_image, hand)

@@ -16,7 +16,7 @@ if str(REPOSITORY_ROOT) not in sys.path:
 import pytest
 
 from tests.support.database_support import run_with_database
-from tests.support.game_state_builder import card_by_identity
+from tests.support.cards import card_by_identity
 from zutomayo.data.deck_repository import PostgresDeckRepository
 
 

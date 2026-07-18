@@ -32,7 +32,7 @@ from zutomayo.ui.deck_management_views_tcg import (  # noqa: E402
     TcgSavedDeckSelectView,
 )
 
-from tests.support.game_state_builder import card_by_identity  # noqa: E402
+from tests.support.cards import card_by_identity  # noqa: E402
 
 SINGLE_PAGE_NAMES = ['Only Deck']
 TWO_PAGE_NAMES = [f'Deck {index}' for index in range(DECKS_PER_PAGE + 5)]

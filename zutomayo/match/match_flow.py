@@ -20,7 +20,7 @@ from zutomayo.match.match_driver import EngineMatchDriver, MatchOutcome
 from zutomayo.match.narrator import MatchNarrator
 from zutomayo.match.persistence import MatchRecordStore, card_keys_for_definition_indices
 from zutomayo.match.state_view import BoardView, project_board_view
-from zutomayo.engine.match_transport import DiscordMatchTransport
+from zutomayo.match.transport import DiscordMatchTransport
 
 if TYPE_CHECKING:
     from zutomayo.engine.game_session import GameSession

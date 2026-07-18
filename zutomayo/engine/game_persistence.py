@@ -22,10 +22,7 @@ Storage access goes through the module-level `backend` attribute
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
-
-from zutomayo.engine.decisions import DecisionRequest, DecisionResponse, request_fingerprint
 
 if TYPE_CHECKING:
     from zutomayo.engine.game_session import GameSession
@@ -57,42 +54,6 @@ def card_keys(cards: list[Any]) -> list[list[int]]:
 def resolve_card_keys(card_keys: list[list[int]], card_index: dict) -> list[Any]:
     """Rebuild Card lists from [pack, id] pairs using the card index."""
     return [card_index[(pack, card_id)] for pack, card_id in card_keys]
-
-
-def build_manifest(
-    session: 'GameSession',
-    mode: str,
-    extra_fields: Optional[dict[str, Any]] = None,
-) -> dict[str, Any]:
-    """
-    Manifest for a freshly initialized match. Deck lists are taken from the
-    game state, which at initialization time holds the pre-shuffle order;
-    shuffles draw from the session's seeded generator, so replay regenerates
-    them.
-    """
-    ordered_player_ids = sorted(
-        session.player_discord_ids.items(), key=lambda pair: pair[1],
-    )
-    manifest: dict[str, Any] = {
-        'schema_version': SCHEMA_VERSION,
-        'game_id': session.game_id,
-        'channel_id': session.channel_id,
-        'mode': mode,
-        'player_discord_ids': [[discord_id, index] for discord_id, index in ordered_player_ids],
-        'player_deck_names': {str(index): name for index, name in session.player_deck_names.items()},
-        'is_solo': session.is_solo,
-        'solo_difficulty': session.solo_difficulty,
-        'is_tcg': session.is_tcg,
-        'best_of': session.best_of,
-        'random_seed': session.random_seed,
-        'created_at': datetime.now(timezone.utc).isoformat(),
-    }
-    if session.game_state is not None:
-        for index in range(2):
-            manifest[f'deck_{index}'] = card_keys(session.game_state.players[index].deck)
-    if extra_fields:
-        manifest.update(extra_fields)
-    return manifest
 
 
 # ----------------------------------------------------------------------
@@ -350,18 +311,6 @@ class GameRecordStore:
         self.current_phase: Optional[str] = None
 
     @classmethod
-    async def create_for_session(
-        cls,
-        session: 'GameSession',
-        mode: str,
-        extra_fields: Optional[dict[str, Any]] = None,
-    ) -> 'GameRecordStore':
-        """Insert the game record for a freshly initialized match and return the handle."""
-        manifest = build_manifest(session, mode, extra_fields)
-        await backend.insert_game(manifest)
-        return cls(session.game_id, session)
-
-    @classmethod
     def attach_for_resume(cls, game_id: str, session: Optional['GameSession'] = None) -> 'GameRecordStore':
         """Attach to an existing game record; new decisions append to the same
         log. The caller must seed next_event_index (see next_event_index())
@@ -419,20 +368,6 @@ class GameRecordStore:
             self.event_buffer = pending + self.event_buffer
             log.exception('Failed to flush %d event(s) for game %s', len(pending), self.game_id)
 
-    async def append_decision(self, request: DecisionRequest, response: DecisionResponse) -> None:
-        record = {
-            'sequence_number': response.sequence_number,
-            'fingerprint': request_fingerprint(request),
-            'payload_type': response.payload_type,
-            'payload': response.payload,
-        }
-        await backend.insert_decision(self.game_id, record)
-
-        from zutomayo.engine.game_events import EVENT_DECISION_MADE, describe_decision
-
-        self.emit_event(EVENT_DECISION_MADE, describe_decision(request, response))
-        await self.flush_events()
-
     async def set_status(
         self,
         status: str,
@@ -455,19 +390,6 @@ class GameRecordStore:
 
 async def load_manifest(game_id: str) -> Optional[dict[str, Any]]:
     return await backend.load_manifest(game_id)
-
-
-async def load_decision_log(game_id: str) -> dict[int, tuple[dict, DecisionResponse]]:
-    """Load the decision log in broker replay format."""
-    replay_log: dict[int, tuple[dict, DecisionResponse]] = {}
-    for record in await backend.load_decision_records(game_id):
-        response = DecisionResponse(
-            sequence_number=record['sequence_number'],
-            payload_type=record['payload_type'],
-            payload=record['payload'],
-        )
-        replay_log[record['sequence_number']] = (record['fingerprint'], response)
-    return replay_log
 
 
 async def list_game_ids_with_status(status: str) -> list[str]:

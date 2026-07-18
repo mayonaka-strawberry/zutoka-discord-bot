@@ -19,7 +19,7 @@ from zutomayo.data.card_loader import load_cards  # noqa: E402
 from zutomayo.data.deck_validator import build_card_index, get_card_index, parse_deck_input  # noqa: E402
 from zutomayo.data.deck_validator_tcg import parse_tcg_deck_input  # noqa: E402
 
-from tests.support.game_state_builder import card_by_identity  # noqa: E402
+from tests.support.cards import card_by_identity  # noqa: E402
 
 VALID_TWENTY = ('01-013 01-013 01-014 01-014 01-017 01-017 01-020 01-020 01-023 01-023 '
                 '01-026 01-026 01-029 01-029 01-032 01-032 01-035 01-035 01-038 01-038')

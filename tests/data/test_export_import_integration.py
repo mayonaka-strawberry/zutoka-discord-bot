@@ -39,21 +39,27 @@ def _load_script_module(script_name: str):
 
 async def _seed_representative_data() -> None:
     """One finished game with decisions, events, elo history, plus decks and names."""
-    from zutomayo.engine.decisions import (
-        KIND_EFFECT_NUMBER_SELECT, PAYLOAD_NUMBER, DecisionRequest, DecisionResponse,
+    from engine_alpha.actions import select_number, P_EFFECT_NUMBER
+    from zutomayo.match.decisions import (
+        KIND_NUMBER_CHOICE, PAYLOAD_ACTION, MatchDecisionRequest, MatchDecisionResponse,
     )
+    from zutomayo.match.persistence import MatchRecordStore
 
     session = GameSession(game_id='20260710-00000', channel_id=7, creator_id=111)
     session.add_player(222)
     session.random_seed = 2 ** 63 + 99  # exercises the NUMERIC path
-    store = await GameRecordStore.create_for_session(session, 'standard')
+    store = await MatchRecordStore.create_for_match(
+        session, 'standard', engine_seed=session.random_seed, deck_card_keys={},
+    )
 
-    request = DecisionRequest(
-        kind=KIND_EFFECT_NUMBER_SELECT, player_index=0, prompt_text='number',
+    request = MatchDecisionRequest(
+        kind=KIND_NUMBER_CHOICE, player_index=0, prompt_text='number',
+        engine_request=select_number(P_EFFECT_NUMBER, 0, 3),
+        purpose=P_EFFECT_NUMBER,
         minimum_value=0, maximum_value=3,
     )
     request.sequence_number = 0
-    await store.append_decision(request, DecisionResponse(0, PAYLOAD_NUMBER, 2))
+    await store.append_decision(request, MatchDecisionResponse(0, PAYLOAD_ACTION, 2))
     store.emit_event('phase_entered', {'chronos': 3, 'day_night': 'DAY'}, turn=1, phase='SETUP')
     await store.set_status('completed', winner_index=0,
                            result_summary={'result': 'PLAYER_1_WIN', 'turns': 4})

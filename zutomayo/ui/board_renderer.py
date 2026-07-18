@@ -7,9 +7,12 @@ import discord
 from PIL import Image
 from zutomayo.ui.image_utils import save_image_for_discord
 from zutomayo.enums.chronos import Chronos
-from zutomayo.models.card_instance import CardInstance
-from zutomayo.models.game_state import GameState
-from zutomayo.models.player import Player
+
+# The renderer reads duck-typed views: any board object with `.players`, any
+# player object with the zone attributes (battle_zone, set_zone_a/b/c,
+# power_charger, deck, abyss, side), and any card holder with `.face_up` and
+# `.card` (BoardView / PlayerView / CardView from zutomayo.match.state_view).
+CardInstance = GameState = Player = object
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent

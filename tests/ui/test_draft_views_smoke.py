@@ -1,4 +1,4 @@
-﻿"""Construction and behaviour smoke tests for the draft views.
+"""Construction and behaviour smoke tests for the draft views.
 
 These exercise the picker's option building, page slicing, the cross-page
 selection diff with copy-limit enforcement, Confirm gating, and the TCG
@@ -26,7 +26,7 @@ from zutomayo.ui.draft_views import (  # noqa: E402
     build_draft_card_option,
 )
 
-from tests.support.game_state_builder import card_by_identity  # noqa: E402
+from tests.support.cards import card_by_identity  # noqa: E402
 
 
 class FakeResponse:

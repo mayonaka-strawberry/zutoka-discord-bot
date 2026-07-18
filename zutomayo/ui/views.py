@@ -1,25 +1,28 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Callable
 import discord
-from zutomayo.engine.decisions import PAYLOAD_INDICES, PAYLOAD_NUMBER, PAYLOAD_TEXT
 from zutomayo.enums.card_type import CardType
-from zutomayo.models.card_instance import CardInstance
 from zutomayo.ui.embeds import ATTRIBUTE_EN, ATTRIBUTE_JP, CARD_TYPE_LABEL
 
 if TYPE_CHECKING:
     from zutomayo.engine.game_session import GameSession
 
 # Views answer prompts either through a submit_callback (the decision broker
-# path: JSON-serializable payloads of option indices / number / text) or, when
-# no callback is given, through the legacy session.submit_action mechanism
-# with live objects. The legacy path remains for deck building and TCG deck
-# selection, which run before match persistence begins.
+# path: JSON-serializable payloads) or, when no callback is given, through the
+# session.submit_action mechanism with live objects. The submit_action path
+# remains for deck building and TCG deck selection, which run before match
+# persistence begins.
 SubmitCallback = Callable[[str, object], None]
 
+PAYLOAD_INDICES = 'indices'
+PAYLOAD_NUMBER = 'number'
+PAYLOAD_TEXT = 'text'
 
-def _build_select_option(card_instance: CardInstance) -> tuple[str, str]:
-    """Return (label, description) for a card select menu option."""
-    card = card_instance.card
+
+def _build_select_option(card_holder) -> tuple[str, str]:
+    """Return (label, description) for a card select menu option. Accepts any
+    object with a `.card` attribute (CardView or similar)."""
+    card = card_holder.card
     attr_en = ATTRIBUTE_EN.get(card.attribute.value, card.attribute.value)
     attr_jp = ATTRIBUTE_JP.get(card.attribute.value, '')
     type_label = CARD_TYPE_LABEL.get(card.card_type, '')
@@ -50,7 +53,7 @@ class CardSelectView(discord.ui.View):
         self,
         session: GameSession,
         player_index: int,
-        cards: list[CardInstance],
+        cards: list,
         min_cards: int = 1,
         max_cards: int = 1,
         placeholder: str = 'Select a card...',
@@ -68,7 +71,7 @@ class CardSelectView(discord.ui.View):
         self.embed = embed
         self.opponent_name = opponent_name
         self.submit_callback = submit_callback
-        self.selected_cards: list[CardInstance] = []
+        self.selected_cards: list = []
         self.selected_indices: list[int] = []
 
         self._build_dropdown()
@@ -153,7 +156,7 @@ class TwoStepCardSelectView(discord.ui.View):
         self,
         session: GameSession,
         player_index: int,
-        cards: list[CardInstance],
+        cards: list,
         embed: discord.Embed | None = None,
         opponent_name: str = 'opponent',
         submit_callback: SubmitCallback | None = None,
@@ -165,8 +168,8 @@ class TwoStepCardSelectView(discord.ui.View):
         self.embed = embed
         self.opponent_name = opponent_name
         self.submit_callback = submit_callback
-        self.first_card: CardInstance | None = None
-        self.selected_cards: list[CardInstance] = []
+        self.first_card: object | None = None
+        self.selected_cards: list = []
         self.selected_indices: list[int] = []
 
         self._build_step1_dropdown()
@@ -293,7 +296,7 @@ class RedrawView(discord.ui.View):
         self,
         session: GameSession,
         player_index: int,
-        cards: list[CardInstance],
+        cards: list,
         opponent_name: str = 'opponent',
         submit_callback: SubmitCallback | None = None,
     ):
@@ -303,7 +306,7 @@ class RedrawView(discord.ui.View):
         self.cards = cards
         self.opponent_name = opponent_name
         self.submit_callback = submit_callback
-        self.selected_cards: list[CardInstance] = []
+        self.selected_cards: list = []
         self.selected_indices: list[int] = []
 
         self._build_initial()
@@ -443,7 +446,7 @@ class EffectCardSelectView(discord.ui.View):
         self,
         session: GameSession,
         player_index: int,
-        cards: list[CardInstance],
+        cards: list,
         placeholder: str = 'Select a card...',
         submit_callback: SubmitCallback | None = None,
     ):

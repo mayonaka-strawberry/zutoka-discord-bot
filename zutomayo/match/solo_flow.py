@@ -15,7 +15,7 @@ import discord
 from zutomayo.match.broker import MatchDecisionBroker
 from zutomayo.match.discord_adapter import DiscordMatchDecisionAdapter
 from zutomayo.match.match_flow import SingleMatchFlow
-from zutomayo.engine.match_transport import DiscordMatchTransport
+from zutomayo.match.transport import DiscordMatchTransport
 
 if TYPE_CHECKING:
     from zutomayo.engine.game_session import GameSession
