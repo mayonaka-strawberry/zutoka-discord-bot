@@ -216,10 +216,22 @@ def run_search_batched(game, batch_evaluator, cfg: MCTSConfig, simulations: int,
     return root
 
 
-def select_action(root: Node, temperature: float, rng: random.Random) -> int:
-    """Samples an action from the root visit distribution."""
+def select_action(root: Node, temperature: float, rng: random.Random,
+                  use_gumbel: bool = False) -> int:
+    """Samples an action from the root visit distribution.
+
+    With use_gumbel (small simulation budgets), ties and near-ties among
+    visit counts are broken by prior-plus-Gumbel scores instead of index
+    order, which improves the played move when visits are too sparse to
+    discriminate (Gumbel-top-k style root selection)."""
     counts = root.visit_counts.astype(np.float64)
     if temperature <= 0.01:
+        if use_gumbel:
+            noise_rng = np.random.default_rng(rng.randrange(2**31))
+            gumbel = noise_rng.gumbel(size=len(counts))
+            with np.errstate(divide="ignore"):
+                scores = counts + 1e-3 * (np.log(root.priors + 1e-12) + gumbel)
+            return root.actions[int(np.argmax(scores))]
         return root.actions[int(np.argmax(counts))]
     weights = counts ** (1.0 / temperature)
     total = weights.sum()

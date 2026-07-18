@@ -19,16 +19,23 @@ from engine_alpha.config import EngineConfig
 
 @dataclass
 class NetConfig:
-    embed_dim: int = 384
-    num_layers: int = 8
+    embed_dim: int = 512
+    num_layers: int = 12
     num_heads: int = 8
-    feedforward_dim: int = 1536
+    feedforward_dim: int = 2048
     dropout: float = 0.0
     pointer_dim: int = 64
     value_hidden_dim: int = 256
     effect_feature_projection_dim: int = 64
     effect_embedding_dim: int = 32
     identity_embedding_dim: int = 96
+    # Identity-indexed tables are sized to this capacity rather than the
+    # current card count, so new cards occupy pre-allocated rows and existing
+    # checkpoints keep loading (see model_common/migrate_checkpoint.py for
+    # growing past it).
+    identity_capacity: int = 512
+    # Same headroom rule for the effect table (one row per effect program).
+    effect_capacity: int = 320
 
 
 @dataclass
@@ -48,6 +55,10 @@ class MCTSConfig:
     temperature_moves: int = 12  # in-game decisions after mulligan at tau=1.0, then argmax
     playout_cap_fraction: float = 0.25  # fraction of games played at reduced budget
     playout_cap_divisor: int = 4
+    # Optional: perturb root priors with Gumbel noise and restrict expansion
+    # to the top-k, improving policy targets at small simulation budgets.
+    use_gumbel_root: bool = False
+    gumbel_root_top_k: int = 16
 
 
 @dataclass
@@ -69,6 +80,12 @@ class TrainConfig:
     baseline_eval_games: int = 100
     evaluator_max_batch: int = 512
     evaluator_max_wait_ms: float = 2.0
+    # Exponential moving average of weights, used for published/evaluation
+    # weights; 0 disables.
+    ema_decay: float = 0.999
+    # Recompute encoder activations in the backward pass to trade compute
+    # for memory (per-layer activation checkpointing).
+    gradient_checkpointing: bool = True
 
 
 @dataclass
