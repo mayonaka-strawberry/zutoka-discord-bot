@@ -3,7 +3,7 @@ import asyncio
 import discord
 from PIL import Image
 from zutomayo.ui.image_utils import save_image_for_discord
-from constants import CHRONOS_SIZE, NIGHT_END
+from engine_alpha.battle import CHRONOS_SIZE, NIGHT_END
 from zutomayo.enums.card_type import CardType
 from zutomayo.models.card import Card
 

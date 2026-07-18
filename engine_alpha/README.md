@@ -37,12 +37,16 @@ continuation frames (program counter + registers), cloned in ~2 µs.
   placements, battle results, phase changes, ...) for external drivers to
   narrate. `fast_clone` always detaches the sink, so search clones are
   silent and pay only a `None` check.
-- **Verified against the old engine**: a cross-engine equivalence harness
-  (`tests/equivalence/`) replays identical decision scripts through both
-  engines and compares state snapshots every turn (plus prompt-sequence
-  identity). The recorded gate run: 500 games, zero divergences, 240/247
-  dispatchable effects exercised (~7,000 further games were verified during
-  development; one real porting bug found and fixed, 02-015).
+- **Verified against the old engine** (historical): during development, a
+  cross-engine equivalence harness replayed identical decision scripts
+  through both engines and compared state snapshots every turn (plus
+  prompt-sequence identity). The final gate run: 500 games, zero
+  divergences, 240/247 dispatchable effects exercised (~7,000 further games
+  were verified during development; one real porting bug found and fixed,
+  02-015). The harness was retired together with the legacy engine and is
+  no longer in the tree; ongoing behavior guarantees come from the ruling
+  tests, the invariant fuzzer, and the 24-game match regression suite
+  (`tests/run_match_regression.py`).
 
 ## Layout
 
@@ -61,7 +65,7 @@ baselines.py           RandomAgent / GreedyHeuristicAgent (pure-engine agents)
 effects/               IR schema, interpreter, conditions, selectors, catalog
                        (250 entries), custom handlers, removal, turn-end, featurizer
 encoding/observation.py  state -> 172-token observation
-tests/                 unit/property/ruling/event tests + tests/equivalence/ (the harness)
+tests/                 card-DB, invariant, ruling, event, and coverage-playout tests
 scripts/               engine verification entry points (below)
 ```
 
@@ -70,7 +74,7 @@ scripts/               engine verification entry points (below)
 All commands run from the repo root.
 
 ```bash
-# Full test suite: card DB, property/invariant, rulings, events, equivalence smoke (~5 s)
+# Full test suite: card DB, property/invariant, rulings, events, coverage playouts (~5 s)
 python -m pytest engine_alpha/tests/ -q
 
 # Performance gate: games/s and clone latency (~30 s)
@@ -82,12 +86,12 @@ python -m engine_alpha.scripts.fuzz --steps 1000000
 # Human-readable transcript of one game (for rule verification)
 python -m engine_alpha.scripts.transcript --seed 11
 python -m engine_alpha.scripts.transcript --seed 11 --draft
-
-# Cross-engine equivalence gate (requires the legacy engine to be present)
-python -m engine_alpha.tests.equivalence.run_equivalence --games 500
 ```
 
 Training-stack commands (self-play, training, gating, deck inspection,
 TensorBoard) live with the stacks: see `alpha_zero/scripts/` (module paths
 `alpha_zero.scripts.run_train` etc.; configuration in `alpha_zero/config.py`
 with overrides from `alpha_zero/.env`, `ALPHA_<SECTION>_<FIELD>` naming).
+The training code is intentionally untracked - git carries only the model
+definitions, configs, and inference modules the bot needs to play from a
+checkpoint - so these commands are available only on a training machine.

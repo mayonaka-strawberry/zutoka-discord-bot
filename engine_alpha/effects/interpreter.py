@@ -11,10 +11,11 @@ pair whenever frames are active; the paused op re-runs, consumes the
 answer, and either finishes or pauses again (compound ops like multiselect
 issue several requests in sequence).
 
-Prompt-sequence fidelity: choice ops reproduce the OLD engine's exact
+Prompt-sequence fidelity: choice ops reproduce the legacy engine's exact
 prompt sequences (e.g. multiselect = one number prompt then k single-card
-prompts, matching _prompt_card_multiselect) so the cross-engine equivalence
-harness can assert prompt-by-prompt identity.
+prompts, matching its _prompt_card_multiselect), a contract established by
+the now-retired cross-engine equivalence harness and still relied on by the
+recorded decision logs and transcript baselines.
 """
 
 from __future__ import annotations
