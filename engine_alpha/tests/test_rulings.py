@@ -18,7 +18,7 @@ import random
 from engine_alpha import cards
 from engine_alpha.battle import (
     MIDNIGHT, deal_damage, get_effective_attack, is_effectively_midnight,
-    resolve_battle,
+    resolve_battle, total_power,
 )
 from engine_alpha.effects import interpreter
 from engine_alpha.effects.removal import check_area_removal
@@ -28,7 +28,7 @@ from engine_alpha.state import (
     GF_MIDNIGHT_EXTENDED,
     PF_ABYSS_RECEIVED, PF_ATTACK_BONUS, PF_ATTACK_OVERRIDE, PF_BATTLE_LOST,
     PF_CARD_TO_POWER, PF_CHAR_TO_POWER, PF_DAMAGE_REDUCTION, PF_DAMAGE_TAKEN,
-    PF_DAY_NIGHT_REVERSED, PF_OPP_CARD_TO_ABYSS,
+    PF_DAY_NIGHT_REVERSED, PF_OPP_CARD_TO_ABYSS, PF_POWER_BONUS,
 )
 from engine_alpha.zones import place_in_abyss, place_in_charger, to_power_or_abyss
 from .conftest import random_vanilla_deck
@@ -326,3 +326,137 @@ def test_send_to_power_routing():
     to_power_or_abyss(state, b, 0)
     assert a in state.players[0].charger
     assert b in state.players[0].abyss
+
+
+# ---------------------------------------------------------------------------
+# 04-053: 'may' place a STUDY_ME character from hand onto the power charger,
+# then draw 1. The pick is declinable (Discord shows a "Skip" row); declining
+# skips both the placement and the draw ("if you do, draw 1").
+# ---------------------------------------------------------------------------
+
+def _study_me_character() -> int:
+    return next(d.index for d in cards.CARD_DB
+               if d.card_type == cards.TYPE_CHARACTER
+               and cards.SONG_NAMES[d.song] == "STUDY_ME")
+
+
+def test_04_053_skip_declines_place_and_draw():
+    game = make_game()
+    state = game.state
+    player = state.players[0]
+    player.hand[:] = [spawn(game, _study_me_character())]
+    candidate = player.hand[0]
+    player.deck.append(spawn(game, _study_me_character()))  # a draw would be possible
+    charger_before = list(player.charger)
+    deck_before = len(player.deck)
+    run_effect(game, 0, spawn(game, card_with_effect("04-053")), answers=(1,))  # PASS
+    assert candidate in player.hand           # not placed
+    assert player.charger == charger_before   # charger untouched
+    assert len(player.deck) == deck_before    # no draw
+
+
+def test_04_053_select_places_on_charger_and_draws():
+    game = make_game()
+    state = game.state
+    player = state.players[0]
+    player.hand[:] = [spawn(game, _study_me_character())]
+    candidate = player.hand[0]
+    player.deck.append(spawn(game, _study_me_character()))
+    deck_before = len(player.deck)
+    run_effect(game, 0, spawn(game, card_with_effect("04-053")), answers=(0,))  # pick 0
+    assert candidate not in player.hand
+    assert candidate in player.charger          # placed on the power charger
+    assert len(player.deck) == deck_before - 1  # drew exactly 1
+
+
+# ---------------------------------------------------------------------------
+# 02-015: 'may' use an additional enchant from hand, then draw 1. Declinable.
+# Ruling: the enchant is playable even without the power to pay its cost; when
+# unaffordable its effect does not trigger, but it is still placed and the draw
+# still happens.
+# ---------------------------------------------------------------------------
+
+def _unconditional_self_buff_enchant():
+    """An ENCHANT whose effect is an unconditional SELF attack buff by a
+    constant amount (no gate, no decisions, deck-neutral), so triggering is
+    directly observable via PF_ATTACK_BONUS. Returns (def_index, bonus)."""
+    from engine_alpha.effects.catalog import CATALOG
+    for effect_id, ir in CATALOG.items():
+        if ir.cond is not None or ir.custom is not None or not ir.ops:
+            continue
+        if not all(op[0] == "atk_bonus" and op[1] == 0 and isinstance(op[2], int)
+                   for op in ir.ops):
+            continue
+        effect_index = cards.EFFECT_TO_INDEX[effect_id]
+        for d in cards.CARD_DB:
+            if (d.card_type == cards.TYPE_ENCHANT and d.power_cost >= 1
+                    and cards.EFFECT_T[d.index] == effect_index):
+                return d.index, sum(op[2] for op in ir.ops)
+    raise AssertionError("no unconditional self-buff enchant available")
+
+
+def _enable_02_015_gate(game, owner_index=0):
+    """Satisfy 02-015's gate: previous battle character was DARK, and it is day."""
+    state = game.state
+    dark_def = next(d.index for d in cards.CARD_DB
+                    if cards.ATTRIBUTE_T[d.index] == cards.ATTR_DARKNESS)
+    state.players[owner_index].prev_battle_def = dark_def
+    state.chronos = 12  # day (chronos > 8)
+
+
+def _give_power(game, player, amount):
+    stp2 = next(d.index for d in cards.CARD_DB if d.send_to_power == 2)
+    while total_power(game.state, player) < amount:
+        player.charger.append(spawn(game, stp2))
+
+
+def test_02_015_skip_declines_enchant_but_still_draws():
+    game = make_game()
+    player = game.state.players[0]
+    _enable_02_015_gate(game)
+    enchant_def, _ = _unconditional_self_buff_enchant()
+    player.hand[:] = [spawn(game, enchant_def)]
+    enchant = player.hand[0]
+    player.deck.append(spawn(game, enchant_def))
+    _give_power(game, player, 8)
+    bonus_before = player.flags[PF_ATTACK_BONUS]
+    deck_before = len(player.deck)
+    run_effect(game, 0, spawn(game, card_with_effect("02-015")), answers=(1,))  # PASS
+    assert enchant in player.hand                          # not played
+    assert player.flags[PF_ATTACK_BONUS] == bonus_before   # effect not triggered
+    assert len(player.deck) == deck_before - 1             # still drew 1
+
+
+def test_02_015_select_plays_enchant_triggers_effect_and_draws():
+    game = make_game()
+    player = game.state.players[0]
+    _enable_02_015_gate(game)
+    enchant_def, bonus = _unconditional_self_buff_enchant()
+    player.hand[:] = [spawn(game, enchant_def)]
+    enchant = player.hand[0]
+    player.deck.append(spawn(game, enchant_def))
+    _give_power(game, player, 8)
+    bonus_before = player.flags[PF_ATTACK_BONUS]
+    deck_before = len(player.deck)
+    run_effect(game, 0, spawn(game, card_with_effect("02-015")), answers=(0,))
+    assert enchant not in player.hand                             # played
+    assert player.flags[PF_ATTACK_BONUS] == bonus_before + bonus  # effect triggered
+    assert len(player.deck) == deck_before - 1                    # drew 1
+
+
+def test_02_015_unaffordable_enchant_is_played_without_effect():
+    game = make_game()
+    player = game.state.players[0]
+    _enable_02_015_gate(game)
+    enchant_def, _ = _unconditional_self_buff_enchant()
+    player.hand[:] = [spawn(game, enchant_def)]
+    enchant = player.hand[0]
+    player.deck.append(spawn(game, enchant_def))
+    player.charger.clear()               # no power to pay the enchant's cost
+    player.flags[PF_POWER_BONUS] = 0
+    bonus_before = player.flags[PF_ATTACK_BONUS]
+    deck_before = len(player.deck)
+    run_effect(game, 0, spawn(game, card_with_effect("02-015")), answers=(0,))
+    assert enchant not in player.hand                     # still played
+    assert player.flags[PF_ATTACK_BONUS] == bonus_before  # effect did NOT trigger
+    assert len(player.deck) == deck_before - 1            # and still drew 1

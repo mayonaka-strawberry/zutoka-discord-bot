@@ -102,38 +102,46 @@ def reveal_top_03_103(state, frame, request, answer):
 @_register("additional_enchant_02_015")
 def additional_enchant_02_015(state, frame, request, answer):
     """02-015: (condition prev-dark + day is on the IR entry) you may use an
-    additional enchant from your hand — candidates pre-filtered to affordable
-    ones; the used enchant then goes to charger/abyss; finally draw 1 if the
-    deck is non-empty. The draw happens even when no enchant was available
-    or used (old code, top-level draw)."""
+    additional enchant from your hand. Candidates are the effect-bearing
+    enchants in hand; power does NOT gate whether the enchant can be played,
+    only whether its effect triggers (an unaffordable enchant is still placed
+    and the draw still happens). The used enchant then goes to charger/abyss;
+    finally draw 1 if the deck is non-empty. The pick is declinable (card text:
+    "may use"); skipping goes straight to the draw. The draw happens even when
+    no enchant was available, used, or declined (top-level draw)."""
     from ..battle import total_power, effective_power_cost
     owner = state.players[frame.owner]
     if frame.step == 0:
-        available_power = total_power(state, owner) + owner.flags[PF_POWER_BONUS]
         candidates = [
             i for i in owner.hand
             if CARD_TYPE_T[state.inst_def[i]] == TYPE_ENCHANT
             and EFFECT_T[state.inst_def[i]] != NO_EFFECT
-            and available_power >= effective_power_cost(state, i)
         ]
         if not candidates:
             frame.step = 3
             return _draw_one_02_015(state, frame)
         frame.step = 1
-        return select_card(P_EFFECT_TARGET, candidates)
+        return select_card(P_EFFECT_TARGET, candidates, allow_pass=True)
     if frame.step == 1:
+        if request.is_pass(answer):  # declined the enchant; still draw
+            frame.step = 3
+            return _draw_one_02_015(state, frame)
         chosen = request.candidates[answer]
         frame.data = [chosen]
         frame.step = 2
         effect_index = EFFECT_T[state.inst_def[chosen]]
-        if effect_index in EFFECT_PROGRAMS:
+        available_power = total_power(state, owner) + owner.flags[PF_POWER_BONUS]
+        # The enchant is played regardless of power; its effect only triggers
+        # when the owner can pay the enchant's power cost. Otherwise it is
+        # placed with no effect (and the top-level draw still happens).
+        if (effect_index in EFFECT_PROGRAMS
+                and available_power >= effective_power_cost(state, chosen)):
             depth_before = len(state.frame_stack)
             start_effect(state, frame.owner, chosen, effect_index)
             if len(state.frame_stack) > depth_before:
                 return None  # nested frame runs first; we resume at step 2
-        # Borrowed effect pushed no frame (gate condition false): the old
-        # engine's handler still ran as a no-op, so fall through to step 2
-        # (move the used enchant, draw) in this same call.
+        # Effect did not trigger (unaffordable, or the gate pushed no frame):
+        # fall through to step 2 (move the used enchant, draw) in this call.
     if frame.step == 2:
         chosen = frame.data[0]
         if chosen in owner.hand:

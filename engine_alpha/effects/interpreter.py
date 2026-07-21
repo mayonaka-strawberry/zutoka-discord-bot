@@ -193,12 +193,17 @@ def _op_if_reg_le(state, frame, op, request, answer):
     return None
 
 
+def _store_pick(frame, reg, request, answer):
+    """Common tail for pick ops: store the chosen instance and advance."""
+    frame.regs[reg] = request.candidates[answer]
+    frame.pc += 1
+
+
 def _op_pick_card(state, frame, op, request, answer):
     _, reg, sel = op
     _ensure_regs(frame, reg)
     if answer is not None:
-        frame.regs[reg] = request.candidates[answer]
-        frame.pc += 1
+        _store_pick(frame, reg, request, answer)
         return None
     candidates = eval_selector(state, frame.owner, sel)
     if not candidates:
@@ -206,6 +211,25 @@ def _op_pick_card(state, frame, op, request, answer):
         frame.pc = 10**6
         return None
     return select_card(P_EFFECT_TARGET, candidates)
+
+
+def _op_pick_card_opt(state, frame, op, request, answer):
+    """Declinable single-card pick ('may' effects). Emits a SelectCard with
+    allow_pass; PASS (or no candidates) jumps to skip_target so dependent ops
+    are skipped. On a real pick, stores the instance and falls through."""
+    _, reg, sel, skip_target = op
+    _ensure_regs(frame, reg)
+    if answer is not None:
+        if request.is_pass(answer):
+            frame.pc = skip_target
+        else:
+            _store_pick(frame, reg, request, answer)
+        return None
+    candidates = eval_selector(state, frame.owner, sel)
+    if not candidates:
+        frame.pc = skip_target
+        return None
+    return select_card(P_EFFECT_TARGET, candidates, allow_pass=True)
 
 
 def _op_pick_number(state, frame, op, request, answer):
@@ -628,6 +652,7 @@ OP_TABLE = {
     "if_reg_empty": _op_if_reg_empty,
     "if_reg_le": _op_if_reg_le,
     "pick_card": _op_pick_card,
+    "pick_card_opt": _op_pick_card_opt,
     "pick_number": _op_pick_number,
     "multiselect": _op_multiselect,
     "picks_exact": _op_picks_exact,

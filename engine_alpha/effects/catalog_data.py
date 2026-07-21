@@ -307,13 +307,14 @@ ENTRIES.append(E("01-086", "L", ("and", ("hand_count_ge", SELF, 1), ("abyss_coun
                   ("pick_card", 1, Sel(SELF, "abyss")),
                   ("move_reg", 0, "abyss", SELF, "bottom"),
                   ("move_reg", 1, "hand", SELF, "bottom"))))
-# 04-053: STUDY-ME character from hand -> own charger -> draw 1. In the old
-# headless env the prompt cannot be declined, so the pick is forced.
+# 04-053: 'may' place a STUDY-ME character from hand -> own charger -> draw 1.
+# The pick is declinable (card text: "you may place... if you do, draw 1");
+# skipping (or no candidate) jumps past both the move and the draw.
 ENTRIES.append(E("04-053", "L", None,
-                 (("pick_card", 0, Sel(SELF, "hand", card_type=TYPE_CHARACTER, song=SONG("STUDY_ME"))),
+                 (("pick_card_opt", 0, Sel(SELF, "hand", card_type=TYPE_CHARACTER, song=SONG("STUDY_ME")), 3),
                   ("move_reg", 0, "charger", SELF, "bottom"),
                   ("draw_exact", SELF, 1)),
-                 notes="old headless prompt is undeclinable; pick forced when candidates exist"))
+                 notes="'may' place STUDY_ME char on charger; skipping declines both the move and the draw"))
 
 # --- Family M: opponent deck/abyss disruption ------------------------------------
 ENTRIES.append(E("01-104", "M", None, (("mill", OPP, 1),)))

@@ -54,6 +54,8 @@ Ops (interpreter.py OP_TABLE); `side` relative to owner:
   control:   ('if_not', cond, target_pc)  ('jump', target_pc)  ('end',)
              ('if_reg_empty', reg, target_pc) ('if_reg_le', reg, n, target_pc)
   choices:   ('pick_card', reg, sel)               -> SelectCard (empty sel aborts effect)
+             ('pick_card_opt', reg, sel, skip_target)  -> declinable SelectCard ('may');
+                 PASS or empty sel jumps to skip_target (skips dependent ops)
              ('pick_number', reg, lo, hi_expr)     -> SelectNumber
              ('multiselect', reg, sel, min_cards)  -> SelectNumber then k SelectCards
              ('picks_exact', reg, sel, count_expr) -> count sequential SelectCards
@@ -134,7 +136,7 @@ def validate_ir(entry: EffectIR, op_names: frozenset[str], cond_names: frozenset
     for pc, op in enumerate(entry.ops):
         if op[0] not in op_names:
             raise ValueError(f"{entry.effect_id}: unknown op {op[0]!r} at {pc}")
-        if op[0] in ("if_not", "jump", "if_reg_empty", "if_reg_le"):
+        if op[0] in ("if_not", "jump", "if_reg_empty", "if_reg_le", "pick_card_opt"):
             target = op[-1]
             if not 0 <= target <= len(entry.ops):
                 raise ValueError(f"{entry.effect_id}: jump target {target} out of range at {pc}")
