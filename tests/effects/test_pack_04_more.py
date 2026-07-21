@@ -518,17 +518,35 @@ def test_04_065_study_me_cost_reduction():
 class TestEffect04053:
     """Optionally move a STUDY ME character from hand to the Power Charger, then draw."""
 
-    def test_happy_path(self):
+    def test_happy_path_single_candidate(self):
+        # One STUDY ME character in hand: the 0/1 gate is the only prompt; a
+        # value of 1 places the sole candidate without a second select menu.
         state = (GameStateBuilder()
                  .with_battle_card(0, '04-053')
                  .with_hand(0, [STUDY_ME_CHARACTER, WIND_CHARACTER])
                  .with_deck(0, [FLAME_CHARACTER])
                  .build())
         result = run_effect(state, '04-053', 0,
-                            scripted_answers=[ScriptedAnswer.card_indices([0])])
+                            scripted_answers=[ScriptedAnswer.number(1)])
         player = state.players[0]
         assert card_identities(player.power_charger) == [STUDY_ME_CHARACTER]
         assert card_identities(player.hand) == [WIND_CHARACTER, FLAME_CHARACTER]
+        assert any('drew **1** card.' in text for text in result.message_texts())
+
+    def test_happy_path_multiple_candidates(self):
+        # Two STUDY ME characters in hand: gate (1) then a card-select menu to
+        # choose which one to place.
+        state = (GameStateBuilder()
+                 .with_battle_card(0, '04-053')
+                 .with_hand(0, [STUDY_ME_CHARACTER, STUDY_ME_CHARACTER, WIND_CHARACTER])
+                 .with_deck(0, [FLAME_CHARACTER])
+                 .build())
+        result = run_effect(state, '04-053', 0,
+                            scripted_answers=[ScriptedAnswer.number(1),
+                                              ScriptedAnswer.card_indices([1])])
+        player = state.players[0]
+        assert card_identities(player.power_charger) == [STUDY_ME_CHARACTER]
+        assert card_identities(player.hand) == [STUDY_ME_CHARACTER, WIND_CHARACTER, FLAME_CHARACTER]
         assert any('drew **1** card.' in text for text in result.message_texts())
 
     def test_no_study_me_characters_fizzles(self):
@@ -540,15 +558,30 @@ class TestEffect04053:
         assert any('No STUDY ME characters in hand. No effect.' in text
                    for text in result.message_texts())
 
-    def test_timeout_skips(self):
+    def test_skip_gate_declines(self):
+        # Choosing 0 at the gate declines immediately: hand untouched, no draw.
+        state = (GameStateBuilder()
+                 .with_battle_card(0, '04-053')
+                 .with_hand(0, [STUDY_ME_CHARACTER])
+                 .with_deck(0, [FLAME_CHARACTER])
+                 .build())
+        result = run_effect(state, '04-053', 0,
+                            scripted_answers=[ScriptedAnswer.number(0)])
+        player = state.players[0]
+        assert card_identities(player.hand) == [STUDY_ME_CHARACTER]
+        assert card_identities(player.power_charger) == []
+        assert any('No card placed. No effect.' in text for text in result.message_texts())
+        assert not any('drew **1** card.' in text for text in result.message_texts())
+
+    def test_gate_timeout_skips(self):
         state = (GameStateBuilder()
                  .with_battle_card(0, '04-053')
                  .with_hand(0, [STUDY_ME_CHARACTER])
                  .build())
         result = run_effect(state, '04-053', 0,
-                            scripted_answers=[ScriptedAnswer.timeout('effect_card_select')])
+                            scripted_answers=[ScriptedAnswer.timeout('effect_number_select')])
         assert len(state.players[0].hand) == 1
-        assert any('No card selected. No effect.' in text for text in result.message_texts())
+        assert any('No card placed. No effect.' in text for text in result.message_texts())
 
 
 ATTRIBUTE_DISCARD_DRAW_EFFECTS = [

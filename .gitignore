@@ -232,3 +232,27 @@ zutomayo/active_games/
 # Coverage artifacts
 .coverage
 tests/coverage_summary.json
+/alpha_zero/eval/__init__.py
+/alpha_zero/eval/arena.py
+/alpha_zero/eval/gating.py
+/alpha_zero/net/wrapper.py
+/alpha_zero/scripts/__init__.py
+/alpha_zero/scripts/inspect_decks.py
+/alpha_zero/scripts/run_gate_m3.py
+/alpha_zero/scripts/run_selfplay.py
+/alpha_zero/scripts/run_train.py
+/alpha_zero/selfplay/__init__.py
+/alpha_zero/selfplay/game_record.py
+/alpha_zero/selfplay/league.py
+/alpha_zero/selfplay/replay_buffer.py
+/alpha_zero/selfplay/worker.py
+/alpha_zero/train/__init__.py
+/alpha_zero/train/losses.py
+/alpha_zero/train/train.py
+/model_common/arena.py
+/model_common/migrate_checkpoint.py
+/model_common/opponent_pool.py
+/ppo_transformer/train/__init__.py
+/ppo_transformer/train/ppo.py
+/ppo_transformer/train/rollout.py
+/ppo_transformer/train/run_train.py

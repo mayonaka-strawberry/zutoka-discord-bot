@@ -35,16 +35,38 @@ async def effect_04_053(
         log.debug('[%s] %s: early return, skipping effect', card_instance.card.effect, engine.player_label(player_index))
         return
 
-    selected_card = await engine._prompt_card_selection(
+    # Placement is optional ("You may ..."). Ask up front whether to place a
+    # card at all so the player can decline immediately instead of waiting for
+    # the card-select prompt to time out.
+    place_count = await engine._prompt_number_selection(
         player_index,
-        study_me_characters,
-        prompt_text='**Effect (04-053):** Choose a STUDY ME character from your hand to place on the Power Charger (or let it time out to skip).',
-        placeholder='Select a STUDY ME character...',
+        min_value=0,
+        max_value=1,
+        prompt_text='**Effect (04-053):** Place a STUDY ME character on the Power Charger? 1 = place a card, 0 = skip.',
+        placeholder='Place a card? (0 or 1)',
     )
+    log.debug('[%s] %s: place gate result: %s', card_instance.card.effect, engine.player_label(player_index), place_count)
+
+    if not place_count:  # None (timeout) or 0
+        await engine._send_dm(player_index, content='**Effect (04-053):** No card placed. No effect.')
+        log.debug('[%s] %s: early return, skipping effect', card_instance.card.effect, engine.player_label(player_index))
+        return
+
+    # Resolve which card to place. With a single candidate there is nothing to
+    # choose, so skip the extra menu.
+    if len(study_me_characters) == 1:
+        selected_card = study_me_characters[0]
+    else:
+        selected_card = await engine._prompt_card_selection(
+            player_index,
+            study_me_characters,
+            prompt_text='**Effect (04-053):** Choose a STUDY ME character from your hand to place on the Power Charger.',
+            placeholder='Select a STUDY ME character...',
+        )
     log.debug('[%s] %s: card selection result: %s', card_instance.card.effect, engine.player_label(player_index), selected_card.card.name if selected_card else None)
 
     if selected_card is None:
-        await engine._send_dm(player_index, content='**Effect (04-053):** No card selected. No effect.')
+        await engine._send_dm(player_index, content='**Effect (04-053):** No card placed. No effect.')
         log.debug('[%s] %s: early return, skipping effect', card_instance.card.effect, engine.player_label(player_index))
         return
 
