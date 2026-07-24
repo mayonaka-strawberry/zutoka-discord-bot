@@ -271,6 +271,119 @@ class TestPlayerStorage:
         assert human['deck_stats']['standard']['Alpha']['solo']['wins'] == 1
         assert install_in_memory_backends['profiles'].elo_history == [], 'solo games write no elo history'
 
+    # -- turn-1 self-defeat: the loser pays, the winner gains nothing ----------
+
+    def test_thrown_game_charges_the_loser_and_pays_the_winner_nothing(
+        self, install_in_memory_backends,
+    ):
+        from zutomayo.data.player_storage import load_profile, record_match_result
+
+        async def run():
+            await record_match_result(111, 222, 'Alpha', 'Beta', 0,
+                                      mode='standard', is_solo=False,
+                                      game_id='20260724-00000',
+                                      suppress_winner_elo_gain=True)
+            return await load_profile(111), await load_profile(222)
+
+        winner, loser = asyncio.run(run())
+        assert loser['elo'] < 1000, 'the thrower still pays in full'
+        assert winner['elo'] == 1000, 'a wintrade must not pay out'
+        assert winner['elo_peak'] == 1000 and winner['elo_games'] == 0
+        assert loser['elo_games'] == 1
+
+    def test_thrown_game_still_records_win_loss_history(self, install_in_memory_backends):
+        from zutomayo.data.player_storage import load_profile, record_match_result
+
+        async def run():
+            await record_match_result(111, 222, 'Alpha', 'Beta', 0,
+                                      mode='standard', is_solo=False,
+                                      game_id='20260724-00001',
+                                      suppress_winner_elo_gain=True)
+            return await load_profile(111), await load_profile(222)
+
+        winner, loser = asyncio.run(run())
+        assert winner['stats']['standard']['wins'] == 1
+        assert loser['stats']['standard']['losses'] == 1
+        assert winner['deck_stats']['standard']['Alpha']['pvp']['wins'] == 1
+        assert loser['deck_stats']['standard']['Beta']['pvp']['losses'] == 1
+        assert winner['opponent_stats']['222']['wins'] == 1
+        assert loser['opponent_stats']['111']['losses'] == 1
+
+    def test_thrown_game_charges_a_full_loss_not_a_discounted_one(
+        self, install_in_memory_backends,
+    ):
+        from zutomayo.data.player_storage import load_profile, record_match_result
+
+        async def run(suppress: bool):
+            await record_match_result(111, 222, None, None, 0,
+                                      mode='standard', is_solo=False,
+                                      suppress_winner_elo_gain=suppress)
+            return (await load_profile(222))['elo']
+
+        suppressed_elo = asyncio.run(run(True))
+        install_in_memory_backends['profiles'].profiles.clear()
+        normal_elo = asyncio.run(run(False))
+        assert suppressed_elo == normal_elo, 'the loser pays the same either way'
+
+    def test_thrown_game_writes_one_elo_history_row(self, install_in_memory_backends):
+        from zutomayo.data.player_storage import load_profile, record_match_result
+
+        async def run():
+            await record_match_result(111, 222, None, None, 0,
+                                      mode='standard', is_solo=False,
+                                      game_id='20260724-00002',
+                                      suppress_winner_elo_gain=True)
+            return await load_profile(222)
+
+        loser = asyncio.run(run())
+        history = install_in_memory_backends['profiles'].elo_history
+        assert len(history) == 1, 'nothing happened to the winner to record'
+        assert history[0]['user_id'] == 222
+        assert history[0]['ladder'] == 'standard'
+        assert history[0]['elo_before'] == 1000
+        assert history[0]['elo_after'] == loser['elo']
+
+    def test_thrown_game_without_a_game_id_writes_no_history(self, install_in_memory_backends):
+        from zutomayo.data.player_storage import load_profile, record_match_result
+
+        async def run():
+            await record_match_result(111, 222, None, None, 0,
+                                      mode='standard', is_solo=False,
+                                      suppress_winner_elo_gain=True)
+            return await load_profile(111), await load_profile(222)
+
+        winner, loser = asyncio.run(run())
+        assert install_in_memory_backends['profiles'].elo_history == []
+        assert winner['elo'] == 1000 and loser['elo'] < 1000
+
+    def test_thrown_tcg_match_moves_no_ladder(self, install_in_memory_backends):
+        from zutomayo.data.player_storage import load_profile, record_match_result
+
+        async def run():
+            await record_match_result(111, 222, None, None, 0,
+                                      mode='tcg_match', is_solo=False,
+                                      game_id='20260724-00003',
+                                      suppress_winner_elo_gain=True)
+            return await load_profile(111), await load_profile(222)
+
+        winner, loser = asyncio.run(run())
+        assert winner['elo'] == 1000 and loser['elo'] == 1000
+        assert winner['tcg_elo'] == 1000 and loser['tcg_elo'] == 1000
+        assert winner['stats']['tcg_match']['wins'] == 1
+
+    def test_thrown_flag_is_ignored_on_a_draw(self, install_in_memory_backends):
+        from zutomayo.data.player_storage import load_profile, record_match_result
+
+        async def run():
+            await record_match_result(111, 222, None, None, None,
+                                      mode='standard', is_solo=False,
+                                      suppress_winner_elo_gain=True)
+            return await load_profile(111), await load_profile(222)
+
+        profile_zero, profile_one = asyncio.run(run())
+        assert profile_zero['elo'] == 1000 and profile_one['elo'] == 1000
+        assert profile_zero['stats']['standard']['draws'] == 1
+
     def test_tcg_series_moves_the_parallel_ladder(self, install_in_memory_backends):
         from zutomayo.data.player_storage import load_profile, record_tcg_series
 

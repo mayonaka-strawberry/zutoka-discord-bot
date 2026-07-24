@@ -140,6 +140,21 @@ def test_pickle_round_trip():
     random_playout(restored, rng)
 
 
+def test_pickle_round_trip_carries_self_defeat_fields():
+    """The self-defeat slots are outside snapshot(), so pin them separately: a
+    resumed game must still know the loser threw it."""
+    game = make_vanilla_game(3, random.Random(55))
+    game.state.self_defeat_player = 1
+    game.state.self_defeat_turn = 1
+    restored = pickle.loads(pickle.dumps(game))
+    assert restored.state.self_defeat_player == 1
+    assert restored.state.self_defeat_turn == 1
+
+    fresh = pickle.loads(pickle.dumps(make_vanilla_game(4, random.Random(56))))
+    assert fresh.state.self_defeat_player == -1
+    assert fresh.state.self_defeat_turn == -1
+
+
 def test_same_seed_same_game():
     rng_a, rng_b = random.Random(1), random.Random(1)
     game_a = Game(seed=42, mode="draft")

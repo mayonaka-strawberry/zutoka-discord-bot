@@ -35,6 +35,30 @@ def definition_indices_for_cards(cards: list['Card']) -> list[int]:
     return [KEY_TO_INDEX[f'{card.pack:02d}-{card.id:03d}'] for card in cards]
 
 
+def should_suppress_winner_elo_gain(
+    state: Any, mode: str, winner_index_or_none: Optional[int],
+) -> bool:
+    """
+    True when the loser threw the game with a turn-1 CHAOS self-defeat.
+
+    Playing a bank-or-lose card without the abyss cards to pay for it ends the game
+    immediately, which makes it the cheapest possible way for two colluding players to
+    pump one account's rating. Such a win pays the winner no Elo; the loser still takes
+    the full loss (see record_match_result).
+
+    Deliberately turn 1 only: a self-defeat on any later turn rates as an ordinary loss,
+    so a pair willing to spend an extra turn cycle can still trade. Every self-defeat is
+    written to games.result_summary regardless, so widening this is a data question.
+    """
+    if mode != 'standard' or winner_index_or_none is None:
+        return False
+    if state.self_defeat_turn != 1:
+        return False
+    # check_win awards a both-at-zero tie to player 0, so the player who self-defeated
+    # can in principle still be the winner. Only suppress when they actually lost.
+    return state.self_defeat_player == 1 - winner_index_or_none
+
+
 class SingleMatchFlow:
     def __init__(self, bot: discord.Client) -> None:
         self.bot = bot
@@ -262,13 +286,22 @@ class SingleMatchFlow:
         if session.broker is not None and session.broker.replaying:
             return
         try:
-            winner = session.game.state.winner
+            state = session.game.state
+            winner = state.winner
             winner_index_or_none = winner if winner in (0, 1) else None
             player_zero_id = session.get_discord_id(0)
             player_one_id = session.get_discord_id(1)
             if player_zero_id is None or player_one_id is None:
                 return
             mode = 'tcg_match' if session.is_tcg else 'standard'
+            suppress_gain = should_suppress_winner_elo_gain(
+                state, mode, winner_index_or_none,
+            )
+            if suppress_gain:
+                log.info(
+                    'Game %s: player %d self-defeated on turn 1; winner gains no Elo',
+                    session.game_id, state.self_defeat_player,
+                )
             await record_match_result(
                 player_zero_id,
                 player_one_id,
@@ -279,6 +312,7 @@ class SingleMatchFlow:
                 is_solo=session.is_solo,
                 solo_difficulty=session.solo_difficulty,
                 game_id=session.game_id,
+                suppress_winner_elo_gain=suppress_gain,
             )
         except Exception:
             log.exception('Failed to record match stats for game %s', session.game_id)
@@ -288,14 +322,21 @@ class SingleMatchFlow:
 
         if session.persistence is None or session.game is None:
             return
-        winner = session.game.state.winner
+        state = session.game.state
+        winner = state.winner
         winner_index = winner if winner in (0, 1) else None
         result_name = ('PLAYER_1_WIN', 'PLAYER_2_WIN', 'DRAW')[winner] if winner in (0, 1, 2) else 'IN_PROGRESS'
+        result_summary = {'result': result_name, 'turns': state.turn}
+        # Recorded for every self-defeat, not just the turn-1 ones the Elo rule acts on,
+        # so the question of whether that gate should widen can be answered from data.
+        if state.self_defeat_player != -1:
+            result_summary['self_defeat_player'] = state.self_defeat_player
+            result_summary['self_defeat_turn'] = state.self_defeat_turn
         try:
             await session.persistence.set_status(
                 STATUS_COMPLETED,
                 winner_index=winner_index,
-                result_summary={'result': result_name, 'turns': session.game.state.turn},
+                result_summary=result_summary,
             )
         except Exception:
             log.exception('Failed to mark game %s completed', session.game_id)

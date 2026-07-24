@@ -182,6 +182,11 @@ class GameState:
         "players",
         "last_battle_winner",   # -1 none/draw, else winning player index
         "winner",               # -1 in progress, 0/1 winner index, 2 draw
+        # CHAOS bank-or-lose bookkeeping. Informational only: the win check and
+        # returns are unaffected, and these never enter the NN observation. The
+        # bot layer reads them to rate a thrown game differently.
+        "self_defeat_player",   # -1 none, else the player who self-defeated
+        "self_defeat_turn",     # -1 none, else the turn it happened on
         # Parallel per-instance arrays (index = instance id, append-only)
         "inst_def",             # def index
         "inst_played",          # played_this_turn 0/1
@@ -210,6 +215,8 @@ class GameState:
         self.players: tuple[PlayerState, PlayerState] = (None, None)  # set by Game
         self.last_battle_winner = -1
         self.winner = -1
+        self.self_defeat_player = -1
+        self.self_defeat_turn = -1
         self.inst_def: list[int] = []
         self.inst_played: list[int] = []
         self.inst_neg: list[int] = []
@@ -235,6 +242,8 @@ class GameState:
         clone.players = (self.players[0].fast_clone(), self.players[1].fast_clone())
         clone.last_battle_winner = self.last_battle_winner
         clone.winner = self.winner
+        clone.self_defeat_player = self.self_defeat_player
+        clone.self_defeat_turn = self.self_defeat_turn
         clone.inst_def = list(self.inst_def)
         clone.inst_played = list(self.inst_played)
         clone.inst_neg = list(self.inst_neg)

@@ -535,13 +535,27 @@ def _op_shuffle_reg(state, frame, op, request, answer):
     return None
 
 
-def _op_lose_game(state, frame, op, request, answer):
-    """CHAOS bomb failure: the old code sets the owner's HP to 0."""
-    owner = state.players[frame.owner]
-    old_hp = owner.hp
-    owner.hp = 0
+def apply_self_defeat(state, player_index):
+    """CHAOS bomb failure: the old code sets the player's HP to 0.
+
+    Also records who did it and on which turn. That record is purely
+    informational — the HP win check, the winner, and Game.returns() are
+    identical with or without it, and it never enters the NN observation. The
+    bot layer reads it to rate a deliberately thrown game differently.
+    """
+    player = state.players[player_index]
+    old_hp = player.hp
+    player.hp = 0
+    if state.self_defeat_player == -1:
+        state.self_defeat_player = player_index
+        state.self_defeat_turn = state.turn
     if state.event_sink is not None and old_hp != 0:
-        state.event_sink.append((EVENT_HP_CHANGED, frame.owner, -old_hp, 0))
+        state.event_sink.append((EVENT_HP_CHANGED, player_index, -old_hp, 0))
+
+
+def _op_lose_game(state, frame, op, request, answer):
+    """CHAOS bomb failure: the owner loses the game."""
+    apply_self_defeat(state, frame.owner)
     frame.pc += 1
     return None
 

@@ -90,6 +90,13 @@ timeouts forfeit the game.
 - Solo: a standard game against a trained model opponent in DMs, available
   once a checkpoint from `alpha_zero/` or `ppo_transformer/` is deployed.
 
+Playing a CHAOS bank-or-lose card (`04-006`, `04-027`, `04-028`, `04-088`)
+without the abyss cards to pay for it loses the game on the spot, which makes it
+the cheapest way to hand an opponent a win. When that happens on turn 1 of a
+standard game, the player who did it takes their full Elo loss but the winner
+gains no Elo. Win/loss records, deck stats and opponent stats are unaffected and
+count the game normally for both players.
+
 ## Architecture
 
 ### engine_alpha - the rules engine

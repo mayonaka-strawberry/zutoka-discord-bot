@@ -460,3 +460,127 @@ def test_02_015_unaffordable_enchant_is_played_without_effect():
     assert enchant not in player.hand                     # still played
     assert player.flags[PF_ATTACK_BONUS] == bonus_before  # effect did NOT trigger
     assert len(player.deck) == deck_before - 1            # and still drew 1
+
+
+# ---------------------------------------------------------------------------
+# CHAOS bank-or-lose bombs (04-006 / 04-027 / 04-028 / 04-088): the engine
+# records who self-defeated and on which turn, so the bot layer can refuse to
+# pay Elo for a deliberately thrown game. Recording is informational only --
+# the winner and Game.returns() are unaffected.
+# ---------------------------------------------------------------------------
+
+# (effect id, number of abyss cards that is one short of the requirement)
+CHAOS_BOMBS = (("04-006", 3), ("04-027", 0), ("04-028", 5), ("04-088", 0))
+# The same cards with their requirement exactly satisfied.
+CHAOS_BOMBS_SATISFIED = (("04-006", 4), ("04-027", 1), ("04-028", 6), ("04-088", 1))
+
+
+def stock_abyss(game: Game, owner: int, count: int) -> None:
+    """Put `count` throwaway cards in a player's abyss."""
+    player = game.state.players[owner]
+    player.abyss.clear()
+    for _ in range(count):
+        player.abyss.append(spawn(game, find_character()))
+
+
+def run_effect_auto(game: Game, owner: int, instance_id: int) -> None:
+    """Resolve an effect, answering every prompt with its first legal action."""
+    state = game.state
+    interpreter.start_effect(state, owner, instance_id,
+                             cards.EFFECT_T[state.inst_def[instance_id]])
+    request = interpreter.resume(state, None, None)
+    while request is not None:
+        request = interpreter.resume(state, request, request.legal_actions()[0])
+    assert not state.frame_stack
+
+
+def test_chaos_bomb_short_abyss_records_self_defeat():
+    from engine_alpha.battle import check_win
+
+    for effect_id, abyss_count in CHAOS_BOMBS:
+        game = make_game()
+        state = game.state
+        state.turn = 1
+        stock_abyss(game, 0, abyss_count)
+        run_effect_auto(game, 0, spawn(game, card_with_effect(effect_id)))
+
+        assert state.players[0].hp == 0, effect_id
+        assert state.self_defeat_player == 0, effect_id
+        assert state.self_defeat_turn == 1, effect_id
+        check_win(state)
+        assert state.winner == 1, effect_id
+        assert game.returns() == (-1.0, 1.0), effect_id
+
+
+def test_chaos_bomb_satisfied_condition_records_nothing():
+    for effect_id, abyss_count in CHAOS_BOMBS_SATISFIED:
+        game = make_game()
+        state = game.state
+        stock_abyss(game, 0, abyss_count)
+        # 04-006 and 04-088 branch on the opponent's board after banking; an
+        # empty battle zone and a short deck end them right after the bank.
+        state.players[1].battle = -1
+        del state.players[1].deck[1:]
+        hp_before = state.players[0].hp
+        run_effect_auto(game, 0, spawn(game, card_with_effect(effect_id)))
+
+        assert state.players[0].hp == hp_before, effect_id
+        assert state.self_defeat_player == -1, effect_id
+        assert state.self_defeat_turn == -1, effect_id
+        assert state.winner == -1, effect_id
+
+
+def test_self_defeat_fields_default_to_unset():
+    state = make_game().state
+    assert state.self_defeat_player == -1
+    assert state.self_defeat_turn == -1
+
+
+def test_self_defeat_fields_survive_fast_clone():
+    game = make_game()
+    unset = game.state.fast_clone()
+    assert (unset.self_defeat_player, unset.self_defeat_turn) == (-1, -1)
+
+    run_effect_auto(game, 1, spawn(game, card_with_effect("04-027")))
+    clone = game.state.fast_clone()
+    assert clone.self_defeat_player == 1
+    assert clone.self_defeat_turn == game.state.turn
+
+
+def test_self_defeat_records_the_turn_it_happened_on():
+    """The engine reports the real turn; the turn-1 Elo policy lives in the bot
+    layer, so a later self-defeat must NOT be relabelled as turn 1."""
+    game = make_game()
+    game.state.turn = 7
+    run_effect_auto(game, 0, spawn(game, card_with_effect("04-027")))
+    assert game.state.self_defeat_player == 0
+    assert game.state.self_defeat_turn == 7
+
+
+def test_first_self_defeat_is_not_overwritten():
+    game = make_game()
+    game.state.turn = 1
+    run_effect_auto(game, 0, spawn(game, card_with_effect("04-027")))
+    game.state.turn = 9
+    run_effect_auto(game, 1, spawn(game, card_with_effect("04-027")))
+    assert game.state.self_defeat_player == 0
+    assert game.state.self_defeat_turn == 1
+
+
+def test_self_defeat_does_not_reach_the_observation():
+    """Guards the trained PPO / AlphaZero checkpoints: the new state fields are
+    bot-layer bookkeeping and must never change the NN input."""
+    import numpy as np
+
+    from engine_alpha.encoding.observation import encode
+
+    game = make_game()
+    before = encode(game)
+    game.state.self_defeat_player = 1
+    game.state.self_defeat_turn = 1
+    after = encode(game)
+
+    for array_before, array_after in zip(before[:3], after[:3]):
+        assert array_before.shape == array_after.shape
+        assert np.array_equal(array_before, array_after)
+    assert before[3] == after[3]
