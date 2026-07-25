@@ -116,11 +116,11 @@ is_terminal() / returns()`:
 - Every interactive choice is one of 4 `DecisionRequest` kinds (select card,
   select identity, select number, binary) tagged with a purpose, and every
   answer is a small int action.
-- All 250 card effects are declarative IR (`effects/catalog_data.py`)
-  executed by a micro-step interpreter: 247 dispatchable programs, 3
+- All 253 card effects are declarative IR (`effects/catalog_data.py`)
+  executed by a micro-step interpreter: 250 dispatchable programs, 3
   engine-inline passives, 8 custom step-machine handlers for effects that do
   not fit linear IR, and 2 cost-reducing effects with forced-first ordering.
-  The card database holds 422 cards.
+  The card database holds 425 cards.
 - Chance is a counter-based RNG: the state stores only `(rng_key, rng_ctr)`,
   so clones agree on all futures, and `derive_seed` gives each game of a
   TCG series its own seed from one persisted series seed.

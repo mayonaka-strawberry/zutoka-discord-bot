@@ -502,6 +502,38 @@ def _op_bounce_opp_area(state, frame, op, request, answer):
     return None
 
 
+def _op_opp_area_to_abyss(state, frame, op, request, answer):
+    """04-107: the opponent's area enchant goes to THEIR abyss. Forced to the
+    abyss even when the card has SEND TO POWER (card text; the same exception
+    removal.py makes for 04-030). Fires the leave-play cleanup, so a 03-055
+    area block clears — which a plain move_reg out of set_c would miss."""
+    from .removal import on_area_enchant_leaves_play
+    opponent = state.players[1 - frame.owner]
+    if opponent.set_c != -1:
+        area = opponent.set_c
+        opponent.set_c = -1
+        on_area_enchant_leaves_play(state, area, opponent.index)
+        place_in_abyss(state, area, opponent.index, frame.owner)
+    frame.pc += 1
+    return None
+
+
+def _op_charger_to_abyss(state, frame, op, request, answer):
+    """04-105: empty a side's power charger into that side's OWN abyss.
+
+    The actor is the effect owner, so the charger owner's PF_CARD_TO_POWER
+    never fires and PF_OPP_CARD_TO_ABYSS fires for the side that did not act.
+    Cards are detached before placement so none is ever in two zones at once.
+    """
+    player = _side_player(state, frame, op[1])
+    emptied = list(player.charger)
+    player.charger.clear()
+    for instance_id in emptied:
+        place_in_abyss(state, instance_id, player.index, frame.owner)
+    frame.pc += 1
+    return None
+
+
 def _op_name_guess_bonus(state, frame, op, request, answer):
     """03-047 family: +N attack when the guessed definition matches the
     opponent's hand card at the 1-based index chosen earlier."""
@@ -693,6 +725,8 @@ OP_TABLE = {
     "chronos_revert_turn_start": _op_chronos_revert_turn_start,
     "chronos_back_opp_clock": _op_chronos_back_opp_clock,
     "bounce_opp_area": _op_bounce_opp_area,
+    "opp_area_to_abyss": _op_opp_area_to_abyss,
+    "charger_to_abyss": _op_charger_to_abyss,
     "name_guess_bonus": _op_name_guess_bonus,
     "negate_opp_set_enchants": _op_negate_opp_set_enchants,
     "shuffle_reg": _op_shuffle_reg,

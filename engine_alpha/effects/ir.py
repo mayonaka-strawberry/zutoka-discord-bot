@@ -1,4 +1,4 @@
-"""Effect IR: the declarative language all 247 dispatchable effects are
+"""Effect IR: the declarative language all 250 dispatchable effects are
 written in. The IR is simultaneously the implementation (interpreted by
 interpreter.py) and the network representation (featurized by features.py).
 
@@ -68,12 +68,17 @@ Ops (interpreter.py OP_TABLE); `side` relative to owner:
   clock:     ('adv_chronos', expr) ('set_chronos_to', expr) ('midnight_extend',)
   cards:     ('draw', side, expr)              min(expr, deck) drawn
              ('move_reg', reg, dst_zone, dst_side, order)
-                 dst_zone in 'abyss'|'charger'|'deck'|'battle'; order 'top'|'bottom'
+                 dst_zone in 'abyss'|'charger'|'deck'|'hand'; order 'top'|'bottom'
                  (actor for placement triggers is always the effect owner)
              ('mill', side, expr)              top N of side's deck -> side's abyss
+             ('charger_to_abyss', side)        04-105: empty side's charger into
+                 that side's OWN abyss (actor = effect owner)
              ('reveal_reg', reg)  ('reveal_hand', side)     face-up flag only
              ('shuffle_hand', side)            rng event
              ('hand_bonus', side)              pending hand-size bonus +1
+  area:      ('bounce_opp_area', order, cleanup)   opponent's area -> their deck
+             ('opp_area_to_abyss',)            04-107: opponent's area -> their
+                 abyss, forced even with SEND TO POWER; fires leave-play cleanup
   misc:      ('attr_override_enemy', attr)     opponent battle char attribute
              ('negate_reg', reg)  ('block_area', side)
              ('cost_reduce_set_chars', n)      02-006: set A/B/battle chars played

@@ -7,19 +7,19 @@ from engine_alpha.rng import shuffled, random_below
 
 
 def test_card_count_and_types():
-    assert cards.NUM_CARDS == 422
+    assert cards.NUM_CARDS == 425
     type_counts = Counter(d.card_type for d in cards.CARD_DB)
-    assert type_counts[cards.TYPE_CHARACTER] == 242
-    assert type_counts[cards.TYPE_ENCHANT] == 153
+    assert type_counts[cards.TYPE_CHARACTER] == 243
+    assert type_counts[cards.TYPE_ENCHANT] == 155
     assert type_counts[cards.TYPE_AREA_ENCHANT] == 27
 
 
 def test_effect_vocabulary():
-    assert cards.NUM_EFFECTS == 250
+    assert cards.NUM_EFFECTS == 253
     with_effect = [d for d in cards.CARD_DB if d.effect_index != cards.NO_EFFECT]
-    assert len(with_effect) == 250
+    assert len(with_effect) == 253
     # Effects are unique per card, so the reverse map is total.
-    assert len(cards.EFFECT_TO_CARD) == 250
+    assert len(cards.EFFECT_TO_CARD) == 253
     # Effect id string matches the carrying card's own key.
     for d in with_effect:
         assert d.effect_id == d.key

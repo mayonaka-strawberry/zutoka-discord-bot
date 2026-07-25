@@ -37,10 +37,15 @@ ATTRIBUTE_TO_INDEX = {name: i for i, name in enumerate(ATTRIBUTE_NAMES)}
 RARITY_NAMES = ("N", "R", "SR", "UR", "SE")
 RARITY_TO_INDEX = {name: i for i, name in enumerate(RARITY_NAMES)}
 
-# Normalization maxima (verified against the card DB; asserted at load).
+# Field bounds, asserted at load so a malformed card set fails loudly.
+# MAX_CLOCK / MAX_POWER_COST / MAX_SEND_TO_POWER double as the observation
+# normalizers. MAX_ATTACK does NOT: the encoder divides attack by a fixed
+# 200.0 scale (encoding/observation.py), which effective attack already
+# exceeds whenever buffs apply, so 04-105's 250 is simply an outlier value
+# above 1.0 rather than a reason to rescale every other card.
 MAX_CLOCK = 6
 MAX_POWER_COST = 8
-MAX_ATTACK = 200
+MAX_ATTACK = 250
 MAX_SEND_TO_POWER = 2
 
 NO_EFFECT = -1

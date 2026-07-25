@@ -47,12 +47,12 @@ N_FLOAT_FEATURES = 14
 MAX_TOKENS = 4 + 2 * (4 + 20 + 20 + 20 + 20)  # 172
 
 # Categorical paddings (index = vocabulary size means "none")
-PAD_IDENTITY = NUM_CARDS       # 422
+PAD_IDENTITY = NUM_CARDS       # 425
 PAD_ATTR = 5
 PAD_TYPE = 3
 PAD_SONG = NUM_SONGS
 PAD_RARITY = 5
-PAD_EFFECT = NUM_EFFECTS       # 250
+PAD_EFFECT = NUM_EFFECTS       # 253
 
 N_NUMBER_ACTIONS = 21          # numeric answers 0..20 (chronos <= 17, counts <= 20)
 

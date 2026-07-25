@@ -1,4 +1,4 @@
-"""The IR catalog: one entry per effect id in the card DB (250 total).
+"""The IR catalog: one entry per effect id in the card DB (253 total).
 
 Authored family-by-family from the old engine's per-card implementations
 (zutomayo/effects/cards/effect_XX_YYY.py) — the behavioral ground truth.
@@ -250,6 +250,8 @@ ENTRIES.append(E("03-033", "K", ("time", "day"), (("adv_chronos", 2),)))
 # 02-011: if prev char flame, choose 0-5 clock advance
 ENTRIES.append(E("02-011", "K", ("prev_char_attr", SELF, FLAME),
                  (("pick_number", 0, 0, 5), ("adv_chronos", ("reg", 0)))))
+# 04-106: half of the 18-slot clock, so it always flips day/night exactly once.
+ENTRIES.append(E("04-106", "K", None, (("adv_chronos", 9),)))
 
 # --- Family L: draw / hand-cycling ----------------------------------------------
 # 01-092 / 04-089: draw 1 + permanent pending hand bonus, both gated on can_draw
@@ -337,10 +339,12 @@ ENTRIES.append(E("02-024", "T", ("and", ("prev_char_attr", SELF, ELEC), ("time",
                  (("pick_card", 0, Sel(OPP, "charger", stp_eq=1)),
                   ("move_reg", 0, "deck", OPP, "bottom"))))
 
-# --- Family U: bounce opponent's area enchant to their deck -----------------------
+# --- Family U: remove the opponent's area enchant ---------------------------------
 ENTRIES.append(E("02-055", "U", ("own_attr", FLAME), (("bounce_opp_area", "top", True),)))
 ENTRIES.append(E("03-014", "U", None, (("bounce_opp_area", "bottom", True),)))
 ENTRIES.append(E("03-021", "U", None, (("bounce_opp_area", "top", True),)))
+ENTRIES.append(E("04-107", "U", None, (("opp_area_to_abyss",),),
+                 notes="to the abyss, forced even with SEND TO POWER (card text)"))
 
 # --- 01-006: use an enchant effect from your own abyss (nested resolution) --------
 ENTRIES.append(E("01-006", "L", None, custom="use_abyss_enchant",
@@ -430,6 +434,21 @@ ENTRIES.append(E("04-028", "AF", None, (
     ("lose_game",),
 )))
 ENTRIES.append(E("04-088", "AF", None, custom="chaos_04_088"))
+# 04-105: bank 8, then BOTH chargers empty into their own owners' abysses.
+# Falling short of 8 is an immediate self-defeat and nothing else resolves
+# (confirmed ruling) — so the wipe lives only on the success branch.
+ENTRIES.append(E("04-105", "AF", None, (
+    ("if_not", ("abyss_count_ge", SELF, 8), 7),   # fewer than 8 -> lose, nothing else
+    ("picks_exact", 0, Sel(SELF, "abyss"), 8),
+    ("shuffle_reg", 0),
+    ("move_reg", 0, "deck", SELF, "bottom"),
+    ("charger_to_abyss", SELF),
+    ("charger_to_abyss", OPP),
+    ("jump", 8),                                   # skip the lose branch
+    ("lose_game",),
+), notes="8 own-abyss cards banked face down to deck bottom, then both power "
+         "chargers empty into their own owners' abysses; short abyss = immediate "
+         "self-defeat with no charger wipe"))
 
 # --- Family AG: cost reduction / power generation -----------------------------------------
 ENTRIES.append(E("02-006", "AG", None, (("cost_reduce_set_chars", 2),),
