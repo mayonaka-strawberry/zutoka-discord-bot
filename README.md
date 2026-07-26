@@ -250,23 +250,54 @@ python -m alpha_zero.config > alpha_zero\.env
 python -m ppo_transformer.config > ppo_transformer\.env
 ```
 
-Smoke-test a stack, then start a real run:
+Each stack has a smoke run, a real run, and a resume. All commands in this
+section run from the repository root.
+
+alpha_zero smoke test — two tiny iterations, confirms the loop is wired:
 
 ```powershell
 python -m alpha_zero.scripts.run_train --smoke
+```
+
+alpha_zero real run, settings from `alpha_zero\.env`:
+
+```powershell
 python -m alpha_zero.scripts.run_train
+```
+
+ppo_transformer smoke test:
+
+```powershell
 python -m ppo_transformer.train.run_train --smoke
+```
+
+ppo_transformer real run, settings from `ppo_transformer\.env`:
+
+```powershell
 python -m ppo_transformer.train.run_train
 ```
 
 **Stopping and resuming.** Ctrl+C, a `STOP` file in the runs directory, or
 SIGTERM all wind the run down at a safe boundary: the current step finishes, a
 checkpoint is written, and the resume command is printed. The `STOP` file is the
-one that works for a detached run. Resume with `--resume`, which restores the
-network, optimizer, scheduler, counters and RNG state; changing the network
-shape between runs is refused with a message naming the fields rather than
-failing inside `load_state_dict`. Full detail, including per-stack tuning notes,
-is in the two stack READMEs.
+one that works for a detached run. Resuming restores the network, optimizer,
+scheduler, counters and RNG state from the newest checkpoint; changing the
+network shape between runs is refused with a message naming the fields rather
+than failing inside `load_state_dict`.
+
+Resume an alpha_zero run:
+
+```powershell
+python -m alpha_zero.scripts.run_train --resume
+```
+
+Resume a ppo_transformer run:
+
+```powershell
+python -m ppo_transformer.train.run_train --resume
+```
+
+Full detail, including per-stack tuning notes, is in the two stack READMEs.
 
 Training entry points and their modules are gitignored — a fresh clone can run
 the bot but not train.
