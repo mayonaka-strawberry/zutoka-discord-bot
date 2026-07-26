@@ -14,8 +14,13 @@ fixed for the length of a run. Re-run this script to refresh it.
 
 Standard decks and TCG main decks are both exported. A TCG main deck is 20
 cards whose copy limit is enforced across main plus side, so on its own it is
-always a legal standard deck; side decks are ignored. Decks are deduplicated by
-their sorted card list, and `user_count` records how many users saved each one.
+always a legal standard deck; side decks are ignored.
+
+Each entry carries a `guid` and its 20 cards as {'pack', 'id'} references. The
+guid is derived from the cards themselves (`model_common.deck_pool.deck_guid`),
+so it is both the dedup key here and a stable name for the deck everywhere else;
+`user_count` records how many users saved it. Deck names and user ids are not
+exported.
 """
 
 from __future__ import annotations
@@ -32,8 +37,13 @@ sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from dotenv import load_dotenv
 
-from engine_alpha.cards import KEY_TO_INDEX, NUM_CARDS
+from engine_alpha.cards import NUM_CARDS
 from engine_alpha.draft import validate_deck
+from model_common.deck_pool import (
+    card_references,
+    deck_guid,
+    definition_indices_for_references,
+)
 from zutomayo.data import database, deck_repository
 from zutomayo.data.deck_storage import load_default_decks
 
@@ -50,24 +60,11 @@ DECK_SOURCES = (
 )
 
 
-def definition_indices_for_references(card_references: list[dict]) -> list[int]:
-    """Convert stored {'pack', 'id'} references into engine definition indices."""
-    return [
-        KEY_TO_INDEX[f"{reference['pack']:02d}-{reference['id']:03d}"]
-        for reference in card_references
-    ]
-
-
-def deck_signature(definition_indices: list[int]) -> str:
-    """Order-independent identity of a deck, matching League.deck_signature."""
-    return ','.join(str(index) for index in sorted(definition_indices))
-
-
 class DeckCollector:
-    """Accumulates decks by signature, counting distinct owners and sources."""
+    """Accumulates decks by guid, counting distinct owners and sources."""
 
     def __init__(self) -> None:
-        self.decks_by_signature: dict[str, dict] = {}
+        self.decks_by_guid: dict[str, dict] = {}
         self.skipped: list[str] = []
 
     def add(self, entry: dict, card_list_field: str, source: str) -> None:
@@ -84,31 +81,33 @@ class DeckCollector:
             self.skipped.append(f'{label}: {error}')
             return
 
-        signature = deck_signature(definition_indices)
-        deck = self.decks_by_signature.get(signature)
+        guid = deck_guid(definition_indices)
+        deck = self.decks_by_guid.get(guid)
         if deck is None:
             deck = {
-                'signature': signature,
+                'guid': guid,
+                # Canonical order, so re-exporting an unchanged database
+                # reproduces the file byte for byte.
                 'definitions': sorted(definition_indices),
                 'sources': set(),
                 'owners': set(),
             }
-            self.decks_by_signature[signature] = deck
+            self.decks_by_guid[guid] = deck
         deck['sources'].add(source)
         deck['owners'].add(entry.get('user_id'))
 
     def finalize(self, minimum_users: int) -> list[dict]:
         decks = []
-        for deck in self.decks_by_signature.values():
+        for deck in self.decks_by_guid.values():
             if len(deck['owners']) < minimum_users:
                 continue
             decks.append({
-                'signature': deck['signature'],
-                'definitions': deck['definitions'],
+                'guid': deck['guid'],
+                'cards': card_references(deck['definitions']),
                 'sources': sorted(deck['sources']),
                 'user_count': len(deck['owners']),
             })
-        decks.sort(key=lambda deck: (-deck['user_count'], deck['signature']))
+        decks.sort(key=lambda deck: (-deck['user_count'], deck['guid']))
         return decks
 
 
@@ -138,7 +137,7 @@ async def export_training_decks(output_path: Path, include_defaults: bool,
     decks = collector.finalize(minimum_users)
     for message in collector.skipped:
         print(f'skipped {message}')
-    print(f'{len(collector.decks_by_signature)} distinct deck(s) found, '
+    print(f'{len(collector.decks_by_guid)} distinct deck(s) found, '
           f'{len(decks)} kept (min-users {minimum_users}), '
           f'{len(collector.skipped)} skipped.')
 

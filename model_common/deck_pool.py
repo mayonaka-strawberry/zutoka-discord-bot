@@ -12,21 +12,33 @@ unrealistic in shape.
 The pool file is optional: on a machine without an export, `load_deck_pool`
 returns an empty list and the sampler falls back to random decks, so training
 still runs.
+
+Decks are stored on disk as `{'pack', 'id'}` card references — the same shape
+decks take everywhere else in the repository — and converted to engine
+definition indices at load. Storing the indices themselves would not survive a
+catalog change: an index is a position in a list sorted by (pack, id), so adding
+one card to an early pack shifts every later index and a stale export would
+resolve to different cards while still passing `validate_deck`.
 """
 
 from __future__ import annotations
 
 import json
 import random
+import uuid
 from collections import Counter
 from functools import lru_cache
 from pathlib import Path
 
-from engine_alpha.cards import NUM_CARDS
+from engine_alpha.cards import CARD_DB, KEY_TO_INDEX, NUM_CARDS
 from engine_alpha.draft import DECK_SIZE, MAX_COPIES, validate_deck
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DECK_POOL_PATH = REPOSITORY_ROOT / 'data' / 'training_decks.json'
+
+# Namespace for deck guids. Frozen forever: changing it renames every deck in
+# every exported file and breaks any reference anyone has recorded.
+DECK_GUID_NAMESPACE = uuid.UUID('26aa4c7c-31f6-415f-b76c-63e45c267d91')
 
 # A deck of DECK_SIZE cards with at most MAX_COPIES of each definition needs at
 # least this many distinct definitions.
@@ -43,12 +55,44 @@ DISTINCT_DEFINITION_COUNTS = range(MINIMUM_DISTINCT_DEFINITIONS, DECK_SIZE + 1)
 DEFAULT_DISTINCT_COUNT_WEIGHTS = (41, 19, 17, 12, 5, 2, 1, 2, 0, 3, 8)
 
 
+def card_references(definition_indices: list[int]) -> list[dict]:
+    """Definition indices as the {'pack', 'id'} shape decks are stored in."""
+    return [{'pack': CARD_DB[index].pack, 'id': CARD_DB[index].number}
+            for index in definition_indices]
+
+
+def definition_indices_for_references(references: list[dict]) -> list[int]:
+    """Stored {'pack', 'id'} references back to engine definition indices.
+
+    Raises KeyError for a card the current catalog does not have, which is the
+    point of storing references: a deck naming a removed card fails loudly
+    instead of silently resolving to whichever card now holds that index.
+    """
+    return [
+        KEY_TO_INDEX[f"{reference['pack']:02d}-{reference['id']:03d}"]
+        for reference in references
+    ]
+
+
+def deck_guid(definition_indices: list[int]) -> str:
+    """Stable identity of a deck, derived from its cards.
+
+    A uuid5 over the sorted card keys, so the same 20 cards always produce the
+    same guid: across re-exports, across machines, and for any deck held in
+    memory as definition indices. That is what lets an exported entry be matched
+    back to a deck a training run drafted. Keys rather than indices, so a
+    catalog change does not rename every deck.
+    """
+    keys = sorted(CARD_DB[index].key for index in definition_indices)
+    return str(uuid.uuid5(DECK_GUID_NAMESPACE, ','.join(keys)))
+
+
 def load_deck_pool(path: str | Path | None = None) -> list[list[int]]:
     """Decks from a training-deck export, as lists of definition indices.
 
-    Returns [] when the file does not exist. Individual decks that fail engine
-    legality are dropped rather than aborting the run — the export may predate
-    a catalog change.
+    Returns [] when the file does not exist. Individual decks that name an
+    unknown card or fail engine legality are dropped rather than aborting the
+    run — the export may predate a catalog change.
     """
     resolved = Path(path) if path else DEFAULT_DECK_POOL_PATH
     if not resolved.exists():
@@ -57,10 +101,10 @@ def load_deck_pool(path: str | Path | None = None) -> list[list[int]]:
         payload = json.load(handle)
     pool: list[list[int]] = []
     for deck in payload.get('decks', []):
-        definitions = [int(index) for index in deck['definitions']]
         try:
+            definitions = definition_indices_for_references(deck['cards'])
             validate_deck(definitions)
-        except ValueError:
+        except (KeyError, TypeError, ValueError):
             continue
         pool.append(definitions)
     return pool

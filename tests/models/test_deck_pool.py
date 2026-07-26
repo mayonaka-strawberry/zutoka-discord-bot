@@ -12,6 +12,7 @@ import importlib.util
 import json
 import random
 import sys
+import uuid
 from collections import Counter
 from pathlib import Path
 
@@ -28,6 +29,9 @@ from model_common.deck_pool import (  # noqa: E402
     DISTINCT_DEFINITION_COUNTS,
     MINIMUM_DISTINCT_DEFINITIONS,
     DeckSampler,
+    card_references,
+    deck_guid,
+    definition_indices_for_references,
     derive_distinct_count_weights,
     load_deck_pool,
     random_legal_deck,
@@ -48,18 +52,56 @@ def _legal_deck(first_definition: int = 0) -> list[int]:
 
 
 def _card_references(definition_indices: list[int]) -> list[dict]:
+    """Independent reference implementation of deck_pool.card_references, so the
+    assertions below are not checking the code under test against itself."""
     return [{'pack': CARD_DB[index].pack, 'id': CARD_DB[index].number}
             for index in definition_indices]
 
 
-def _write_pool(path: Path, decks: list[list[int]]) -> None:
+def _write_pool(path: Path, decks: list[list[dict]]) -> None:
+    """Write a pool file from decks already expressed as card references."""
     path.write_text(json.dumps({
         'generated_at': '2026-07-25T00:00:00+00:00',
         'card_count': NUM_CARDS,
-        'decks': [{'signature': ','.join(str(index) for index in sorted(deck)),
-                   'definitions': deck, 'sources': ['standard'], 'user_count': 1}
-                  for deck in decks],
+        'decks': [{'guid': f'deck-{position}', 'cards': cards,
+                   'sources': ['standard'], 'user_count': 1}
+                  for position, cards in enumerate(decks)],
     }), encoding='utf-8')
+
+
+# -- card references ---------------------------------------------------------
+
+def test_card_references_round_trip_to_definition_indices():
+    deck = _legal_deck(0)
+
+    references = card_references(deck)
+
+    assert references == _card_references(deck)
+    assert definition_indices_for_references(references) == deck
+
+
+def test_definition_indices_for_references_rejects_an_unknown_card():
+    """A removed card must fail loudly rather than resolve to another card."""
+    with pytest.raises(KeyError):
+        definition_indices_for_references([{'pack': 99, 'id': 999}])
+
+
+# -- deck guid ---------------------------------------------------------------
+
+def test_deck_guid_is_order_independent_and_reproducible():
+    deck = _legal_deck(0)
+    shuffled = list(reversed(deck))
+
+    assert deck_guid(deck) == deck_guid(deck)
+    assert deck_guid(shuffled) == deck_guid(deck)
+
+
+def test_deck_guid_differs_between_decks():
+    assert deck_guid(_legal_deck(0)) != deck_guid(_legal_deck(50))
+
+
+def test_deck_guid_is_a_uuid():
+    assert uuid.UUID(deck_guid(_legal_deck(0))).version == 5
 
 
 # -- loader ------------------------------------------------------------------
@@ -68,9 +110,10 @@ def test_load_deck_pool_returns_empty_when_file_is_missing(tmp_path):
     assert load_deck_pool(tmp_path / 'absent.json') == []
 
 
-def test_load_deck_pool_reads_definitions(tmp_path):
+def test_load_deck_pool_reads_card_references(tmp_path):
     pool_path = tmp_path / 'training_decks.json'
-    _write_pool(pool_path, [_legal_deck(0), _legal_deck(50)])
+    _write_pool(pool_path, [_card_references(_legal_deck(0)),
+                            _card_references(_legal_deck(50))])
 
     pool = load_deck_pool(pool_path)
 
@@ -81,10 +124,10 @@ def test_load_deck_pool_drops_illegal_decks(tmp_path):
     """A stale export must not abort a run, just lose the offending decks."""
     pool_path = tmp_path / 'training_decks.json'
     _write_pool(pool_path, [
-        _legal_deck(0),
-        _legal_deck(0)[:19],                 # too short
-        [7] * DECK_SIZE,                     # over the copy limit
-        [NUM_CARDS] + _legal_deck(0)[1:],    # definition index out of range
+        _card_references(_legal_deck(0)),
+        _card_references(_legal_deck(0))[:19],          # too short
+        _card_references([7] * DECK_SIZE),              # over the copy limit
+        [{'pack': 99, 'id': 999}] + _card_references(_legal_deck(0))[1:],
     ])
 
     assert load_deck_pool(pool_path) == [_legal_deck(0)]
@@ -230,7 +273,10 @@ def test_export_collects_standard_and_tcg_main_decks(export_module,
     decks = collector.finalize(minimum_users=1)
 
     assert collector.skipped == []
-    assert {tuple(deck['definitions']) for deck in decks} == {
+    assert {deck['guid'] for deck in decks} == {
+        deck_guid(_legal_deck(0)), deck_guid(_legal_deck(100))}
+    assert {tuple(sorted(definition_indices_for_references(deck['cards'])))
+            for deck in decks} == {
         tuple(sorted(_legal_deck(0))), tuple(sorted(_legal_deck(100)))}
     assert {source for deck in decks for source in deck['sources']} == {
         'standard', 'tcg_main'}
@@ -251,7 +297,8 @@ def test_export_deduplicates_identical_decks_and_counts_owners(
     popular = collector.finalize(minimum_users=2)
     assert len(popular) == 1
     assert popular[0]['user_count'] == 2
-    assert popular[0]['definitions'] == sorted(_legal_deck(0))
+    assert popular[0]['guid'] == deck_guid(_legal_deck(0))
+    assert popular[0]['cards'] == _card_references(sorted(_legal_deck(0)))
 
 
 def test_export_skips_illegal_and_unknown_decks(export_module,
@@ -289,3 +336,17 @@ def test_exported_file_loads_back_as_a_deck_pool(export_module, tmp_path,
     }), encoding='utf-8')
 
     assert load_deck_pool(output_path) == [sorted(_legal_deck(0))]
+
+
+def test_exported_guid_matches_the_guid_of_a_deck_in_memory(
+        export_module, tmp_path, install_in_memory_backends):
+    """What makes the guid useful: a deck a training run holds as definition
+    indices can be named without consulting the export."""
+    standard = install_in_memory_backends['decks']
+    standard.decks_by_user[1] = {'aggro': {
+        'name': 'aggro', 'cards': _card_references(_legal_deck(0))}}
+
+    collector = asyncio.run(export_module.collect_decks(include_defaults=False))
+    exported = collector.finalize(minimum_users=1)[0]
+
+    assert exported['guid'] == deck_guid(_legal_deck(0))

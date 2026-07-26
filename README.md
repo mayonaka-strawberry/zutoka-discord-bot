@@ -325,7 +325,7 @@ URL unless noted.
 | `scripts/postgresql_tools.py` | Locates the PostgreSQL client binaries across platforms (`PGBIN`, PATH, defaults); used by the dump/restore pair. |
 | `scripts/database_transfer.py` | Shared table specifications and serializers for the JSON export/import pair. |
 | `scripts/reset_elo.py` | Reset one Elo ladder for all players: `--format standard` or `--format tcg`. Lifetime and deck stats are untouched. |
-| `scripts/export_training_decks.py` | Export every saved deck (standard plus TCG main decks) to `data/training_decks.json` as engine definition indices, deduplicated with an owner count. This is the deck pool the model stacks train against; re-run it to refresh. `--dry-run`, `--include-defaults`, `--min-users N`. |
+| `scripts/export_training_decks.py` | Export every saved deck (standard plus TCG main decks) to `data/training_decks.json` as a guid plus 20 `{pack, id}` card references, deduplicated with an owner count. The guid is derived from the cards, so the same deck keeps the same guid across re-exports. This is the deck pool the model stacks train against; re-run it to refresh. `--dry-run`, `--include-defaults`, `--min-users N`. |
 | `scripts/migrate_json_to_postgresql.py` | One-shot migration of the legacy JSON decks/usernames into PostgreSQL (already run). |
 | `scripts/wipe_legacy_game_records.py` | One-shot cutover: clears pre-engine_alpha game records and Elo, preserving decks and names (already run). |
 | `scripts/calibrate_board.py` | Draws colored zone markers onto the board image to verify renderer coordinates. |
