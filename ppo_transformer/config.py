@@ -74,7 +74,7 @@ class TrainConfig:
     # retained regardless. 0 disables pruning.
     checkpoint_retention: int = 5
     # Master seed for deck draws, opponent choice and minibatch shuffling.
-    seed: int = 20260716
+    seed: int = 19990929
     # Opponent mix per game.
     p_latest_vs_latest: float = 0.50
     p_vs_snapshot: float = 0.35

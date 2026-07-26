@@ -160,12 +160,35 @@ implicit remainder, so changing one means changing another.
 the value head is any good will stop improving.
 
 **Out of memory during rollout.** Lower `PPO_TRAIN_VECTORIZED_GAMES` (512
-concurrent games by default) before touching the net size.
+concurrent games by default) before touching the net size. This bites much
+later than it used to: the update peaks at ~9 GB under bf16 where fp32 needed
+~15.7 GB of a 24 GB card.
 
 ## Tuning notes
 
 Applied defaults worth knowing about, and knobs worth trying:
 
+- **Mixed precision (not configurable).** The PPO update and the rollout's
+  batched learner forward both run under bf16 autocast on CUDA; master weights
+  and the AdamW state stay fp32, and every head output is cast back before the
+  categorical, so log-probs, the ratio and both losses are computed in full
+  precision. Worth 502→289 ms per minibatch and 1193→1486 rollout decisions/s.
+  The cost is ratio noise: the fp32 epoch-1 ratio is essentially exact
+  (max `|r-1|` = 8e-6), while bf16 carries mean `|r-1|` = 0.0064, max 0.040 —
+  roughly 0.6% multiplicative noise on the policy-gradient term, negligible
+  beside the advantage estimator's own variance, with 0% of ratios landing
+  outside the 0.2 clip band. Note the rollout autocast is justified by its own
+  1.25x, *not* by making the two paths agree: matching precision cuts the ratio
+  noise only 1.17x, since the two batch different slot counts and token widths
+  and bf16 reduction order is shape-dependent. Gating and snapshot argmax stay
+  fp32 — bf16 flips the argmax on ~1% of decisions (near-ties).
+- **Snapshot opponents are batched.** Slots waiting on the same snapshot are
+  grouped and stepped with one forward per group per round rather than one
+  forward per decision — at 512 concurrent games that is a mean batch of 81, so
+  ~187 forwards where there were ~15,000. Behaviour is unchanged: batch-1 and
+  batched argmax agree on 512/512 real positions, and a full rollout produces
+  byte-identical samples either way. `RandomOpponent` still acts inline, since
+  it has no forward to batch.
 - **`PPO_TRAIN_GAE_LAMBDA` (0.98).** The reward is terminal-only, so lambda
   controls how much of the actual game outcome reaches early decisions: at 0.95
   a decision 50 steps from the end sees it at weight 0.08, at 0.98 it sees 0.36.
