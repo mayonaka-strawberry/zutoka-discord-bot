@@ -95,6 +95,16 @@ class TrainConfig:
     # Weight on the win/draw/loss value cross-entropy relative to the policy
     # cross-entropy.
     value_loss_weight: float = 1.0
+    # CHAOS bank-or-lose cards end the game immediately when the Abyss
+    # minimum is not met. The value head is a win/draw/loss classifier, so a
+    # scaled outcome cannot be expressed as a target; the emphasis goes into
+    # the per-sample value-loss weight instead. The self-defeating player's
+    # decisions are trained harder (learn to avoid the blunder) and the
+    # decisions of the player handed the win are trained softer (a free win
+    # is weak evidence that those positions were winning). Applies only to
+    # that termination (see model_common.termination.chaos_self_defeat_loser).
+    self_defeat_loss_sample_weight: float = 2.0
+    self_defeat_win_sample_weight: float = 0.25
     checkpoint_interval_steps: int = 2000
     # Checkpoints kept on disk, newest first. The best checkpoint and every
     # league snapshot are always retained regardless. 0 disables pruning.
@@ -177,6 +187,15 @@ class Config:
         if not 0.0 <= self.train.ema_decay < 1.0:
             raise ValueError(
                 f"ALPHA_TRAIN_EMA_DECAY must be within [0, 1), got {self.train.ema_decay}")
+        if self.train.self_defeat_loss_sample_weight < 1.0:
+            raise ValueError(
+                "ALPHA_TRAIN_SELF_DEFEAT_LOSS_SAMPLE_WEIGHT must be at least 1.0 "
+                "so a self-defeat is never trained more weakly than a normal "
+                f"loss, got {self.train.self_defeat_loss_sample_weight}")
+        if not 0.0 < self.train.self_defeat_win_sample_weight <= 1.0:
+            raise ValueError(
+                "ALPHA_TRAIN_SELF_DEFEAT_WIN_SAMPLE_WEIGHT must be within (0, 1], "
+                f"got {self.train.self_defeat_win_sample_weight}")
 
         if self.net.embed_dim % self.net.num_heads:
             raise ValueError(

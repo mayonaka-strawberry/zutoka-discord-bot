@@ -227,6 +227,24 @@ Applied defaults worth knowing about, and knobs worth trying:
   lowering the fraction is the cheap mitigation.
 - **`ALPHA_TRAIN_VALUE_LOSS_WEIGHT` (1.0).** Weight on the win/draw/loss value
   cross-entropy relative to the policy loss; 0.5-1.5 is the usual range.
+- **CHAOS self-defeat weights (`ALPHA_TRAIN_SELF_DEFEAT_LOSS_SAMPLE_WEIGHT` 2.0,
+  `ALPHA_TRAIN_SELF_DEFEAT_WIN_SAMPLE_WEIGHT` 0.25).** The five CHAOS bank-or-lose
+  cards end the game immediately when the Abyss minimum is not met, which is a
+  self-inflicted blunder rather than a normal loss. The value head is a
+  win/draw/loss classifier, so a scaled outcome cannot be expressed as a target;
+  the emphasis goes into the per-sample value-loss weight instead. The
+  self-defeating player's decisions are trained harder so the net learns to avoid
+  the line, and the decisions of the player handed the win are trained softer,
+  since a free win is weak evidence those positions were actually winning. The
+  policy loss is deliberately left unweighted — the visit distribution on the
+  earlier decisions is still the best policy evidence available. Applies only to
+  that termination: battle-HP losses, deck-outs and draws keep weight 1.0, as does
+  a CHAOS card whose requirement was met. Gated by
+  `model_common.termination.chaos_self_defeat_loser`, which also skips the case
+  where the self-defeater still wins on the `check_win` HP tiebreak. MCTS terminal
+  values are left unshaped: the backup is zero-sum through a single player-0
+  scalar, so an asymmetric pair is not representable there, and the trained value
+  net already steers search away from these lines at non-terminal leaves.
 - **`ALPHA_TRAIN_GRADIENT_CHECKPOINTING` (true).** Trades ~30% training speed
   for memory. Now that the net is smaller, try turning it off.
 - **`ALPHA_MCTS_USE_GUMBEL_ROOT` (false).** Breaks near-ties among root visit

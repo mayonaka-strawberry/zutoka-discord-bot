@@ -60,6 +60,15 @@ class TrainConfig:
     # Carlo (unbiased, higher variance).
     gae_lambda: float = 0.98
     discount: float = 1.0               # terminal-only reward
+    # CHAOS bank-or-lose cards end the game immediately when the Abyss
+    # minimum is not met. That is a self-inflicted blunder rather than a
+    # normal loss, so the terminal reward is shaped for both seats: the
+    # self-defeating player is punished harder than a normal loss, and the
+    # opponent is credited far less than an earned win so free wins are not
+    # something the policy learns to play for. Applies only to that specific
+    # termination (see model_common.termination.chaos_self_defeat_loser).
+    self_defeat_loss_reward: float = -2.0
+    self_defeat_win_reward: float = 0.25
     learning_rate: float = 3e-4
     learning_rate_final: float = 3e-5
     warmup_iterations: int = 10
@@ -123,6 +132,15 @@ class Config:
         if not 0.0 <= self.train.gae_lambda <= 1.0:
             raise ValueError(
                 f"PPO_TRAIN_GAE_LAMBDA must be within [0, 1], got {self.train.gae_lambda}")
+        if self.train.self_defeat_loss_reward > -1.0:
+            raise ValueError(
+                "PPO_TRAIN_SELF_DEFEAT_LOSS_REWARD must be at most -1.0 (a "
+                "normal loss) so a self-defeat is never the softer outcome, got "
+                f"{self.train.self_defeat_loss_reward}")
+        if not 0.0 <= self.train.self_defeat_win_reward <= 1.0:
+            raise ValueError(
+                "PPO_TRAIN_SELF_DEFEAT_WIN_REWARD must be within [0, 1], got "
+                f"{self.train.self_defeat_win_reward}")
         if not 0.0 <= self.train.snapshot_hardness_bias <= 1.0:
             raise ValueError(
                 "PPO_TRAIN_SNAPSHOT_HARDNESS_BIAS must be within [0, 1], got "

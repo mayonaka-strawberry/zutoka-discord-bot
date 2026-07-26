@@ -194,6 +194,20 @@ Applied defaults worth knowing about, and knobs worth trying:
   a decision 50 steps from the end sees it at weight 0.08, at 0.98 it sees 0.36.
   Try `1.0` (pure Monte Carlo, unbiased, higher variance) if early-game play
   looks weak.
+- **CHAOS self-defeat rewards (`PPO_TRAIN_SELF_DEFEAT_LOSS_REWARD` -2.0,
+  `PPO_TRAIN_SELF_DEFEAT_WIN_REWARD` 0.25).** The five CHAOS bank-or-lose cards
+  end the game immediately when the Abyss minimum is not met. That is a
+  self-inflicted blunder rather than a normal loss, so the terminal reward is
+  replaced for both seats: the self-defeating player is punished harder than a
+  normal loss, and the opponent is credited far less than an earned win so free
+  wins are not something the policy learns to play for. Applies only to that
+  termination — battle-HP losses, deck-outs and draws keep the engine's `+/-1`,
+  as does a CHAOS card whose requirement was met. Gated by
+  `model_common.termination.chaos_self_defeat_loser`, which also skips the case
+  where the self-defeater still wins on the `check_win` HP tiebreak. Advantage
+  normalization is one affine transform over the whole rollout, so the relative
+  magnitudes survive into the policy gradient; only the global scale is absorbed.
+  The opponent-pool win-rate bookkeeping and gating stay on the true winner.
 - **Learning-rate schedule (`PPO_TRAIN_WARMUP_ITERATIONS`,
   `LEARNING_RATE_FINAL`, `LEARNING_RATE_DECAY_ITERATIONS`).** Warmup then cosine
   decay, stepped once per iteration. Set the decay horizon to the iteration
