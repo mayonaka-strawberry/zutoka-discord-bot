@@ -223,7 +223,7 @@ def select_action(root: Node, temperature: float, rng: random.Random,
     With use_gumbel (small simulation budgets), ties and near-ties among
     visit counts are broken by prior-plus-Gumbel scores instead of index
     order, which improves the played move when visits are too sparse to
-    discriminate (Gumbel-top-k style root selection)."""
+    discriminate. Wired from MCTSConfig.use_gumbel_root."""
     counts = root.visit_counts.astype(np.float64)
     if temperature <= 0.01:
         if use_gumbel:

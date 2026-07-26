@@ -201,6 +201,76 @@ first, falling back to the newest checkpoint under `<stack>/runs/`.
 runtime, and caps inference threads so the Discord event loop is never
 starved.
 
+Each stack has its own README covering configuration, running, stopping
+safely, and resuming: [alpha_zero/README.md](alpha_zero/README.md) and
+[ppo_transformer/README.md](ppo_transformer/README.md). See
+[Training](#training) below for the short version.
+
+The deployed AlphaZero agent plays with search rather than a single policy
+forward, because training and promotion gating both select for strength with
+search. `ALPHA_LIVE_MODE=policy` trades that back for latency.
+
+Deck building is part of alpha_zero's training rather than a separate model:
+`Game(mode="draft")` makes the first 40 plies an alternating 20-pick draft
+from the full card pool, searched by the same MCTS with the same network, so
+the win/draw/loss value head credits deck choices with the same signal it
+credits plays. The league records how each drafted deck performed and
+`python -m alpha_zero.scripts.export_best_decks` publishes the best ones to
+`zutomayo/bot_decks.json`, the deck pool solo opponents draw from.
+
+Games that start from fixed decks — every ppo_transformer game, and
+alpha_zero's non-draft matchups — draw from the training deck pool exported by
+`scripts/export_training_decks.py` (`model_common/deck_pool.py`), mixing real
+player decks with generated random legal decks so unplayed cards still receive
+gradient. The mix is `probability_user_deck` (default 0.75) in each stack's
+config. Generated decks range over the whole card pool but take their
+distinct-card count from the export's own distribution, so they share the copy
+structure real decks have (players run two copies of most cards) instead of
+being uniformly random. Without an export the stacks fall back to generated
+decks using a measured default distribution, and say so at startup.
+
+## Training
+
+Both model stacks are configured the same way: dataclass defaults in
+`<stack>/config.py` are the tracked baseline, and a gitignored `<stack>/.env`
+layers per-machine overrides on top. Precedence is **CLI flag → process
+environment → `.env` → default**.
+
+```
+ALPHA_<SECTION>_<FIELD>   ALPHA_<NAME>     alpha_zero
+PPO_<SECTION>_<FIELD>     PPO_<NAME>       ppo_transformer
+```
+
+There is no checked-in `.env` template — each config module prints its own,
+generated from the dataclasses so it cannot drift:
+
+```powershell
+python -m alpha_zero.config              # list every key with its default
+python -m alpha_zero.config > alpha_zero\.env
+python -m ppo_transformer.config > ppo_transformer\.env
+```
+
+Smoke-test a stack, then start a real run:
+
+```powershell
+python -m alpha_zero.scripts.run_train --smoke
+python -m alpha_zero.scripts.run_train
+python -m ppo_transformer.train.run_train --smoke
+python -m ppo_transformer.train.run_train
+```
+
+**Stopping and resuming.** Ctrl+C, a `STOP` file in the runs directory, or
+SIGTERM all wind the run down at a safe boundary: the current step finishes, a
+checkpoint is written, and the resume command is printed. The `STOP` file is the
+one that works for a detached run. Resume with `--resume`, which restores the
+network, optimizer, scheduler, counters and RNG state; changing the network
+shape between runs is refused with a message naming the fields rather than
+failing inside `load_state_dict`. Full detail, including per-stack tuning notes,
+is in the two stack READMEs.
+
+Training entry points and their modules are gitignored — a fresh clone can run
+the bot but not train.
+
 ## Determinism contract
 
 The engine seed drives the coin flip and every shuffle through the
@@ -224,6 +294,7 @@ URL unless noted.
 | `scripts/postgresql_tools.py` | Locates the PostgreSQL client binaries across platforms (`PGBIN`, PATH, defaults); used by the dump/restore pair. |
 | `scripts/database_transfer.py` | Shared table specifications and serializers for the JSON export/import pair. |
 | `scripts/reset_elo.py` | Reset one Elo ladder for all players: `--format standard` or `--format tcg`. Lifetime and deck stats are untouched. |
+| `scripts/export_training_decks.py` | Export every saved deck (standard plus TCG main decks) to `data/training_decks.json` as engine definition indices, deduplicated with an owner count. This is the deck pool the model stacks train against; re-run it to refresh. `--dry-run`, `--include-defaults`, `--min-users N`. |
 | `scripts/migrate_json_to_postgresql.py` | One-shot migration of the legacy JSON decks/usernames into PostgreSQL (already run). |
 | `scripts/wipe_legacy_game_records.py` | One-shot cutover: clears pre-engine_alpha game records and Elo, preserving decks and names (already run). |
 | `scripts/calibrate_board.py` | Draws colored zone markers onto the board image to verify renderer coordinates. |

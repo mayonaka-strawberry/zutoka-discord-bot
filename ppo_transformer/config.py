@@ -1,15 +1,26 @@
 """All ppo_transformer hyperparameters as one dataclass tree.
 
-Overridable from `ppo_transformer/.env` (or process environment) via
-`load_config()`: `PPO_<SECTION>_<FIELD>=value`. Run-level settings use plain
-`PPO_<NAME>` through `env_setting()`.
+The defaults here are the tracked baseline; `ppo_transformer/.env` (or the
+process environment) layers per-machine overrides on top via `load_config()`:
+
+    PPO_<SECTION>_<FIELD>=value    e.g. PPO_TRAIN_MINIBATCH_SIZE=2048
+    PPO_<NAME>=value               run-level, read by the entry script
+
+To see every key with its current default:
+
+    python -m ppo_transformer.config
 """
 
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass, field, asdict, fields
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
+
+from model_common import env_config
+
+PREFIX = "PPO"
+ENV_FILE = Path(__file__).resolve().parent / ".env"
+SECTIONS = ("net", "train")
 
 
 @dataclass
@@ -43,20 +54,49 @@ class TrainConfig:
     entropy_bonus_initial: float = 0.01
     entropy_bonus_final: float = 0.001
     entropy_anneal_iterations: int = 400
-    gae_lambda: float = 0.95
+    # The reward is terminal-only, so lambda controls how much of the actual
+    # game outcome reaches early decisions: at 0.95 a decision 50 steps from
+    # the end sees it at weight 0.08, at 0.98 it sees 0.36. 1.0 is pure Monte
+    # Carlo (unbiased, higher variance).
+    gae_lambda: float = 0.98
     discount: float = 1.0               # terminal-only reward
     learning_rate: float = 3e-4
+    learning_rate_final: float = 3e-5
+    warmup_iterations: int = 10
+    learning_rate_decay_iterations: int = 1000  # cosine horizon; match planned iterations
     weight_decay: float = 1e-4
     gradient_clip: float = 1.0
+    # Normalize advantages once over the whole rollout rather than per
+    # minibatch, so the advantage scale is consistent across an epoch.
+    normalize_advantage_per_batch: bool = True
     checkpoint_interval_iterations: int = 5
+    # Checkpoints kept on disk, newest first. Promoted snapshots are always
+    # retained regardless. 0 disables pruning.
+    checkpoint_retention: int = 5
+    # Master seed for deck draws, opponent choice and minibatch shuffling.
+    seed: int = 20260716
     # Opponent mix per game.
     p_latest_vs_latest: float = 0.50
     p_vs_snapshot: float = 0.35
+    # Implicit remainder in RolloutCollector; validated to stay consistent.
     p_vs_random: float = 0.15
     # Snapshot promotion gate.
     gating_games: int = 200
     gating_win_rate: float = 0.55
     snapshot_capacity: int = 30
+    # Snapshot sampling: how fast the learner's per-snapshot win rate tracks
+    # results, the floor weight so no snapshot is starved, and the shift from
+    # variance weighting (0) toward preferring snapshots the learner loses to (1).
+    snapshot_win_rate_smoothing: float = 0.02
+    snapshot_minimum_weight: float = 0.05
+    snapshot_hardness_bias: float = 0.0
+    # Deck source per game. The pool is the exported set of real player decks
+    # (scripts/export_training_decks.py); the remainder are generated random
+    # legal decks so unplayed cards still receive gradient. An empty path means
+    # model_common.deck_pool.DEFAULT_DECK_POOL_PATH; a missing file falls back
+    # to random decks for every game.
+    deck_pool_path: str = ''
+    probability_user_deck: float = 0.75
 
 
 @dataclass
@@ -67,53 +107,82 @@ class Config:
     def to_dict(self) -> dict:
         return asdict(self)
 
+    def validate(self) -> "Config":
+        """Fails loudly on inconsistent settings — see the alpha_zero
+        equivalent for why this runs at config load."""
+        env_config.check_probabilities_sum(
+            {"p_latest_vs_latest": self.train.p_latest_vs_latest,
+             "p_vs_snapshot": self.train.p_vs_snapshot,
+             "p_vs_random": self.train.p_vs_random},
+            "PPO_TRAIN opponent sampling")
+
+        if not 0.0 <= self.train.probability_user_deck <= 1.0:
+            raise ValueError(
+                "PPO_TRAIN_PROBABILITY_USER_DECK must be within [0, 1], got "
+                f"{self.train.probability_user_deck}")
+        if not 0.0 <= self.train.gae_lambda <= 1.0:
+            raise ValueError(
+                f"PPO_TRAIN_GAE_LAMBDA must be within [0, 1], got {self.train.gae_lambda}")
+        if not 0.0 <= self.train.snapshot_hardness_bias <= 1.0:
+            raise ValueError(
+                "PPO_TRAIN_SNAPSHOT_HARDNESS_BIAS must be within [0, 1], got "
+                f"{self.train.snapshot_hardness_bias}")
+        if self.train.minibatch_size > self.train.rollout_decisions:
+            raise ValueError(
+                f"PPO_TRAIN_MINIBATCH_SIZE ({self.train.minibatch_size}) exceeds "
+                f"PPO_TRAIN_ROLLOUT_DECISIONS ({self.train.rollout_decisions})")
+
+        if self.net.embed_dim % self.net.num_heads:
+            raise ValueError(
+                f"PPO_NET_EMBED_DIM ({self.net.embed_dim}) must be divisible by "
+                f"PPO_NET_NUM_HEADS ({self.net.num_heads})")
+        if self.train.warmup_iterations >= self.train.learning_rate_decay_iterations:
+            raise ValueError(
+                f"PPO_TRAIN_WARMUP_ITERATIONS ({self.train.warmup_iterations}) must be "
+                f"below PPO_TRAIN_LEARNING_RATE_DECAY_ITERATIONS "
+                f"({self.train.learning_rate_decay_iterations})")
+
+        try:
+            from engine_alpha.cards import NUM_CARDS, NUM_EFFECTS
+        except Exception:
+            return self
+        if self.net.identity_capacity < NUM_CARDS:
+            raise ValueError(
+                f"PPO_NET_IDENTITY_CAPACITY ({self.net.identity_capacity}) is below "
+                f"the card count ({NUM_CARDS}); see model_common/migrate_checkpoint.py")
+        if self.net.effect_capacity < NUM_EFFECTS:
+            raise ValueError(
+                f"PPO_NET_EFFECT_CAPACITY ({self.net.effect_capacity}) is below "
+                f"the effect count ({NUM_EFFECTS}); see model_common/migrate_checkpoint.py")
+        return self
+
 
 DEFAULT_CONFIG = Config()
 
-_ENV_FILE = Path(__file__).resolve().parent / ".env"
-_SECTIONS = ("net", "train")
-
-
-def _load_env_file() -> None:
-    if not _ENV_FILE.exists():
-        return
-    try:
-        from dotenv import load_dotenv
-        load_dotenv(_ENV_FILE, override=False)
-        return
-    except ImportError:
-        pass
-    for line in _ENV_FILE.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key, value = key.strip(), value.split("#", 1)[0].strip()
-        if key and key not in os.environ:
-            os.environ[key] = value
-
-
-def _coerce(raw: str, target_type: type):
-    if target_type is bool:
-        return raw.strip().lower() in ("1", "true", "yes", "on")
-    return target_type(raw)
+RUN_SETTINGS: tuple[tuple[str, object, str], ...] = (
+    ("runs_dir", "ppo_transformer/runs", "where checkpoints and snapshots live"),
+    ("iterations", 1000, ""),
+    ("device", None, "blank = cuda when available, else mps, else cpu"),
+)
 
 
 def load_config() -> Config:
-    _load_env_file()
-    cfg = Config()
-    for section_name in _SECTIONS:
-        section = getattr(cfg, section_name)
-        for f in fields(section):
-            raw = os.environ.get(f"PPO_{section_name.upper()}_{f.name.upper()}")
-            if raw is not None and raw != "":
-                setattr(section, f.name, _coerce(raw, type(getattr(section, f.name))))
-    return cfg
+    """Config with ppo_transformer/.env + environment overrides applied."""
+    config = env_config.apply_env_overrides(Config(), PREFIX, SECTIONS, ENV_FILE)
+    return config.validate()
 
 
 def env_setting(name: str, default, target_type: type | None = None):
-    _load_env_file()
-    raw = os.environ.get(f"PPO_{name.upper()}")
-    if raw is None or raw == "":
-        return default
-    return _coerce(raw, target_type or (type(default) if default is not None else str))
+    """Run-level setting: PPO_<NAME> from .env/environment, else default."""
+    return env_config.env_setting(name, default, PREFIX, ENV_FILE, target_type)
+
+
+def format_template() -> str:
+    """The full override surface as a `.env` body (every line commented)."""
+    return env_config.format_env_template(
+        Config(), PREFIX, SECTIONS, "ppo_transformer training parameters",
+        "ppo_transformer.config", run_settings=RUN_SETTINGS)
+
+
+if __name__ == "__main__":
+    print(format_template())

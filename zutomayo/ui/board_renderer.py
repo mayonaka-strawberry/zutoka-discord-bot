@@ -23,29 +23,91 @@ SCALE = BOARD_RENDER // BOARD_NATIVE  # 3
 
 # ---------------------------------------------------------------------------
 # Zone coordinates at NATIVE 1500x1500 scale.
-# Each is (left, top, right, bottom).
+# Each rectangle is (left, top, right, bottom).
 # DAY player occupies the bottom half of the board.
 # ---------------------------------------------------------------------------
 
 
-DAY_ZONES = {
-    'battle':         (654, 760, 844, 1036),    # 190x276
-    'set_a':          (452, 1189, 642, 1465),   # 190x276
-    'set_b':          (669, 1189, 859, 1465),   # 190x276
-    'set_c':          (886, 1189, 1076, 1465),  # 190x276
-    'power_charger':  (104, 1182, 294, 1458),   # 190x276
-    'deck':           (1145, 1189, 1335, 1465), # 190x276
-    'abyss':          (34, 856, 224, 1132),     # 190x276
-}
+# Card art is not a single resolution: 700x978, 700x977 and 700x975 all occur, spanning
+# aspects 0.7157 to 0.7180. 196x274 is therefore the bounding box each card is scaled to fit
+# and centred within (see _fit_card_into_rect), not a shape cards are stretched to. It is wide
+# enough that even the squarest card fills the full 196 px width, and both halves are integers
+# so centring needs no rounding.
+CARD_WIDTH = 196
+CARD_HEIGHT = 274
+
+
+# The board art is 180-degree rotationally symmetric, but its rotational centre is
+# (751.1, 748.8), not the geometric centre (750, 750). Derived by measuring each printed
+# slot centre on both halves at subpixel precision: 2 * centre = day + night. Over the six
+# slots below that gives 2*cx = 1502.21 (sd 0.16) and 2*cy = 1497.64 (sd 0.35); the y value
+# is corroborated by the HP track circle pairs (median 1497.32). Mirroring about (750, 750)
+# instead puts every NIGHT zone ~2 px off its printed slot.
+MIRROR_X_SUM = 1502  # round(2 * 751.10)
+MIRROR_Y_SUM = 1498  # round(2 * 748.82)
 
 
 def _mirror_rect(rect: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
-    """Mirror a rectangle 180 degrees around the center of the board."""
-    l, t, r, b = rect
-    return (BOARD_NATIVE - r, BOARD_NATIVE - b, BOARD_NATIVE - l, BOARD_NATIVE - t)
+    """Mirror a rectangle 180 degrees about the board art's rotational centre."""
+    left, top, right, bottom = rect
+    return (
+        MIRROR_X_SUM - right,
+        MIRROR_Y_SUM - bottom,
+        MIRROR_X_SUM - left,
+        MIRROR_Y_SUM - top,
+    )
 
 
-NIGHT_ZONES = {k: _mirror_rect(v) for k, v in DAY_ZONES.items()}
+# Printed card slot centres measured from zutomayo/images/board.png at native 1500x1500
+# scale, by locating each slot border at subpixel precision and halving. Every card
+# rectangle is centred on one of these, which lands it within 1.2 px of the measured slot
+# centre on both halves of the board.
+#
+# 'battle' is the character card in play and has no printed outline: it sits inside the
+# centre circle, horizontally centred on the board's rotational centre x, and offset below
+# the midline so the two character cards stay on their own side. Its centre y of 896 puts
+# its top edge 10 px below the midline, leaving a symmetric 20 px gap to the NIGHT card.
+DAY_SLOT_CENTERS = {
+    'battle':         (751, 896),
+    'set_a':          (548, 1325),
+    'set_b':          (765, 1325),
+    'set_c':          (982, 1325),
+    'power_charger':  (207, 1317),
+    'deck':           (1242, 1325),
+    'abyss':          (131, 991),
+}
+
+
+def _card_rect_at(center_x: int, center_y: int) -> tuple[int, int, int, int]:
+    """Return a CARD_WIDTH x CARD_HEIGHT rectangle centred on a slot centre."""
+    half_width = CARD_WIDTH // 2
+    half_height = CARD_HEIGHT // 2
+    return (
+        center_x - half_width,
+        center_y - half_height,
+        center_x + half_width,
+        center_y + half_height,
+    )
+
+
+DAY_ZONES = {name: _card_rect_at(*center) for name, center in DAY_SLOT_CENTERS.items()}
+NIGHT_ZONES = {name: _mirror_rect(rect) for name, rect in DAY_ZONES.items()}
+
+
+# Printed slot outlines measured from the board art, rounded to whole native pixels. These
+# are the reference the card rectangles above are centred in; only the calibration script
+# (scripts/calibrate_board.py) reads them. 'battle' is absent because it has no outline.
+DAY_PRINTED_SLOTS = {
+    'set_a':          (450, 1185, 646, 1466),
+    'set_b':          (667, 1185, 863, 1466),
+    'set_c':          (884, 1185, 1080, 1466),
+    'power_charger':  (26, 1158, 387, 1476),
+    'deck':           (1145, 1184, 1339, 1465),
+    'abyss':          (34, 851, 228, 1131),
+}
+NIGHT_PRINTED_SLOTS = {
+    name: _mirror_rect(slot) for name, slot in DAY_PRINTED_SLOTS.items()
+}
 
 
 # ---------------------------------------------------------------------------
@@ -85,39 +147,59 @@ def _load_card_image(path: str) -> Image.Image:
 # ---------------------------------------------------------------------------
 
 
+def _fit_card_into_rect(
+    card_img: Image.Image,
+    rect: tuple[int, int, int, int],
+) -> tuple[Image.Image, tuple[int, int]]:
+    """Scale a card to fit inside rect without distorting it, then centre it there.
+
+    Card art is not all one resolution (700x975, 700x977 and 700x978 all occur), so the card
+    is contained within the slot rather than stretched to fill it, and the leftover space is
+    split evenly. rect is at native 1500 scale.
+    """
+    left, top, right, bottom = [value * SCALE for value in rect]
+    box_width, box_height = right - left, bottom - top
+
+    scale = min(box_width / card_img.width, box_height / card_img.height)
+    width = max(1, round(card_img.width * scale))
+    height = max(1, round(card_img.height * scale))
+
+    resized = card_img.resize((width, height), Image.LANCZOS)
+    offset = (
+        left + (box_width - width) // 2,
+        top + (box_height - height) // 2,
+    )
+    return resized, offset
+
+
 def _paste_card(
     board: Image.Image,
     card_instance: Optional[CardInstance],
     rect: tuple[int, int, int, int],
 ) -> None:
-    """Paste a card image onto the board. rect is at native 1500 scale."""
+    """Paste a card image onto the board, centred in rect (native 1500 scale)."""
     if card_instance is None:
         return
 
-    l, t, r, b = [v * SCALE for v in rect]
-    w, h = r - l, b - t
-
     if card_instance.face_up and card_instance.card.image:
         try:
-            card_img = _load_card_image(card_instance.card.image).copy()
+            card_img = _load_card_image(card_instance.card.image)
         except Exception:
-            card_img = _get_card_back().copy()
+            card_img = _get_card_back()
     else:
-        card_img = _get_card_back().copy()
+        card_img = _get_card_back()
 
-    card_img = card_img.resize((w, h), Image.LANCZOS)
-    board.paste(card_img, (l, t), card_img)
+    fitted, offset = _fit_card_into_rect(card_img, rect)
+    board.paste(fitted, offset, fitted)
 
 
 def _paste_card_back(
     board: Image.Image,
     rect: tuple[int, int, int, int],
 ) -> None:
-    """Paste a card back image at rect (native scale)."""
-    l, t, r, b = [v * SCALE for v in rect]
-    w, h = r - l, b - t
-    card_img = _get_card_back().copy().resize((w, h), Image.LANCZOS)
-    board.paste(card_img, (l, t), card_img)
+    """Paste a card back image centred in rect (native scale)."""
+    fitted, offset = _fit_card_into_rect(_get_card_back(), rect)
+    board.paste(fitted, offset, fitted)
 
 
 def _render_player_zones(
@@ -149,11 +231,11 @@ def _render_player_zones(
 # ---------------------------------------------------------------------------
 
 
-def render_board_image(
+def compose_board_image(
     game_state: GameState,
     perspective: Chronos,
-) -> discord.File:
-    """Render the full game board as a 4500x4500 JPEG."""
+) -> Image.Image:
+    """Compose the full game board as a 4500x4500 RGB image."""
     board = _get_board_base()
 
     day_player: Optional[Player] = None
@@ -182,7 +264,15 @@ def render_board_image(
     rgb_board = Image.new('RGB', board.size, (0, 0, 0))
     rgb_board.paste(board, mask=board.split()[3])
 
-    return save_image_for_discord(rgb_board, 'board.jpg')
+    return rgb_board
+
+
+def render_board_image(
+    game_state: GameState,
+    perspective: Chronos,
+) -> discord.File:
+    """Render the full game board as a 4500x4500 JPEG."""
+    return save_image_for_discord(compose_board_image(game_state, perspective), 'board.jpg')
 
 
 # ---------------------------------------------------------------------------

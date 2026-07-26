@@ -213,6 +213,9 @@ zutomayo/.DS_Store
 
 zutomayo/bot_decks.json
 
+# Training deck pool exported from the database (scripts/export_training_decks.py)
+data/training_decks.json
+
 zutomayo/progress/*
 !zutomayo/progress/.gitkeep
 
