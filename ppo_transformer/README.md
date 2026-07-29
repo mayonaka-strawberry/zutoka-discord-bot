@@ -48,6 +48,28 @@ the opponent mix sums to 1, that `embed_dim` divides by `num_heads`, that the
 identity/effect capacities cover the card catalog, that the minibatch fits
 inside the rollout, and that warmup fits inside the decay horizon.
 
+### The horizon block
+
+Four settings are one unit and live together at the top of `.env` rather than in
+their own sections, because a partial edit fails quietly:
+
+- `PPO_ITERATIONS`
+- `PPO_TRAIN_LEARNING_RATE_DECAY_ITERATIONS` — **must equal** `PPO_ITERATIONS`,
+  or the cosine never reaches `LEARNING_RATE_FINAL`
+- `PPO_TRAIN_ENTROPY_ANNEAL_ITERATIONS`
+- `PPO_TRAIN_CHECKPOINT_INTERVAL_ITERATIONS`
+
+`.env` ships a short pilot block active and a long-run block commented out;
+exactly one should be uncommented. The anneal fraction is deliberately *not*
+constant between them — exploration need is roughly absolute rather than
+proportional, so a short run wants a larger fraction (60%) than a long one
+(40%), or it spends most of its life at the entropy floor with a value head that
+has barely trained.
+
+**Switching horizons requires a fresh runs directory.** `--resume` restores the
+iteration counter, so pointing a long-run block at a finished short run replays
+both schedules from that iteration and jumps the learning rate back up ~10x.
+
 ## Running
 
 Smoke run first — two tiny iterations, confirms the loop is wired:
@@ -63,16 +85,33 @@ python -m ppo_transformer.train.run_train
 python -m ppo_transformer.train.run_train --resume    # continue an existing run
 ```
 
-Each iteration prints one line:
+Each iteration prints two lines, plus a third on gating iterations:
 
 ```
-iteration 42: games=13820 samples=65536 loss=1.4402 lr=2.6e-04 (68s)
+iteration 42: games=13820 samples=65536 loss=0.2109 lr=2.6e-04 (119s)
+  policy=-0.0041 value=0.4361 entropy=1.823 clip_frac=0.112 kl=0.0071 ev=+0.564
+iteration 45: gate 0.583 vs best -> promoted (pool: 9, vram 4.1G)
 ```
 
 `games` is cumulative; `samples` is the decisions collected this iteration
 (`PPO_TRAIN_ROLLOUT_DECISIONS`); `lr` follows the warmup-then-cosine schedule.
-Every `PPO_TRAIN_CHECKPOINT_INTERVAL_ITERATIONS` (default 5) the trainer also
-runs a promotion gate against the newest snapshot and saves.
+Every `PPO_TRAIN_CHECKPOINT_INTERVAL_ITERATIONS` the trainer also runs a
+promotion gate against the newest snapshot and saves.
+
+The second line is the split, averaged over every minibatch of every epoch:
+
+| Field | What it means |
+|---|---|
+| `policy` | Clipped surrogate. Hovers near zero by construction — the ratio starts at exactly 1 on fresh data, so this does **not** trend as the policy improves. |
+| `value` | Clipped value MSE. Against terminal `+/-1` rewards, a value head predicting 0 scores ~1.0; lower is better but it never reaches 0, since the outcome is genuinely uncertain from an early position. |
+| `entropy` | Nats over the legal actions. Falling steadily toward 0 is the failure mode to watch — see Troubleshooting. |
+| `clip_frac` | Fraction of samples the 0.2 clip bit on. Healthy is ~0.05-0.20. Near 0 means updates are too timid for the clip range; above ~0.3 means the policy moves further per iteration than the trust region intends. |
+| `kl` | Schulman's low-variance KL estimator between the old and new policy. |
+| `ev` | **Explained variance** of the value head, `1 - Var(target - value) / Var(target)`, on-policy and pre-update. This is the value-head progress metric: scale-free, comparable across runs, and rising from ~0 toward 1. |
+
+Every field, plus the gate result and VRAM, is also appended to
+`runs/metrics.jsonl` — one JSON object per line, readable with
+`model_common.metrics_log.read_metrics`.
 
 ## Stopping safely
 
@@ -124,6 +163,7 @@ runs/
   checkpoints/iteration_XXXXX.pt   full training state
   snapshots/iteration_XXXXX.pt     promoted opponents (never pruned)
   latest_weights.pt                bare state dict for deployment
+  metrics.jsonl                    one JSON record per iteration, append-only
   STOP                             create this to stop the run
 ```
 
@@ -154,6 +194,21 @@ per decision, with no search to configure.
 `P_VS_SNAPSHOT` and `P_VS_RANDOM` are one distribution; `p_vs_random` is the
 implicit remainder, so changing one means changing another.
 
+**`loss` is not going down.** It is not supposed to, and it is the wrong number
+to read. `loss/total` is `policy_loss + value_loss_weight * value_loss -
+entropy_bonus * entropy`; the policy term is a surrogate re-zeroed against fresh
+on-policy data every rollout and does not trend, and the entropy term is ~0.01
+of a ~2-nat quantity. So the printed figure is dominated by `0.5 * value_loss`,
+measured against a target that gets *harder* as the opponent pool strengthens.
+Expect it to plateau, and to rise after a run of promotions.
+
+Read `ev` and the gate line instead. `ev` rising toward 1 means the value head
+is learning; a gate win rate at or above `PPO_TRAIN_GATING_WIN_RATE` means the
+policy is beating its own past self, which is the only direct evidence that
+training is working. A `loss` that drops unusually low (well under 0.05) is more
+likely entropy collapse or a value head fitting noise than a good sign — check
+`entropy` on the same line.
+
 **Entropy collapsing to near zero early.** Raise
 `PPO_TRAIN_ENTROPY_BONUS_INITIAL` or lengthen
 `PPO_TRAIN_ENTROPY_ANNEAL_ITERATIONS`; a policy that goes deterministic before
@@ -163,6 +218,15 @@ the value head is any good will stop improving.
 concurrent games by default) before touching the net size. This bites much
 later than it used to: the update peaks at ~9 GB under bf16 where fp32 needed
 ~15.7 GB of a 24 GB card.
+
+**Out of memory late in a long run.** Should no longer happen. Snapshot
+opponents are cached on the GPU by path, and the cache is pruned to current pool
+membership after every promotion, so residency is capped at
+`PPO_TRAIN_SNAPSHOT_CAPACITY` networks (~3.9 GB at 30 x 32.3M fp32 params).
+Before that pruning existed, every promotion pinned another 129 MB for the rest
+of the run, which put a several-thousand-iteration run over a 24 GB card
+regardless of batch size. `system/vram_allocated_gb` in `metrics.jsonl` should
+plateau across promotions rather than stepping up each gate.
 
 ## Tuning notes
 
@@ -189,6 +253,11 @@ Applied defaults worth knowing about, and knobs worth trying:
   batched argmax agree on 512/512 real positions, and a full rollout produces
   byte-identical samples either way. `RandomOpponent` still acts inline, since
   it has no forward to batch.
+- **Iteration cost.** ~119.5 s at the settings above, measured 2026-07-29 over
+  iterations 16-31 of a live run (averaged after the first snapshot promotion —
+  earlier iterations are cheaper because there is no opponent net to run). So
+  400 iterations is ~13.3 h and 4800 is ~6.6 d. Gating iterations cost ~45 s
+  extra for the 200-game series.
 - **`PPO_TRAIN_GAE_LAMBDA` (0.98).** The reward is terminal-only, so lambda
   controls how much of the actual game outcome reaches early decisions: at 0.95
   a decision 50 steps from the end sees it at weight 0.08, at 0.98 it sees 0.36.
