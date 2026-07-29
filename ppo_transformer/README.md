@@ -50,7 +50,7 @@ inside the rollout, and that warmup fits inside the decay horizon.
 
 ### The horizon block
 
-Four settings are one unit and live together at the top of `.env` rather than in
+Six settings are one unit and live together at the top of `.env` rather than in
 their own sections, because a partial edit fails quietly:
 
 - `PPO_ITERATIONS`
@@ -58,6 +58,17 @@ their own sections, because a partial edit fails quietly:
   or the cosine never reaches `LEARNING_RATE_FINAL`
 - `PPO_TRAIN_ENTROPY_ANNEAL_ITERATIONS`
 - `PPO_TRAIN_CHECKPOINT_INTERVAL_ITERATIONS`
+- `PPO_TRAIN_GATING_WIN_RATE` — a fixed threshold gets *less* selective as the
+  gate count grows, since each gate is an independent chance to promote on noise
+- `PPO_TRAIN_SNAPSHOT_CAPACITY` — the pool evicts FIFO, so capacity is really a
+  window over the most recent promotions, and how much of a run that window
+  spans depends entirely on the horizon
+
+A key in this block must not also be set live further down the file. `.env` is
+read by python-dotenv when it is importable, and for a key repeated inside one
+file dotenv keeps the **last** occurrence — so the block's value would be
+silently overridden by the section below. This is what the `-> Horizon block`
+pointer comments in the sections are protecting.
 
 `.env` ships a short pilot block active and a long-run block commented out;
 exactly one should be uncommented. The anneal fraction is deliberately *not*
@@ -100,7 +111,14 @@ iteration 42: games=13820 samples=65536 total_loss=0.2109
 schedule; `epochs` is how many of `PPO_TRAIN_PPO_EPOCHS` actually ran before the
 `PPO_TRAIN_TARGET_KL` early stop fired. Every
 `PPO_TRAIN_CHECKPOINT_INTERVAL_ITERATIONS` the trainer also runs a promotion
-gate against the newest snapshot and saves.
+gate and saves. The gate plays the **newest** snapshot in the pool, not the
+strongest — the console still labels it `vs best`, which the pool no longer
+tracks.
+
+`learning_rate` is the rate that iteration actually trained at. In runs logged
+before 2026-07-29 it was read after the scheduler stepped, so those older
+`metrics.jsonl` files are one iteration ahead: their iteration 1 reports the
+rate iteration 2 would use.
 
 Lines 3 and 4 are the split, averaged over every minibatch actually run:
 
@@ -170,12 +188,28 @@ the RNG stream. Restoring RNG state matters: without it a resumed run would
 replay the same deck draws and opponent choices it would have produced from
 scratch.
 
+**What the snapshot pool keeps, and what it loses.** Only the snapshot
+identifiers are checkpointed, so membership and order survive — the gate still
+compares against the correct newest entry. Two things do not survive. Per-entry
+win rates are not saved, so every entry is rebuilt at `0.5`, which is the *peak*
+of the sampling weight curve: the pool goes uniform at maximum weight and the
+prioritization re-converges over roughly one to two iterations. And a snapshot
+whose file has gone missing is skipped **silently**, shrinking the pool without a
+message — nothing prunes `runs/snapshots/`, so this needs an external cause, but
+a disk cleanup is one.
+
 **If you changed the config since the checkpoint:** any `PPO_NET_*` difference
 is refused with a message naming the fields, rather than failing later inside
 `load_state_dict` with a tensor-shape error. Other settings are legitimate
 mid-run changes and only print a note — though be aware that changing
 `PPO_TRAIN_ENTROPY_ANNEAL_ITERATIONS` or the LR horizon retroactively rescales
 those schedules, since both are driven by the restored iteration number.
+Raising `PPO_TRAIN_SNAPSHOT_CAPACITY` on a resume does not backfill either,
+though not because of trimming — with a larger capacity the pool never trims.
+The checkpoint records only the identifiers that survived eviction, so the older
+snapshots are simply not in the payload to replay, even though their files are
+still under `runs/snapshots/`. The extra slots therefore fill only as new
+promotions arrive. Lowering capacity applies immediately and keeps the newest N.
 
 ## Runs directory
 
@@ -200,7 +234,7 @@ Promote a checkpoint by copying it:
 
 ```powershell
 New-Item -ItemType Directory -Force ppo_transformer\deploy
-Copy-Item ppo_transformer\runs\checkpoints\iteration_00420.pt ppo_transformer\deploy\model.pt
+Copy-Item ppo_transformer\runs\checkpoints\iteration_00320.pt ppo_transformer\deploy\model.pt
 ```
 
 `PpoAgent` plays argmax over the masked legal actions — a single forward pass
@@ -235,6 +269,15 @@ empty pool there is no opponent, so the win rate is reported as `1.000` and the
 snapshot is promoted unconditionally. After a rejection the pool does not
 advance, so the next gate plays the same older snapshot and covers two intervals
 of progress rather than one — expect win rates to look higher after a rejection.
+
+Note what the pool is *not*. It evicts FIFO at `PPO_TRAIN_SNAPSHOT_CAPACITY`, so
+it is a window over the most recent promotions rather than a full league, and the
+gate plays only the newest entry. Both mean a policy can drift around a strategy
+loop — beating its recent self, and so passing gates, while losing to its own
+policy from far earlier in the run. If strength plateaus while gates keep passing,
+suspect that before suspecting the learning rate. The window covers most of a
+320-iteration run and only a small fraction of a 4800-iteration one, which is why
+capacity sits in the horizon block.
 
 **`clip_fraction` above ~0.3 and `approximate_kl_divergence` above ~0.05,
 persistently.** The updates are leaving the trust region: the later epochs are
