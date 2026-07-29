@@ -811,3 +811,76 @@ class BinaryChoiceView(discord.ui.View):
             self.stop()
 
         return callback
+
+
+class ConfirmableChoiceView(discord.ui.View):
+    """One button per option followed by a Confirm / Go Back step, submitting
+    the chosen option's action int (payload type 'action'). Same confirm flow
+    as ActionSelectView, driven by buttons instead of a dropdown, for choices
+    where a misclick should be recoverable (the TCG day/night side choice).
+
+    Options are anything with `label` and `action` attributes, which is what
+    MatchDecisionRequest.options already holds.
+    """
+
+    def __init__(
+        self,
+        session,
+        player_index: int,
+        options: list,
+        prompt_text: str = '',
+        opponent_name: str = 'opponent',
+        submit_callback: SubmitCallback | None = None,
+    ):
+        super().__init__(timeout=750)
+        self.session = session
+        self.player_index = player_index
+        self.options = options
+        self.prompt_text = prompt_text
+        self.opponent_name = opponent_name
+        self.submit_callback = submit_callback
+        self.selected_option = None
+        self._build_choice_buttons()
+
+    def _build_choice_buttons(self) -> None:
+        self.clear_items()
+        for position, option in enumerate(self.options):
+            style = discord.ButtonStyle.primary if position == 0 else discord.ButtonStyle.secondary
+            button = discord.ui.Button(label=option.label, style=style)
+            button.callback = self._make_choice_callback(option)
+            self.add_item(button)
+
+    def _make_choice_callback(self, option):
+        async def callback(interaction: discord.Interaction):
+            self.selected_option = option
+            self.clear_items()
+            confirm_button = discord.ui.Button(label='Confirm', style=discord.ButtonStyle.green)
+            confirm_button.callback = self._confirm_callback
+            self.add_item(confirm_button)
+            go_back_button = discord.ui.Button(label='Go Back', style=discord.ButtonStyle.grey)
+            go_back_button.callback = self._go_back_callback
+            self.add_item(go_back_button)
+            await interaction.response.edit_message(
+                content=f'You selected: **{option.label}**. Confirm or go back?',
+                view=self,
+            )
+
+        return callback
+
+    async def _confirm_callback(self, interaction: discord.Interaction):
+        option = self.selected_option
+        if self.submit_callback is not None:
+            self.submit_callback('action', option.action)
+        await interaction.response.edit_message(
+            content=f'You selected: **{option.label}**. Waiting for {self.opponent_name}...',
+            view=None,
+        )
+        self.stop()
+
+    async def _go_back_callback(self, interaction: discord.Interaction):
+        self.selected_option = None
+        self._build_choice_buttons()
+        await interaction.response.edit_message(
+            content=self.prompt_text,
+            view=self,
+        )

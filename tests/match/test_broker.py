@@ -17,7 +17,13 @@ from zutomayo.match.broker import (
 from zutomayo.match.decisions import (
     KIND_CARD_CHOICE,
     KIND_NUMBER_CHOICE,
+    KIND_SIDE_CHOICE,
     PAYLOAD_ACTION,
+    SIDE_ACTION_DAY,
+    SIDE_ACTION_NIGHT,
+    SIDE_LABEL_DAY,
+    SIDE_LABEL_NIGHT,
+    MatchDecisionOption,
     MatchDecisionRequest,
     request_fingerprint,
 )
@@ -100,6 +106,60 @@ def test_timeout_fallback_pass_and_lowest_action():
 
     skip_swap = binary(P_SKIP_SWAP)
     assert fallback_response_payload(make_request(skip_swap)) == (PAYLOAD_ACTION, 0)
+
+
+def make_side_choice_request(player_index: int = 0, timeout_seconds: float = 0.02):
+    return MatchDecisionRequest(
+        kind=KIND_SIDE_CHOICE,
+        player_index=player_index,
+        prompt_text='pick a side',
+        options=[
+            MatchDecisionOption(SIDE_LABEL_DAY, 'opponent sets first', SIDE_ACTION_DAY),
+            MatchDecisionOption(SIDE_LABEL_NIGHT, 'you set first', SIDE_ACTION_NIGHT),
+        ],
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def test_side_choice_timeout_falls_back_to_day():
+    request = make_side_choice_request()
+    assert fallback_response_payload(request) == (PAYLOAD_ACTION, SIDE_ACTION_DAY)
+
+    store = MemoryRecordStore()
+    broker = build_broker(SilentAdapter(), store)
+
+    async def run():
+        response = await broker.request(make_side_choice_request(player_index=1))
+        assert response.timed_out is True
+        assert response.payload_type == PAYLOAD_ACTION
+        assert response.payload == SIDE_ACTION_DAY
+
+    asyncio.run(run())
+    assert len(store.decisions) == 1
+    record = store.decisions[0]
+    assert record['timed_out'] is True
+    assert record['fingerprint'] == {
+        'kind': KIND_SIDE_CHOICE,
+        'purpose': -1,
+        'player_index': 1,
+        'action_count': 2,
+    }
+
+
+def test_side_choice_answer_is_logged_with_its_label():
+    store = MemoryRecordStore()
+    adapter = ImmediateAdapter(action=SIDE_ACTION_NIGHT)
+    broker = build_broker(adapter, store)
+
+    async def run():
+        response = await broker.request(make_side_choice_request(timeout_seconds=5.0))
+        assert response.payload == SIDE_ACTION_NIGHT
+        assert response.timed_out is False
+
+    asyncio.run(run())
+    described = store.events[-1]['payload']
+    assert described['kind'] == KIND_SIDE_CHOICE
+    assert described['chosen_label'] == SIDE_LABEL_NIGHT
 
 
 def test_timeouts_count_toward_forfeit_and_reset():

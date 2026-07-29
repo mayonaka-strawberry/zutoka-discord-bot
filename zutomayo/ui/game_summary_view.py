@@ -318,6 +318,18 @@ def build_game_summary(
                     f'**{player}** moved out {_cards_line(payload["removed"], card_index)}; '
                     f'moved in {_cards_line(payload["added"], card_index)}'
                 )
+            elif event['event_type'] == 'side_choice':
+                from zutomayo.match.decisions import SIDE_LABEL_DAY, SIDE_LABEL_NIGHT
+
+                payload = event['payload']
+                chooser = player_names.get(payload['chooser_index'], '?')
+                chosen_label = SIDE_LABEL_NIGHT if payload['chose_night'] else SIDE_LABEL_DAY
+                night_player = player_names.get(payload['night_player'], '?')
+                day_player = player_names.get(1 - payload['night_player'], '?')
+                swap_lines.append(
+                    f'**{chooser}** lost the match and chose {chosen_label} for the next one; '
+                    f'**{night_player}** plays {SIDE_LABEL_NIGHT}, **{day_player}** plays {SIDE_LABEL_DAY}'
+                )
             elif event['event_type'] == 'match_result':
                 payload = event['payload']
                 score = payload['series_score']

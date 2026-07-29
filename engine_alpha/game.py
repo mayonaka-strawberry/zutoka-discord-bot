@@ -67,7 +67,8 @@ class Game:
 
     def __init__(self, seed: int, mode: str = "draft",
                  decks: tuple[list[int], list[int]] | None = None,
-                 max_turns: int = 200) -> None:
+                 max_turns: int = 200,
+                 night_player: int | None = None) -> None:
         self.max_turns = max_turns
         self._answer = None
         self._answered_request = None
@@ -75,9 +76,16 @@ class Game:
         state = GameState(rng_key=seed)
         self.state = state
 
-        # Coin flip: which player index sits on the NIGHT side.
-        night_player = random_below(2, state.rng_key, state.rng_ctr)
+        # Coin flip: which player index sits on the NIGHT side. The draw is
+        # consumed unconditionally so the RNG stream is identical whether or
+        # not the caller overrides the result (TCG series after game 1, where
+        # the previous game's loser picks their side).
+        flipped_night_player = random_below(2, state.rng_key, state.rng_ctr)
         state.rng_ctr += 1
+        if night_player is None:
+            night_player = flipped_night_player
+        elif night_player not in (0, 1):
+            raise ValueError(f"night_player must be 0, 1 or None, got {night_player!r}")
         state.players = (
             PlayerState(0, side_is_night=(night_player == 0), hp=STARTING_HP),
             PlayerState(1, side_is_night=(night_player == 1), hp=STARTING_HP),

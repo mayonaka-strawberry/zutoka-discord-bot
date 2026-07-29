@@ -59,12 +59,6 @@ def _mirror_rect(rect: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
     )
 
 
-def _mirror_point_across_midline(point: tuple[int, int]) -> tuple[int, int]:
-    """Reflect a point across the board's horizontal midline, keeping x."""
-    x, y = point
-    return (x, MIRROR_Y_SUM - y)
-
-
 # Printed card slot centres measured from zutomayo/images/board.png at native 1500x1500
 # scale, by locating each slot border at subpixel precision and halving. Every card
 # rectangle is centred on one of these, which lands it within 1.2 px of the measured slot
@@ -128,9 +122,11 @@ NIGHT_PRINTED_SLOTS = {
 # puts night (0-8) on the top half and day (9-17) on the bottom half -- the same split as
 # is_night = chronos <= NIGHT_END, and the same ordering the embed's emoji bar draws.
 #
-# The DAY centres below were measured from zutomayo/images/board.png at native 1500x1500
-# scale: threshold the art at brightness 65 (the mat sits at ~53, the printed glyphs at
-# ~75-79), then take the centroid of each sun's solid disc, which connected-component
+# Both halves were measured from zutomayo/images/board.png at native 1500x1500 scale by
+# scripts/measure_chronos_centers.py; rerun it to check these against the art.
+#
+# The DAY suns: threshold the art at brightness 65 (the mat sits at ~53, the printed glyphs
+# at ~75-79), then take the centroid of each sun's solid disc, which connected-component
 # labelling isolates cleanly because the surrounding ray triangles are detached from it.
 # The nine discs land on an even 20-degree ring of radius 361.0 (sd 1.6) about the
 # rotational centre to within 0.8 degrees, so the small departures from a perfect circle
@@ -148,27 +144,47 @@ DAY_CHRONOS_CENTERS = {
 }
 
 
-# The NIGHT glyphs are crescents, half moons and dashed rings, so most of them have no
-# centre that can be read off their own pixels. They are derived instead by reflecting the
-# measured DAY centres across the horizontal midline, which maps day slot d to night slot
-# 17 - d (13->4, 9->8, 17->0).
+# The NIGHT glyphs are moon phases, so their lit pixels are not symmetric about the slot
+# and a centroid would sit wherever the terminator happens to leave it. Each centre below is
+# the centre of the moon's *disc* instead, recovered by fitting a circle of known radius to
+# the glyph's outer limb -- the one arc that is part of the full disc whatever the phase.
+# All seven solid moons resolve to the same disc radius to within a pixel, and their lit
+# areas come out as a clean phase progression (23, 47, 69, 79, 69, 48, 22 percent of the
+# disc; slot 4 is a full moon reading under 100 only because the four-pointed star is cut
+# out of it), which is the cross-check that the radius and the centres are both right.
+# Slots 0 and 8 are new moons drawn as dashed rings with no disc at all, so those two are a
+# least-squares circle through the 15 dash centroids (max residual 0.72 px).
 #
-# The three night glyphs that do have a readable centre put a bound on that derivation:
-# the full moon at slot 4 sits 3.9 px inside the reflected position, and the dashed rings
-# at slots 0 and 8 sit 9.4 px inside it, because the night arc is printed at ~19.6 degrees
-# per step against the day arc's ~20.0. A 180-degree rotation instead of a reflection fits
-# no better (3.3 px and 9.2 px), so this is asymmetry in the art rather than the wrong
-# pivot, and at a coin diameter of 96 px the worst case is under a tenth of the marker.
+# The gibbous phases, slots 3 and 5, need one more step. Their terminator is an ellipse arc
+# close enough to a circle of the disc's own radius that the limb fit scores almost the same
+# with the disc placed on either side of the glyph -- 142 against 141 inliers on slot 3. The
+# score cannot separate them and picking the higher one lands on the wrong side. What
+# separates them is the ring: interpolating each slot's angle from its neighbours puts the
+# correct centre within 0.4 degrees and the mirrored one 3.9 degrees out.
+#
+# These are NOT the DAY centres reflected across the midline, which is how they were first
+# derived. The night ring is mirror-symmetric left to right about x = 751.9, and its seven
+# moons are evenly spaced just as the day suns are -- but at ~20.1 degrees per step against
+# the day ring's ~19.8, and the two dashed new-moon rings sit about 2 degrees inside that
+# cadence. Reflecting one ring onto the other therefore drifts further the further a slot
+# is from midnight, reaching 10.7 px at slot 7 -- over a fifth of the 48 px coin radius.
 NIGHT_CHRONOS_CENTERS = {
-    17 - day_slot: _mirror_point_across_midline(center)
-    for day_slot, center in DAY_CHRONOS_CENTERS.items()
+    0: (399, 677),
+    1: (442, 573),
+    2: (517, 476),
+    3: (624, 413),
+    4: (752, 390),
+    5: (880, 413),
+    6: (986, 476),
+    7: (1062, 573),
+    8: (1105, 677),
 }
 
 CHRONOS_CENTERS = {**DAY_CHRONOS_CENTERS, **NIGHT_CHRONOS_CENTERS}
 
 
-# Diameter of the visible coin at native 1500 scale. It is a little under the night full
-# moon (106 px across) and reaches into the rays of the day suns, whose solid discs are
+# Diameter of the visible coin at native 1500 scale. It is a little under the night moon
+# discs (107 px across) and reaches into the rays of the day suns, whose solid discs are
 # only 43-56 px but whose ray tips span up to 115 px.
 COIN_DIAMETER = 96
 

@@ -64,11 +64,15 @@ class MatchResumeDivergenceError(Exception):
 def fallback_response_payload(request: MatchDecisionRequest) -> tuple[str, Any]:
     """Deterministic payload applied when a player times out: PASS when the
     engine decision allows passing, otherwise the lowest legal action; an
-    empty switch for the TCG side-deck decision."""
+    empty switch for the TCG side-deck decision, and the first listed option
+    for bot-layer decisions that carry options (the TCG side choice falls back
+    to Day, the side that does not commit set cards first)."""
     engine_request = request.engine_request
     if engine_request is None:
         if request.kind == KIND_SIDE_DECK_SWITCH:
             return PAYLOAD_CARD_KEYS, {'removed': [], 'added': []}
+        if request.options:
+            return PAYLOAD_ACTION, request.options[0].action
         raise ValueError(f'no fallback for bot-layer kind {request.kind!r}')
     if engine_request.allow_pass:
         return PAYLOAD_ACTION, len(engine_request.candidates)

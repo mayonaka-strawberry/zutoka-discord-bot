@@ -92,8 +92,7 @@ def _draw_card_rects(
         draw.line([center_x - tick, center_y, center_x + tick, center_y], fill=colour, width=4)
         draw.line([center_x, center_y - tick, center_x, center_y + tick], fill=colour, width=4)
 
-        # Outlined, so the label stays readable where a card fills the rectangle
-        # (scripts/calibrate_full.py draws these over a populated board).
+        # Outlined, so the label stays readable wherever it lands on the board art.
         draw.text(
             (left + 12, top + 8),
             f'{side} {zone_name}',

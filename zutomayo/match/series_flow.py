@@ -8,6 +8,11 @@ decision in one globally sequenced log. Each game's engine seed is derived
 from the persisted series seed and a per-game counter (draws replay with a
 fresh seed but identical derivation, so restart replay walks the same
 sequence).
+
+Match 1 leaves the day/night sides to the engine's coin flip. After each
+decided match the loser picks the side they play next, so the choice is a
+logged broker decision and replays deterministically; a drawn match carries
+the current sides' chooser over untouched.
 """
 
 from __future__ import annotations
@@ -20,8 +25,14 @@ import discord
 
 from zutomayo.match.broker import MatchResumeDivergenceError
 from zutomayo.match.decisions import (
+    KIND_SIDE_CHOICE,
     KIND_SIDE_DECK_SWITCH,
     PAYLOAD_CARD_KEYS,
+    SIDE_ACTION_DAY,
+    SIDE_ACTION_NIGHT,
+    SIDE_LABEL_DAY,
+    SIDE_LABEL_NIGHT,
+    MatchDecisionOption,
     MatchDecisionRequest,
 )
 from zutomayo.match.match_flow import SingleMatchFlow
@@ -68,6 +79,10 @@ class TcgSeriesFlow:
             wins = {0: 0, 1: 0}
             match_number = 0
             game_counter = 0
+            # None = let the engine flip for sides (match 1, and any replay of
+            # a drawn match 1). From match 2 on this holds the side chosen by
+            # the previous match's loser; a draw carries it over untouched.
+            night_player: int | None = None
             names = self._player_names(session)
 
             if resumed_decks is not None:
@@ -128,6 +143,7 @@ class TcgSeriesFlow:
                 outcome = await self.match_flow.run_single_match(
                     session, deck_0, deck_1,
                     engine_seed=self._match_seed(session, game_counter),
+                    night_player=night_player,
                 )
                 winner = outcome.winner
 
@@ -151,6 +167,9 @@ class TcgSeriesFlow:
 
                 deck_0, side_0, deck_1, side_1 = await self._do_switch_cards(
                     session, names, deck_0, side_0, deck_1, side_1,
+                )
+                night_player = await self._do_side_choice(
+                    session, names, chooser_index=1 - winner, match_number=match_number,
                 )
 
             self._emit_event(session, EVENT_SERIES_RESULT, {
@@ -348,6 +367,72 @@ class TcgSeriesFlow:
         await self._send_to_both(session, content=swap_message)
 
         return deck_0, side_0, deck_1, side_1
+
+    @staticmethod
+    def _night_player_for_choice(chooser_index: int, action: int) -> int:
+        """The player index on the NIGHT side once `chooser_index` has picked."""
+        if action == SIDE_ACTION_NIGHT:
+            return chooser_index
+        return 1 - chooser_index
+
+    async def _do_side_choice(
+        self,
+        session: 'GameSession',
+        names: dict[int, str],
+        chooser_index: int,
+        match_number: int,
+    ) -> int:
+        """The previous match's loser picks the side they play in the next
+        match. Returns the player index that sits on the NIGHT side."""
+        prompt_text = (
+            '**Choose Your Side [昼夜の選択]**\n'
+            f'You lost Match {match_number}, so you choose which side you play '
+            f'in Match {match_number + 1}.\n'
+            f'{SIDE_LABEL_DAY}: your opponent sets cards first on turn 1 and after a tied battle.\n'
+            f'{SIDE_LABEL_NIGHT}: you set cards first on turn 1 and after a tied battle.'
+        )
+        request = MatchDecisionRequest(
+            kind=KIND_SIDE_CHOICE,
+            player_index=chooser_index,
+            prompt_text=prompt_text,
+            options=[
+                MatchDecisionOption(
+                    label=SIDE_LABEL_DAY,
+                    description='Your opponent sets cards first on turn 1 and after a tied battle.',
+                    action=SIDE_ACTION_DAY,
+                ),
+                MatchDecisionOption(
+                    label=SIDE_LABEL_NIGHT,
+                    description='You set cards first on turn 1 and after a tied battle.',
+                    action=SIDE_ACTION_NIGHT,
+                ),
+            ],
+            timeout_seconds=750.0,
+            opponent_name=names[1 - chooser_index],
+        )
+        response = await session.broker.request(request)
+        night_player = self._night_player_for_choice(chooser_index, response.payload)
+        chose_night = night_player == chooser_index
+
+        from zutomayo.engine.game_events import EVENT_SIDE_CHOICE
+
+        self._emit_event(session, EVENT_SIDE_CHOICE, {
+            'chooser_index': chooser_index,
+            'night_player': night_player,
+            'chose_night': chose_night,
+            'timed_out': response.timed_out,
+        })
+
+        chosen_label = SIDE_LABEL_NIGHT if chose_night else SIDE_LABEL_DAY
+        announcement = (
+            f'**{names[chooser_index]}** lost Match {match_number} and chose to play '
+            f'**{chosen_label}**.\n'
+            f'**{names[night_player]}** plays {SIDE_LABEL_NIGHT}; '
+            f'**{names[1 - night_player]}** plays {SIDE_LABEL_DAY}.'
+        )
+        await self._send_to_channel(session, content=announcement)
+        await self._send_to_both(session, content=announcement)
+        return night_player
 
     async def _announce_match_start(
         self, session: 'GameSession', names: dict[int, str], match_number: int, wins: dict[int, int],

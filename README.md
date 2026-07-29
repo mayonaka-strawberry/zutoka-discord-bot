@@ -79,9 +79,11 @@ timeouts forfeit the game.
 
 - Standard: 20-card deck, up to 2 copies per card.
 - TCG: best-of-3 or 5 with a 20-card main deck plus an 8-card side deck;
-  between matches both players may swap cards between main and side decks.
-  Per-match stats are tracked separately; the TCG Elo ladder moves once per
-  completed series.
+  between matches both players may swap cards between main and side decks,
+  and then the player who lost the match chooses the day/night side they play
+  in the next one (match 1 is a coin flip, and a drawn match replays without
+  changing who chooses). Per-match stats are tracked separately; the TCG Elo
+  ladder moves once per completed series.
 - Draft: sealed variants of both formats. Each player opens gacha boxes
   (1-5, 50 cards per box) and builds a deck only from the opened cards
   through a paginated menu in DM - 20 picks for Standard, 28 for TCG (of
@@ -105,7 +107,7 @@ The game rules run on **engine_alpha** (see
 [engine_alpha/README.md](engine_alpha/README.md)): a self-contained,
 deterministic state machine that imports nothing from the `zutomayo` package
 (it only reads `cards.json` as data). Its public surface is
-`Game(seed, mode, decks)` with
+`Game(seed, mode, decks, night_player=None)` with
 `decision_context() / legal_actions() / apply(action) / clone() /
 is_terminal() / returns()`:
 
@@ -123,7 +125,9 @@ is_terminal() / returns()`:
   The card database holds 425 cards.
 - Chance is a counter-based RNG: the state stores only `(rng_key, rng_ctr)`,
   so clones agree on all futures, and `derive_seed` gives each game of a
-  TCG series its own seed from one persisted series seed.
+  TCG series its own seed from one persisted series seed. The first draw
+  picks the day/night sides; `night_player` overrides it without skipping
+  the draw, which is how a TCG loser's side choice reaches the engine.
 - A `GameState` may carry an observation-only event sink (draws, placements,
   battle results, phase changes, ...) that external drivers narrate;
   `fast_clone` detaches it so search clones are silent.
@@ -153,8 +157,9 @@ is_terminal() / returns()`:
   through - Discord DMs live, a recorder in tests, or muted during replay.
 - `match_driver.py` / `match_flow.py` / `series_flow.py` / `draft_flow.py` /
   `solo_flow.py`: the driver loop and the mode orchestrators (single match,
-  TCG best-of-N with side-deck switching and one globally sequenced record
-  for the whole series, gacha-box draft, solo versus a model opponent).
+  TCG best-of-N with side-deck switching plus the loser's day/night choice
+  and one globally sequenced record for the whole series, gacha-box draft,
+  solo versus a model opponent).
 - `persistence.py` / `resume.py`: every game owns a permanent PostgreSQL
   record (a manifest with the engine seed and pre-shuffle decks, an
   append-only int-action decision log, the event stream). On startup, active
@@ -331,8 +336,9 @@ URL unless noted.
 | `scripts/migrate_json_to_postgresql.py` | One-shot migration of the legacy JSON decks/usernames into PostgreSQL (already run). |
 | `scripts/wipe_legacy_game_records.py` | One-shot cutover: clears pre-engine_alpha game records and Elo, preserving decks and names (already run). |
 | `scripts/calibrate_board.py` | Draws colored zone markers onto the board image to verify renderer coordinates. |
-| `scripts/calibrate_chronos.py` | Draws the chronos coin marker on all 18 ring slots at once, semi-transparent with a rim and index label, to verify the coin sits centred on each printed moon/sun glyph. |
-| `scripts/calibrate_full.py` | The whole board populated at once: a card in every slot for both players plus all 18 chronos coins. Writes `calibration_output_full.png` (clean, what the bot would send) and `calibration_output_full_marked.png` (same board under the card and coin overlays). Reuses the overlay helpers from the two scripts above so it cannot drift from them. |
+| `scripts/calibrate_chronos.py` | Draws the chronos coin marker on all 18 ring slots at once, semi-transparent with a rim and index label, to verify the coin sits centred on each printed moon/sun glyph. Writes two images: `calibration_output_chronos.png`, the whole board, and `calibration_output_chronos_glyphs.png`, one window per slot with the board's narrow glyph brightness band stretched to full range. Use the montage to judge alignment; the board's own contrast is too low to see an offset. |
+| `scripts/measure_chronos_centers.py` | Recovers the 18 ring centres from the printed art and reports how far `CHRONOS_CENTERS` sits from each, in pixels. This is where those constants come from. Day suns are read off their disc centroid; night moons are fitted through their outer limb at a fixed radius (a free radius latches onto the gibbous terminator instead); the two new moons are a circle through their dash centroids. The two gibbous phases fit almost equally well with the disc on either side of the glyph, so the score cannot pick between them; those are resolved by ring angle, interpolated from the neighbouring slots, and both candidates are printed. Prints only. |
+| `scripts/calibrate_full.py` | Every coordinate on one bare board: the card rectangles and printed slots of the first script plus the 18 chronos ring positions of the second, drawn as outlines with no card art or coins occluding them. Writes `calibration_output_full.png`. Reuses the overlay helpers from the two scripts above so it cannot drift from them. |
 | `scripts/populate_card_images.py` / `scripts/remove_corners.py` | Card-image asset tooling (fill the `image` field in `cards.json`; mask white corners). |
 
 ## Tests and verification

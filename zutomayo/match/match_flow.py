@@ -153,10 +153,15 @@ class SingleMatchFlow:
         *,
         record_store: Any = None,
         engine_seed: Optional[int] = None,
+        night_player: Optional[int] = None,
     ) -> MatchOutcome:
         """Run one match from engine construction through result recording
         (game-over embed, Elo). Does NOT set the final game status and does
-        NOT remove the session - the caller owns the series/game lifecycle."""
+        NOT remove the session - the caller owns the series/game lifecycle.
+
+        ``night_player`` overrides the engine's side coin flip (TCG series
+        games after the first, where the previous loser picks their side);
+        None keeps the flip."""
         from engine_alpha.game import Game
         from zutomayo.data.deck_validator import get_card_index
         from zutomayo.match.agents import load_random_fallback_deck
@@ -178,6 +183,7 @@ class SingleMatchFlow:
         game = Game(
             seed=session.random_seed if engine_seed is None else engine_seed,
             mode='fixed_decks', decks=decks,
+            night_player=night_player,
         )
         session.game = game
         names = self._player_names(session)

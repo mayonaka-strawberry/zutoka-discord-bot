@@ -31,7 +31,11 @@ continuation frames (program counter + registers), cloned in ~2 µs.
   (`mode="fixed_decks"`).
 - **Deterministic chance**: shuffles are counter-based functions of the
   state's RNG (key, counter), so clones agree on all futures — no chance
-  nodes needed in the tree.
+  nodes needed in the tree. Day/night sides are decided by the first draw
+  off that stream; `Game(..., night_player=0|1)` overrides the result for
+  callers that decide sides themselves (the TCG series, where the previous
+  match's loser picks). The draw is consumed either way, so an overridden
+  game and a flipped one agree on every shuffle.
 - **Engine events**: a `GameState` may carry an `event_sink` list
   (`events.py`); rule functions append observation-only int tuples (draws,
   placements, battle results, phase changes, ...) for external drivers to

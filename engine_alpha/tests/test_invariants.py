@@ -167,6 +167,39 @@ def test_same_seed_same_game():
     assert snapshot(game_a) == snapshot(game_b)
 
 
+def test_night_player_override_only_changes_sides():
+    """The TCG series flow overrides the side coin flip after game 1. The RNG
+    draw must still be consumed, so everything except the side assignment is
+    identical to a flipped game."""
+    rng = random.Random(9)
+    decks = (random_vanilla_deck(rng), random_vanilla_deck(rng))
+
+    flipped = Game(seed=99, mode="fixed_decks", decks=decks)
+    explicit_none = Game(seed=99, mode="fixed_decks", decks=decks, night_player=None)
+    assert snapshot(explicit_none) == snapshot(flipped)
+
+    for chosen in (0, 1):
+        overridden = Game(seed=99, mode="fixed_decks", decks=decks, night_player=chosen)
+        assert overridden.state.players[chosen].side_is_night is True
+        assert overridden.state.players[1 - chosen].side_is_night is False
+        # The coin-flip draw is still consumed, so shuffles and hands match.
+        assert overridden.state.rng_ctr == flipped.state.rng_ctr
+        for player, flipped_player in zip(overridden.state.players, flipped.state.players):
+            assert player.deck == flipped_player.deck
+            assert player.hand == flipped_player.hand
+
+
+def test_night_player_override_rejects_bad_index():
+    rng = random.Random(10)
+    decks = (random_vanilla_deck(rng), random_vanilla_deck(rng))
+    try:
+        Game(seed=1, mode="fixed_decks", decks=decks, night_player=2)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for night_player=2")
+
+
 def test_deck_validation():
     deck = random_vanilla_deck(random.Random(0))
     bad = deck[:19] + [deck[0]]  # 3 copies of the first card

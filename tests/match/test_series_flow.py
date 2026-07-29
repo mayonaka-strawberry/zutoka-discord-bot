@@ -5,6 +5,11 @@ from __future__ import annotations
 import asyncio
 
 from engine_alpha.rng import derive_seed
+from zutomayo.match.decisions import (
+    KIND_SIDE_CHOICE,
+    SIDE_ACTION_DAY,
+    SIDE_ACTION_NIGHT,
+)
 from zutomayo.match.series_flow import TcgSeriesFlow
 
 
@@ -48,6 +53,143 @@ def test_switch_application_moves_cards_between_deck_and_side():
 
     assert [(c.pack, c.id) for c in deck] == [(1, 1), (1, 3), (2, 1)]
     assert sorted((c.pack, c.id) for c in side) == [(1, 2), (2, 2)]
+
+
+def test_night_player_for_choice_maps_both_players_and_actions():
+    for chooser_index in (0, 1):
+        assert TcgSeriesFlow._night_player_for_choice(
+            chooser_index, SIDE_ACTION_NIGHT) == chooser_index
+        assert TcgSeriesFlow._night_player_for_choice(
+            chooser_index, SIDE_ACTION_DAY) == 1 - chooser_index
+
+
+def _run_scripted_series(
+    match_winners: list[int],
+    best_of: int = 3,
+    seed: int = 5,
+    replay_log: dict | None = None,
+) -> tuple[list, object, object]:
+    """Drive run_tcg with stubbed matches so only the series loop runs.
+
+    Returns the night_player passed to each match, the record store, and the
+    transport. Real matches, the side-deck switch, and Elo recording are
+    stubbed out: this exercises the side-choice sequencing and its persistence,
+    which the stubs would otherwise bury under image rendering and DB writes.
+    """
+    from zutomayo.match.broker import MatchDecisionBroker
+    from zutomayo.match.match_driver import MatchOutcome
+    from tests.match.support import (
+        FakeSession,
+        MemoryRecordStore,
+        RecordingTransport,
+        ScriptedActionAdapter,
+    )
+
+    session = FakeSession(game_id=f'SERIES-{seed:05d}')
+    session.is_tcg = True
+    session.best_of = best_of
+    session.random_seed = 123456789
+    transport = RecordingTransport()
+    store = MemoryRecordStore(session.game_id, session)
+    adapter = ScriptedActionAdapter(lambda: session.broker, seed=seed)
+    broker = MatchDecisionBroker(session, {0: adapter, 1: adapter}, store)
+    if replay_log is not None:
+        broker.replay_log = replay_log
+        broker.replaying = True
+    session.broker = broker
+    session.transport = transport
+    session.persistence = store
+
+    flow = TcgSeriesFlow(bot=None, best_of=best_of)
+    night_players_seen: list = []
+    remaining_winners = list(match_winners)
+
+    async def stub_run_single_match(session, deck_0, deck_1, *, record_store=None,
+                                    engine_seed=None, night_player=None):
+        night_players_seen.append(night_player)
+        return MatchOutcome(winner=remaining_winners.pop(0), forfeited_player=None)
+
+    async def stub_switch_cards(session, names, deck_0, side_0, deck_1, side_1):
+        return deck_0, side_0, deck_1, side_1
+
+    async def stub_record_series_stats(session, wins):
+        return None
+
+    flow.match_flow.run_single_match = stub_run_single_match
+    flow._do_switch_cards = stub_switch_cards
+    flow._record_series_stats = stub_record_series_stats
+
+    asyncio.run(flow.run_tcg(session, resumed_decks=([], [], [], [])))
+    assert not remaining_winners, 'the series ended before every scripted match ran'
+    return night_players_seen, store, transport
+
+
+def test_first_match_flips_and_later_matches_use_the_losers_choice():
+    night_players, store, transport = _run_scripted_series([0, 1, 0])
+
+    # Match 1 leaves the flip to the engine; matches 2 and 3 are chosen.
+    assert night_players[0] is None
+    assert night_players[1] is not None
+    assert night_players[2] is not None
+
+    side_choices = [event for event in store.events if event['event_type'] == 'side_choice']
+    assert len(side_choices) == 2
+    # Player 1 lost match 1, player 0 lost match 2.
+    assert [event['payload']['chooser_index'] for event in side_choices] == [1, 0]
+    for event, chosen_night_player in zip(side_choices, night_players[1:]):
+        payload = event['payload']
+        assert payload['night_player'] == chosen_night_player
+        assert payload['chose_night'] == (payload['night_player'] == payload['chooser_index'])
+
+    logged_kinds = [record['fingerprint']['kind'] for record in store.decisions]
+    assert logged_kinds.count(KIND_SIDE_CHOICE) == 2
+
+    announcements = [message.get('content', '') for message in transport.channel_messages]
+    assert any('chose to play' in text for text in announcements)
+
+
+def test_draw_replays_with_the_same_chooser():
+    # Match 1 draws (winner 2), replays, then plays out normally.
+    night_players, store, _ = _run_scripted_series([2, 0, 1, 0])
+
+    # The drawn match 1 and its replay both predate any chooser.
+    assert night_players[0] is None
+    assert night_players[1] is None
+    assert night_players[2] is not None
+
+    side_choices = [event for event in store.events if event['event_type'] == 'side_choice']
+    assert [event['payload']['chooser_index'] for event in side_choices] == [1, 0]
+
+
+def test_replaying_a_series_reproduces_the_same_sides():
+    live_night_players, store, _ = _run_scripted_series([0, 1, 0])
+    replayed_night_players, replayed_store, _ = _run_scripted_series(
+        [0, 1, 0], replay_log=store.replay_log(),
+    )
+
+    assert replayed_night_players == live_night_players
+    # Events are suppressed while replaying, so the log is the evidence.
+    assert [record['payload'] for record in replayed_store.decisions] == []
+
+
+def test_summary_renders_the_side_choice_between_matches():
+    from zutomayo.match.decisions import SIDE_LABEL_DAY, SIDE_LABEL_NIGHT
+    from zutomayo.ui.game_summary_view import build_game_summary
+
+    game_row = {'game_id': 'SERIES-00001', 'status': 'completed', 'is_tcg': True, 'best_of': 3}
+    player_names = {0: 'Alpha', 1: 'Beta'}
+    events = [
+        {'event_index': 0, 'event_type': 'match_result', 'match_number': 1,
+         'payload': {'match_number': 1, 'winner_index': 0, 'series_score': [1, 0]}},
+        {'event_index': 1, 'event_type': 'side_choice', 'match_number': 1,
+         'payload': {'chooser_index': 1, 'night_player': 1,
+                     'chose_night': True, 'timed_out': False}},
+    ]
+
+    summary = build_game_summary(game_row, player_names, events, card_index={})
+    text = '\n'.join(page.description for page in summary.pages)
+    assert f'**Beta** lost the match and chose {SIDE_LABEL_NIGHT}' in text
+    assert f'**Alpha** plays {SIDE_LABEL_DAY}' in text
 
 
 def test_summary_renders_v2_event_stream():

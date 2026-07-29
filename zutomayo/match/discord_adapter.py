@@ -28,6 +28,7 @@ from zutomayo.match.decisions import (
     KIND_CARD_MULTI_CHOICE,
     KIND_IDENTITY_INPUT,
     KIND_NUMBER_CHOICE,
+    KIND_SIDE_CHOICE,
     KIND_SIDE_DECK_SWITCH,
     PAYLOAD_ACTION,
     MatchDecisionRequest,
@@ -228,6 +229,7 @@ class DiscordMatchDecisionAdapter:
         from zutomayo.ui.views import (
             ActionSelectView,
             BinaryChoiceView,
+            ConfirmableChoiceView,
             EffectNumberSelectView,
             EffectTextInputView,
         )
@@ -278,6 +280,14 @@ class DiscordMatchDecisionAdapter:
             return BinaryChoiceView(
                 session, request.player_index,
                 labels=request.binary_labels,
+                submit_callback=submit_action,
+            )
+        if request.kind == KIND_SIDE_CHOICE:
+            return ConfirmableChoiceView(
+                session, request.player_index,
+                options=request.options,
+                prompt_text=request.prompt_text,
+                opponent_name=request.opponent_name,
                 submit_callback=submit_action,
             )
         if request.kind == KIND_SIDE_DECK_SWITCH:

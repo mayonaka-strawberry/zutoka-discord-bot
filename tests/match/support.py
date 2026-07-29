@@ -6,7 +6,11 @@ from __future__ import annotations
 import random
 from typing import Any, Optional
 
-from zutomayo.match.decisions import PAYLOAD_ACTION, MatchDecisionRequest
+from zutomayo.match.decisions import (
+    PAYLOAD_ACTION,
+    PAYLOAD_CARD_KEYS,
+    MatchDecisionRequest,
+)
 from zutomayo.match.persistence import describe_match_decision
 from zutomayo.match.decisions import request_fingerprint
 
@@ -53,17 +57,36 @@ class RecordingTransport:
 class ScriptedActionAdapter:
     """Answers every request with a legal action that is a pure function of
     (seed, sequence_number, action_count) - stateless, so a replay truncated
-    at any point produces identical live answers for the remainder."""
+    at any point produces identical live answers for the remainder.
+
+    Bot-layer requests (no engine request) answer from their options with the
+    same mixing; the TCG side-deck switch, which carries no options, answers
+    with an empty swap."""
 
     def __init__(self, broker_getter, seed: int = 0) -> None:
         self.broker_getter = broker_getter
         self.seed = seed
 
+    def _choice_index(self, request: MatchDecisionRequest, count: int) -> int:
+        mixed = (self.seed * 1000003 + request.sequence_number * 2654435761 + count) & 0xFFFFFFFF
+        return mixed % count
+
     async def present_decision(self, session, request: MatchDecisionRequest) -> None:
         engine_request = request.engine_request
+        if engine_request is None:
+            if request.options:
+                actions = [option.action for option in request.options]
+                self.broker_getter().submit(
+                    request.sequence_number, PAYLOAD_ACTION,
+                    actions[self._choice_index(request, len(actions))],
+                )
+                return
+            self.broker_getter().submit(
+                request.sequence_number, PAYLOAD_CARD_KEYS, {'removed': [], 'added': []},
+            )
+            return
         legal = engine_request.legal_actions()
-        mixed = (self.seed * 1000003 + request.sequence_number * 2654435761 + len(legal)) & 0xFFFFFFFF
-        action = legal[mixed % len(legal)]
+        action = legal[self._choice_index(request, len(legal))]
         self.broker_getter().submit(request.sequence_number, PAYLOAD_ACTION, action)
 
 

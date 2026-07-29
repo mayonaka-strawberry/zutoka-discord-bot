@@ -31,10 +31,19 @@ KIND_IDENTITY_INPUT = 'identity_input'            # name guess text modal
 KIND_NUMBER_CHOICE = 'number_choice'
 KIND_BINARY_CHOICE = 'binary_choice'
 KIND_SIDE_DECK_SWITCH = 'side_deck_switch'        # bot-layer, TCG between matches
+KIND_SIDE_CHOICE = 'side_choice'                  # bot-layer, TCG: loser picks day/night
 
 # Response payload types stored in the decision log.
 PAYLOAD_ACTION = 'action'          # engine decisions: a single int
 PAYLOAD_CARD_KEYS = 'card_keys'    # side-deck switch: {'removed': [...], 'added': [...]}
+
+# KIND_SIDE_CHOICE actions, listed in option order so the broker's
+# lowest-action timeout fallback resolves to DAY. The labels are shared by the
+# prompt, the announcement and the summary view.
+SIDE_ACTION_DAY = 0
+SIDE_ACTION_NIGHT = 1
+SIDE_LABEL_DAY = 'Day (昼)'
+SIDE_LABEL_NIGHT = 'Night (夜)'
 
 ENGINE_PURPOSE_NONE = -1
 
