@@ -185,7 +185,9 @@ is_terminal() / returns()`:
 - `zutomayo/ui/` - embeds, the PIL board renderer (run off-thread), the
   interactive Discord views (deck builder/management, draft picking, TCG
   side-deck switch, resume confirmation, leaderboard), and the game summary
-  renderer.
+  renderer. The board image draws each player's cards in their zones plus a
+  coin marker on the printed chronos ring showing the current time of day;
+  slot coordinates and the coin size live in `board_renderer.py`.
 - `zutomayo/enums/`, `zutomayo/models/`, `zutomayo/utils/` - card
   attribute/type/rarity/song enums, the `Card` model, and small Discord
   helpers.
@@ -329,6 +331,8 @@ URL unless noted.
 | `scripts/migrate_json_to_postgresql.py` | One-shot migration of the legacy JSON decks/usernames into PostgreSQL (already run). |
 | `scripts/wipe_legacy_game_records.py` | One-shot cutover: clears pre-engine_alpha game records and Elo, preserving decks and names (already run). |
 | `scripts/calibrate_board.py` | Draws colored zone markers onto the board image to verify renderer coordinates. |
+| `scripts/calibrate_chronos.py` | Draws the chronos coin marker on all 18 ring slots at once, semi-transparent with a rim and index label, to verify the coin sits centred on each printed moon/sun glyph. |
+| `scripts/calibrate_full.py` | The whole board populated at once: a card in every slot for both players plus all 18 chronos coins. Writes `calibration_output_full.png` (clean, what the bot would send) and `calibration_output_full_marked.png` (same board under the card and coin overlays). Reuses the overlay helpers from the two scripts above so it cannot drift from them. |
 | `scripts/populate_card_images.py` / `scripts/remove_corners.py` | Card-image asset tooling (fill the `image` field in `cards.json`; mask white corners). |
 
 ## Tests and verification

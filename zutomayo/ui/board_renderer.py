@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 import discord
 from PIL import Image
+from engine_alpha.battle import CHRONOS_SIZE
 from zutomayo.ui.image_utils import save_image_for_discord
 from zutomayo.enums.chronos import Chronos
 
@@ -56,6 +57,12 @@ def _mirror_rect(rect: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
         MIRROR_X_SUM - left,
         MIRROR_Y_SUM - top,
     )
+
+
+def _mirror_point_across_midline(point: tuple[int, int]) -> tuple[int, int]:
+    """Reflect a point across the board's horizontal midline, keeping x."""
+    x, y = point
+    return (x, MIRROR_Y_SUM - y)
 
 
 # Printed card slot centres measured from zutomayo/images/board.png at native 1500x1500
@@ -111,12 +118,76 @@ NIGHT_PRINTED_SLOTS = {
 
 
 # ---------------------------------------------------------------------------
+# Chronos ring: the 18 printed glyph positions the coin marker sits on.
+# ---------------------------------------------------------------------------
+
+
+# The chronos track is 18 slots numbered 0..17 (engine_alpha.battle), advancing
+# clockwise around the printed ring. Slot 4 (MIDNIGHT) is the four-pointed-star full
+# moon at top centre and slot 13 (NOON) is the eight-pointed sun at bottom centre, which
+# puts night (0-8) on the top half and day (9-17) on the bottom half -- the same split as
+# is_night = chronos <= NIGHT_END, and the same ordering the embed's emoji bar draws.
+#
+# The DAY centres below were measured from zutomayo/images/board.png at native 1500x1500
+# scale: threshold the art at brightness 65 (the mat sits at ~53, the printed glyphs at
+# ~75-79), then take the centroid of each sun's solid disc, which connected-component
+# labelling isolates cleanly because the surrounding ray triangles are detached from it.
+# The nine discs land on an even 20-degree ring of radius 361.0 (sd 1.6) about the
+# rotational centre to within 0.8 degrees, so the small departures from a perfect circle
+# below are the printed art's own, not measurement noise.
+DAY_CHRONOS_CENTERS = {
+    9:  (1104, 812),
+    10: (1061, 933),
+    11: (981, 1027),
+    12: (873, 1090),
+    13: (750, 1111),
+    14: (627, 1090),
+    15: (520, 1027),
+    16: (440, 933),
+    17: (398, 812),
+}
+
+
+# The NIGHT glyphs are crescents, half moons and dashed rings, so most of them have no
+# centre that can be read off their own pixels. They are derived instead by reflecting the
+# measured DAY centres across the horizontal midline, which maps day slot d to night slot
+# 17 - d (13->4, 9->8, 17->0).
+#
+# The three night glyphs that do have a readable centre put a bound on that derivation:
+# the full moon at slot 4 sits 3.9 px inside the reflected position, and the dashed rings
+# at slots 0 and 8 sit 9.4 px inside it, because the night arc is printed at ~19.6 degrees
+# per step against the day arc's ~20.0. A 180-degree rotation instead of a reflection fits
+# no better (3.3 px and 9.2 px), so this is asymmetry in the art rather than the wrong
+# pivot, and at a coin diameter of 96 px the worst case is under a tenth of the marker.
+NIGHT_CHRONOS_CENTERS = {
+    17 - day_slot: _mirror_point_across_midline(center)
+    for day_slot, center in DAY_CHRONOS_CENTERS.items()
+}
+
+CHRONOS_CENTERS = {**DAY_CHRONOS_CENTERS, **NIGHT_CHRONOS_CENTERS}
+
+
+# Diameter of the visible coin at native 1500 scale. It is a little under the night full
+# moon (106 px across) and reaches into the rays of the day suns, whose solid discs are
+# only 43-56 px but whose ray tips span up to 115 px.
+COIN_DIAMETER = 96
+
+# coin.png is a 284x284 canvas holding a 245 px coin plus a transparent margin that carries
+# the drop shadow, both centred on the canvas. The canvas is therefore scaled by this ratio
+# so that COIN_DIAMETER is the coin itself rather than the padded canvas, and pasting the
+# canvas centred on a slot still puts the coin centred on it. At SCALE 3 the canvas renders
+# at 334 px against a 284 px source, so the art is used at close to its own resolution.
+COIN_CANVAS_RATIO = 284 / 245
+
+
+# ---------------------------------------------------------------------------
 # Cached assets
 # ---------------------------------------------------------------------------
 
 
 _board_base: Optional[Image.Image] = None
 _card_back_img: Optional[Image.Image] = None
+_coin_img: Optional[Image.Image] = None
 
 
 def _get_board_base() -> Image.Image:
@@ -135,6 +206,19 @@ def _get_card_back() -> Image.Image:
     if _card_back_img is None:
         _card_back_img = Image.open(_PROJECT_ROOT / 'zutomayo/images/card_back.jpg').convert('RGBA')
     return _card_back_img
+
+
+def _get_coin() -> Image.Image:
+    """The chronos marker, resized once so the coin itself is COIN_DIAMETER."""
+    global _coin_img
+    if _coin_img is None:
+        size = round(COIN_DIAMETER * SCALE * COIN_CANVAS_RATIO)
+        _coin_img = (
+            Image.open(_PROJECT_ROOT / 'zutomayo/images/coin.png')
+            .convert('RGBA')
+            .resize((size, size), Image.LANCZOS)
+        )
+    return _coin_img
 
 
 @lru_cache(maxsize=128)
@@ -202,6 +286,31 @@ def _paste_card_back(
     board.paste(fitted, offset, fitted)
 
 
+def paste_chronos_coin(
+    board: Image.Image,
+    chronos: int,
+    opacity: int = 255,
+) -> None:
+    """Paste the coin marker centred on a chronos slot's printed glyph.
+
+    board is at render scale. opacity below 255 scales the coin's alpha, which the
+    calibration script uses to keep the glyph underneath visible; the live board always
+    draws the coin solid.
+    """
+    center_x, center_y = CHRONOS_CENTERS[chronos % CHRONOS_SIZE]
+    coin = _get_coin()
+
+    if opacity < 255:
+        coin = coin.copy()
+        coin.putalpha(coin.getchannel('A').point(lambda value: value * opacity // 255))
+
+    offset = (
+        center_x * SCALE - coin.width // 2,
+        center_y * SCALE - coin.height // 2,
+    )
+    board.paste(coin, offset, coin)
+
+
 def _render_player_zones(
     board: Image.Image,
     player: Player,
@@ -237,6 +346,14 @@ def compose_board_image(
 ) -> Image.Image:
     """Compose the full game board as a 4500x4500 RGB image."""
     board = _get_board_base()
+
+    # Drawn before the perspective rotation below so the coin turns with the printed ring
+    # and stays on the same glyph in both perspectives. getattr keeps the renderer's
+    # duck-typed contract: a board object without a chronos value just renders without a
+    # marker.
+    chronos = getattr(game_state, 'chronos', None)
+    if chronos is not None:
+        paste_chronos_coin(board, chronos)
 
     day_player: Optional[Player] = None
     night_player: Optional[Player] = None

@@ -48,6 +48,7 @@ SLOT_COLOUR = (255, 255, 255, 170)
 DAY_COLOUR = (0, 255, 0, 230)
 NIGHT_COLOUR = (255, 40, 40, 230)
 GUIDE_COLOUR = (255, 220, 0, 200)
+LABEL_STROKE_COLOUR = (0, 0, 0, 230)
 
 
 def _load_label_font() -> ImageFont.ImageFont:
@@ -91,7 +92,16 @@ def _draw_card_rects(
         draw.line([center_x - tick, center_y, center_x + tick, center_y], fill=colour, width=4)
         draw.line([center_x, center_y - tick, center_x, center_y + tick], fill=colour, width=4)
 
-        draw.text((left + 12, top + 8), f'{side} {zone_name}', fill=colour, font=font)
+        # Outlined, so the label stays readable where a card fills the rectangle
+        # (scripts/calibrate_full.py draws these over a populated board).
+        draw.text(
+            (left + 12, top + 8),
+            f'{side} {zone_name}',
+            fill=colour,
+            font=font,
+            stroke_width=3,
+            stroke_fill=LABEL_STROKE_COLOUR,
+        )
 
 
 def _draw_centre_guides(draw: ImageDraw.ImageDraw, size: int) -> None:
