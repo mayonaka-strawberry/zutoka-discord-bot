@@ -85,33 +85,54 @@ python -m ppo_transformer.train.run_train
 python -m ppo_transformer.train.run_train --resume    # continue an existing run
 ```
 
-Each iteration prints two lines, plus a third on gating iterations:
+Each iteration prints three lines, plus a fourth on gating iterations:
 
 ```
-iteration 42: games=13820 samples=65536 loss=0.2109 lr=2.6e-04 (119s)
-  policy=-0.0041 value=0.4361 entropy=1.823 clip_frac=0.112 kl=0.0071 ev=+0.564
-iteration 45: gate 0.583 vs best -> promoted (pool: 9, vram 4.1G)
+iteration 42: games=13820 samples=65536 total_loss=0.2109
+  learning_rate=2.6e-04 epochs=2/3 elapsed=119s
+  policy_loss=-0.0041 value_loss=0.4361 entropy=1.823
+  clip_fraction=0.112 approximate_kl_divergence=0.0071 explained_variance=+0.564
+  gate 0.583 vs best -> promoted (pool_size: 9, gpu_memory 4.1G)
 ```
 
 `games` is cumulative; `samples` is the decisions collected this iteration
-(`PPO_TRAIN_ROLLOUT_DECISIONS`); `lr` follows the warmup-then-cosine schedule.
-Every `PPO_TRAIN_CHECKPOINT_INTERVAL_ITERATIONS` the trainer also runs a
-promotion gate against the newest snapshot and saves.
+(`PPO_TRAIN_ROLLOUT_DECISIONS`); `learning_rate` follows the warmup-then-cosine
+schedule; `epochs` is how many of `PPO_TRAIN_PPO_EPOCHS` actually ran before the
+`PPO_TRAIN_TARGET_KL` early stop fired. Every
+`PPO_TRAIN_CHECKPOINT_INTERVAL_ITERATIONS` the trainer also runs a promotion
+gate against the newest snapshot and saves.
 
-The second line is the split, averaged over every minibatch of every epoch:
+Lines 3 and 4 are the split, averaged over every minibatch actually run:
 
 | Field | What it means |
 |---|---|
-| `policy` | Clipped surrogate. Hovers near zero by construction — the ratio starts at exactly 1 on fresh data, so this does **not** trend as the policy improves. |
-| `value` | Clipped value MSE. Against terminal `+/-1` rewards, a value head predicting 0 scores ~1.0; lower is better but it never reaches 0, since the outcome is genuinely uncertain from an early position. |
+| `policy_loss` | Clipped surrogate. Hovers near zero by construction — the ratio starts at exactly 1 on fresh data, so this does **not** trend as the policy improves. |
+| `value_loss` | Clipped value MSE. Against terminal `+/-1` rewards, a value head predicting 0 scores ~1.0; lower is better but it never reaches 0, since the outcome is genuinely uncertain from an early position. |
 | `entropy` | Nats over the legal actions. Falling steadily toward 0 is the failure mode to watch — see Troubleshooting. |
-| `clip_frac` | Fraction of samples the 0.2 clip bit on. Healthy is ~0.05-0.20. Near 0 means updates are too timid for the clip range; above ~0.3 means the policy moves further per iteration than the trust region intends. |
-| `kl` | Schulman's low-variance KL estimator between the old and new policy. |
-| `ev` | **Explained variance** of the value head, `1 - Var(target - value) / Var(target)`, on-policy and pre-update. This is the value-head progress metric: scale-free, comparable across runs, and rising from ~0 toward 1. |
+| `clip_fraction` | Fraction of samples the 0.2 clip bit on. Healthy is ~0.05-0.20. Near 0 means updates are too timid for the clip range; above ~0.3 means the policy moves further per iteration than the trust region intends. |
+| `approximate_kl_divergence` | Schulman's low-variance KL estimator between the old and new policy. Also the early-stop trigger — see `PPO_TRAIN_TARGET_KL` below. |
+| `explained_variance` | Of the value head, `1 - Var(target - value) / Var(target)`, on-policy and pre-update. This is the value-head progress metric: scale-free, comparable across runs, and rising from ~0 toward 1. |
 
-Every field, plus the gate result and VRAM, is also appended to
-`runs/metrics.jsonl` — one JSON object per line, readable with
-`model_common.metrics_log.read_metrics`.
+Labels are spelled out to match the keys they come from. Every field, plus the
+gate result and VRAM, is also appended to `runs/metrics.jsonl` — one JSON object
+per line, readable with `model_common.metrics_log.read_metrics`. The keys there
+are namespaced (`policy/clip_fraction`, `value/explained_variance`) and are the
+stable record; the console labels are display only.
+
+### The KL early stop
+
+`PPO_TRAIN_TARGET_KL` (default 0.05) caps how far one rollout is allowed to move
+the policy. At the end of each epoch, if that epoch's mean
+`approximate_kl_divergence` exceeded the target, the remaining epochs are
+skipped — they would be training on data the policy has already left behind.
+Checked at the epoch boundary rather than mid-epoch, so a short update is never
+biased by which samples the shuffle happened to put last.
+
+It is self-regulating: it fires only on iterations that overshoot, and once the
+per-step KL falls, all `PPO_TRAIN_PPO_EPOCHS` epochs run again with no config
+change. Prefer tuning this over cutting `PPO_TRAIN_PPO_EPOCHS` or the learning
+rate, both of which slow every iteration whether or not it needed slowing. Set
+it to `0.0` to disable.
 
 ## Stopping safely
 
@@ -194,20 +215,35 @@ per decision, with no search to configure.
 `P_VS_SNAPSHOT` and `P_VS_RANDOM` are one distribution; `p_vs_random` is the
 implicit remainder, so changing one means changing another.
 
-**`loss` is not going down.** It is not supposed to, and it is the wrong number
-to read. `loss/total` is `policy_loss + value_loss_weight * value_loss -
+**`total_loss` is not going down.** It is not supposed to, and it is the wrong
+number to read. `loss/total` is `policy_loss + value_loss_weight * value_loss -
 entropy_bonus * entropy`; the policy term is a surrogate re-zeroed against fresh
 on-policy data every rollout and does not trend, and the entropy term is ~0.01
 of a ~2-nat quantity. So the printed figure is dominated by `0.5 * value_loss`,
 measured against a target that gets *harder* as the opponent pool strengthens.
 Expect it to plateau, and to rise after a run of promotions.
 
-Read `ev` and the gate line instead. `ev` rising toward 1 means the value head
-is learning; a gate win rate at or above `PPO_TRAIN_GATING_WIN_RATE` means the
-policy is beating its own past self, which is the only direct evidence that
-training is working. A `loss` that drops unusually low (well under 0.05) is more
-likely entropy collapse or a value head fitting noise than a good sign — check
-`entropy` on the same line.
+Read `explained_variance` and the gate line instead. `explained_variance` rising
+toward 1 means the value head is learning; a gate win rate at or above
+`PPO_TRAIN_GATING_WIN_RATE` means the policy is beating its own past self, which
+is the only direct evidence that training is working. A `total_loss` that drops
+unusually low (well under 0.05) is more likely entropy collapse or a value head
+fitting noise than a good sign — check `entropy` on the same line.
+
+Give the gate room before judging a run. The first gate is uninformative: with an
+empty pool there is no opponent, so the win rate is reported as `1.000` and the
+snapshot is promoted unconditionally. After a rejection the pool does not
+advance, so the next gate plays the same older snapshot and covers two intervals
+of progress rather than one — expect win rates to look higher after a rejection.
+
+**`clip_fraction` above ~0.3 and `approximate_kl_divergence` above ~0.05,
+persistently.** The updates are leaving the trust region: the later epochs are
+training on data the policy has already moved away from. Lower
+`PPO_TRAIN_TARGET_KL` and watch `epochs` on line 2 start reporting fewer than
+`PPO_TRAIN_PPO_EPOCHS`. Do this before reaching for the learning rate — a
+promotion cadence that is working does not need a slower optimizer, just a
+shorter update. Conversely, `clip_fraction` near 0 with `epochs` always at the
+full count means the updates are too timid for the clip range.
 
 **Entropy collapsing to near zero early.** Raise
 `PPO_TRAIN_ENTROPY_BONUS_INITIAL` or lengthen
@@ -293,5 +329,11 @@ Applied defaults worth knowing about, and knobs worth trying:
   toward snapshots the learner still loses to.
 - **`PPO_TRAIN_VALUE_CLIP_RANGE` (0.2).** Value clipping is of debated benefit
   in PPO; worth an ablation.
+- **`PPO_TRAIN_TARGET_KL` (0.05).** The KL early stop described above. Added
+  after the first pilot ran at `clip_fraction` ~0.51 and
+  `approximate_kl_divergence` ~0.11 for fifteen straight iterations — the whole
+  192-step update ran with nothing watching how far the policy had moved. The
+  value is a first cut from that measurement (~0.035-0.04 KL per epoch); worth
+  re-tuning once the run has a longer gate history to compare against.
 - `PPO_TRAIN_PPO_EPOCHS`, `CLIP_RANGE` and `MINIBATCH_SIZE` are the remaining
-  standard PPO knobs. There is currently no KL early-stop.
+  standard PPO knobs.

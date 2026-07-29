@@ -50,6 +50,12 @@ class TrainConfig:
     ppo_epochs: int = 3
     clip_range: float = 0.2
     value_clip_range: float = 0.2
+    # Stop the epoch loop once an epoch's mean approx_kl exceeds this, so the
+    # later epochs do not train on data the policy has already left behind.
+    # 0.0 disables. Measured KL across all 3 epochs runs ~0.10-0.12 early in a
+    # run, so 0.05 keeps roughly the first epoch and a half. Self-regulating:
+    # as the per-step KL falls, all ppo_epochs run again with no config change.
+    target_kl: float = 0.05
     value_loss_weight: float = 0.5
     entropy_bonus_initial: float = 0.01
     entropy_bonus_final: float = 0.001
@@ -145,6 +151,10 @@ class Config:
             raise ValueError(
                 "PPO_TRAIN_SNAPSHOT_HARDNESS_BIAS must be within [0, 1], got "
                 f"{self.train.snapshot_hardness_bias}")
+        if self.train.target_kl < 0.0:
+            raise ValueError(
+                "PPO_TRAIN_TARGET_KL must be at least 0.0 (0.0 disables the "
+                f"early stop), got {self.train.target_kl}")
         if self.train.minibatch_size > self.train.rollout_decisions:
             raise ValueError(
                 f"PPO_TRAIN_MINIBATCH_SIZE ({self.train.minibatch_size}) exceeds "

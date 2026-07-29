@@ -68,21 +68,28 @@ python -m alpha_zero.scripts.run_train
 python -m alpha_zero.scripts.run_train --resume    # continue an existing run
 ```
 
-Each iteration prints one line:
+Each iteration prints two lines, plus a third once there are self-play stats to
+report:
 
 ```
-iter 12: games=1560 buffer=98432 step=2840 steps=180/400 loss=2.9114 lr=2.9e-04 seat0=0.51 draw=0.02 snap_wr=0.58 len=63 (selfplay 41s, train 12s)
+iteration 12: games=1560 buffer_size=98432 total_loss=2.9114
+  learning_rate=2.9e-04 step=2840 steps=180/400 selfplay=41s train=12s
+  seat0_win_rate=0.51 draw_rate=0.02 snapshot_win_rate=0.58 samples_per_game=63
 ```
 
 | Field | Meaning |
 |---|---|
-| `games` / `buffer` | cumulative self-play games; replay-buffer samples |
+| `games` / `buffer_size` | cumulative self-play games; replay-buffer samples |
 | `step` | optimizer steps taken so far |
 | `steps=180/400` | steps actually taken vs requested — see troubleshooting |
-| `seat0` | seat-0 win rate in symmetric games; drifting far from 0.50 means a seat bias |
-| `draw` | draw rate |
-| `snap_wr` | learner win rate against frozen league snapshots |
-| `len` | samples per game |
+| `seat0_win_rate` | seat-0 win rate in symmetric games; drifting far from 0.50 means a seat bias |
+| `draw_rate` | draw rate |
+| `snapshot_win_rate` | learner win rate against frozen league snapshots |
+| `samples_per_game` | samples per game |
+
+Labels are spelled out to match the scalar keys they are logged under
+(`selfplay/seat0_win_rate` and friends); those keys are the stable record, the
+console labels are display only.
 
 Other entry points: `run_selfplay.py` (self-play only), `run_gate_m3.py`
 (measure against the Random and GreedyHeuristic baselines),
