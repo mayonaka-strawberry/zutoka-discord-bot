@@ -1,11 +1,11 @@
 from __future__ import annotations
 import asyncio
-from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 import discord
 from PIL import Image
 from engine_alpha.battle import CHRONOS_SIZE
+from zutomayo.ui.card_art import GRID_BACKGROUND, card_back_image, load_card_image
 from zutomayo.ui.image_utils import save_image_for_discord
 from zutomayo.enums.chronos import Chronos
 
@@ -202,7 +202,6 @@ COIN_CANVAS_RATIO = 284 / 245
 
 
 _board_base: Optional[Image.Image] = None
-_card_back_img: Optional[Image.Image] = None
 _coin_img: Optional[Image.Image] = None
 
 
@@ -217,13 +216,6 @@ def _get_board_base() -> Image.Image:
     return _board_base.copy()
 
 
-def _get_card_back() -> Image.Image:
-    global _card_back_img
-    if _card_back_img is None:
-        _card_back_img = Image.open(_PROJECT_ROOT / 'zutomayo/images/card_back.jpg').convert('RGBA')
-    return _card_back_img
-
-
 def _get_coin() -> Image.Image:
     """The chronos marker, resized once so the coin itself is COIN_DIAMETER."""
     global _coin_img
@@ -235,11 +227,6 @@ def _get_coin() -> Image.Image:
             .resize((size, size), Image.LANCZOS)
         )
     return _coin_img
-
-
-@lru_cache(maxsize=128)
-def _load_card_image(path: str) -> Image.Image:
-    return Image.open(_PROJECT_ROOT / path).convert('RGBA')
 
 
 # ---------------------------------------------------------------------------
@@ -283,11 +270,11 @@ def _paste_card(
 
     if card_instance.face_up and card_instance.card.image:
         try:
-            card_img = _load_card_image(card_instance.card.image)
+            card_img = load_card_image(card_instance.card.image)
         except Exception:
-            card_img = _get_card_back()
+            card_img = card_back_image()
     else:
-        card_img = _get_card_back()
+        card_img = card_back_image()
 
     fitted, offset = _fit_card_into_rect(card_img, rect)
     board.paste(fitted, offset, fitted)
@@ -298,7 +285,7 @@ def _paste_card_back(
     rect: tuple[int, int, int, int],
 ) -> None:
     """Paste a card back image centred in rect (native scale)."""
-    fitted, offset = _fit_card_into_rect(_get_card_back(), rect)
+    fitted, offset = _fit_card_into_rect(card_back_image(), rect)
     board.paste(fitted, offset, fitted)
 
 
@@ -438,20 +425,19 @@ def render_zone_strip(
 
         if card_instance.face_up and card_instance.card.image:
             try:
-                with Image.open(_PROJECT_ROOT / card_instance.card.image) as card_img:
-                    card_img = card_img.resize((card_w, card_h))
-                    grid.paste(card_img, (x, y))
+                card_img = load_card_image(card_instance.card.image)
             except Exception:
-                with Image.open(_PROJECT_ROOT / 'zutomayo/images/card_back.jpg') as back:
-                    back = back.resize((card_w, card_h))
-                    grid.paste(back, (x, y))
+                card_img = card_back_image()
         else:
-            with Image.open(_PROJECT_ROOT / 'zutomayo/images/card_back.jpg') as back:
-                back = back.resize((card_w, card_h))
-                grid.paste(back, (x, y))
+            card_img = card_back_image()
+
+        # The mask argument is required: without it the paste overwrites the canvas alpha
+        # with the card's own, and the rounded corners come out opaque.
+        resized = card_img.resize((card_w, card_h), Image.LANCZOS)
+        grid.paste(resized, (x, y), resized)
 
     safe_label = label.replace(' ', '_').lower()
-    return save_image_for_discord(grid, f'{safe_label}.webp')
+    return save_image_for_discord(grid, f'{safe_label}.jpg', background=GRID_BACKGROUND)
 
 
 # ---------------------------------------------------------------------------

@@ -193,6 +193,19 @@ is_terminal() / returns()`:
   renderer. The board image draws each player's cards in their zones plus a
   coin marker on the printed chronos ring showing the current time of day;
   slot coordinates and the coin size live in `board_renderer.py`.
+  `card_art.py` is the shared card loader behind both the board and the card
+  grids: the printed cards are round-cornered, so the jpg scans carry white
+  dead space in their corners, and it masks that away in memory at render time
+  from a per-pack radius. The jpg files are pristine sources - nothing rewrites
+  them, and no rounded copy is ever stored.
+  `image_utils.py` saves every image the bot uploads as JPEG at quality 90 with
+  chroma subsampling off (4:4:4). The subsampling is the part that matters:
+  Pillow defaults JPEG to 4:2:0 at *every* quality including 100, which halves
+  colour resolution and smears the small text and thin coloured outlines on card
+  art. Turning it off is worth roughly 10 dB PSNR. Quality is the only
+  size-reduction lever - if an image exceeds the upload budget it is re-encoded
+  lower, never downscaled, because the card grids are what players open to read
+  effect text.
 - `zutomayo/enums/`, `zutomayo/models/`, `zutomayo/utils/` - card
   attribute/type/rarity/song enums, the `Card` model, and small Discord
   helpers.
@@ -335,11 +348,17 @@ URL unless noted.
 | `scripts/export_training_decks.py` | Export every saved deck (standard plus TCG main decks) to `data/training_decks.json` as a guid plus 20 `{pack, id}` card references, deduplicated with an owner count. The guid is derived from the cards, so the same deck keeps the same guid across re-exports. This is the deck pool the model stacks train against; re-run it to refresh. `--dry-run`, `--include-defaults`, `--min-users N`. |
 | `scripts/migrate_json_to_postgresql.py` | One-shot migration of the legacy JSON decks/usernames into PostgreSQL (already run). |
 | `scripts/wipe_legacy_game_records.py` | One-shot cutover: clears pre-engine_alpha game records and Elo, preserving decks and names (already run). |
-| `scripts/calibrate_board.py` | Draws colored zone markers onto the board image to verify renderer coordinates. |
-| `scripts/calibrate_chronos.py` | Draws the chronos coin marker on all 18 ring slots at once, semi-transparent with a rim and index label, to verify the coin sits centred on each printed moon/sun glyph. Writes two images: `calibration_output_chronos.png`, the whole board, and `calibration_output_chronos_glyphs.png`, one window per slot with the board's narrow glyph brightness band stretched to full range. Use the montage to judge alignment; the board's own contrast is too low to see an offset. |
+| `scripts/calibrate_board.py` | Draws colored zone markers onto the board image to verify renderer coordinates. Writes `calibration_output.jpg`. |
+| `scripts/calibrate_chronos.py` | Draws the chronos coin marker on all 18 ring slots at once, semi-transparent with a rim and index label, to verify the coin sits centred on each printed moon/sun glyph. Writes two images: `calibration_output_chronos.jpg`, the whole board, and `calibration_output_chronos_glyphs.png`, one window per slot with the board's narrow glyph brightness band stretched to full range. Use the montage to judge alignment; the board's own contrast is too low to see an offset. The montage is the one calibration output still written as PNG, deliberately: it works by amplifying faint detail, so JPEG's ringing would land at the same amplitude as the signal it exists to reveal, and compressing it would save under 0.2 MB. |
 | `scripts/measure_chronos_centers.py` | Recovers the 18 ring centres from the printed art and reports how far `CHRONOS_CENTERS` sits from each, in pixels. This is where those constants come from. Day suns are read off their disc centroid; night moons are fitted through their outer limb at a fixed radius (a free radius latches onto the gibbous terminator instead); the two new moons are a circle through their dash centroids. The two gibbous phases fit almost equally well with the disc on either side of the glyph, so the score cannot pick between them; those are resolved by ring angle, interpolated from the neighbouring slots, and both candidates are printed. Prints only. |
-| `scripts/calibrate_full.py` | Every coordinate on one bare board: the card rectangles and printed slots of the first script plus the 18 chronos ring positions of the second, drawn as outlines with no card art or coins occluding them. Writes `calibration_output_full.png`. Reuses the overlay helpers from the two scripts above so it cannot drift from them. |
-| `scripts/populate_card_images.py` / `scripts/remove_corners.py` | Card-image asset tooling (fill the `image` field in `cards.json`; mask white corners). |
+| `scripts/calibrate_full.py` | Every coordinate on one bare board: the card rectangles and printed slots of the first script plus the 18 chronos ring positions of the second, drawn as outlines with no card art or coins occluding them. Writes `calibration_output_full.jpg`. Reuses the overlay helpers from the two scripts above so it cannot drift from them. |
+| `scripts/populate_card_images.py` | Fill the `image` field in `cards.json` with the jpg path for every card. Re-run after adding card art. |
+| `scripts/convert_placeholder_cards_to_jpg.py` | One-off: gave pack-4 cards 105/106/107 a jpg (already run). They are synthetic text placeholders rather than scans, so they were the only cards that never shipped as jpg, and they are exempt from corner rounding because they have no white dead space to remove. |
+| `scripts/preview_card_images.py` | Writes the images the bot uploads to `scripts/preview_*.jpg` so they can be checked by eye: a 20-card deck grid, a 25-card gacha/draft page, the same page built from the 25 worst-compressing cards in the catalog, a board, and an Abyss strip. The bytes come straight out of the renderer's `discord.File`, so each file is exactly what a player receives rather than a re-encode. Start with `preview_detail_crops.jpg` - the full grids are downscaled four or five times over by any image viewer, which hides every compression artifact, so the 1:1 crops are the only place quality is actually visible. Prints a size table alongside; expect only the worst-case page to be large enough that a 413 would trigger a re-encode. |
+
+All calibration and preview output is gitignored. It regenerates by running the script, so it
+is deliberately not committed - the same reasoning that dropped the card png derivatives in
+favour of rounding corners at render time.
 
 ## Tests and verification
 

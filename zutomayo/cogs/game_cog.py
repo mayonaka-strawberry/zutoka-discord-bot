@@ -27,6 +27,7 @@ from zutomayo.ui.rank_songs_view import (
     RankSongsView,
     get_checkpoint_path,
 )
+from zutomayo.utils.discord_utils import send_images_with_retry
 
 
 log = logging.getLogger(__name__)
@@ -488,7 +489,12 @@ class GameCog(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
         grid = await create_deck_grid_image_off_thread(cards)
         if grid:
-            await interaction.followup.send(file=grid, ephemeral=True)
+            await send_images_with_retry(
+                interaction.followup.send,
+                label='image followup',
+                file=grid,
+                ephemeral=True,
+            )
 
     @deck_view.autocomplete('deck')
     async def deck_view_autocomplete(self, interaction: discord.Interaction, current: str):
@@ -545,7 +551,12 @@ class GameCog(commands.Cog):
         )
         grid = await create_deck_grid_image_off_thread(cards)
         if grid:
-            await interaction.followup.send(file=grid, ephemeral=True)
+            await send_images_with_retry(
+                interaction.followup.send,
+                label='image followup',
+                file=grid,
+                ephemeral=True,
+            )
 
     @deck_manage.autocomplete('deck')
     async def deck_manage_autocomplete(self, interaction: discord.Interaction, current: str):
@@ -584,10 +595,22 @@ class GameCog(commands.Cog):
 
         grid = await create_deck_grid_image_off_thread(main_cards)
         if grid:
-            await interaction.followup.send(content='**Main Deck:**', file=grid, ephemeral=True)
+            await send_images_with_retry(
+                interaction.followup.send,
+                label='image followup',
+                content='**Main Deck:**',
+                file=grid,
+                ephemeral=True,
+            )
         side_grid = await create_deck_grid_image_off_thread(side_cards, columns=4)
         if side_grid:
-            await interaction.followup.send(content='**Side Deck:**', file=side_grid, ephemeral=True)
+            await send_images_with_retry(
+                interaction.followup.send,
+                label='image followup',
+                content='**Side Deck:**',
+                file=side_grid,
+                ephemeral=True,
+            )
 
     @group.command(name='gacha', description='Open a card pack (5 cards) or a full box (10 packs)')
     @app_commands.describe(
@@ -615,11 +638,15 @@ class GameCog(commands.Cog):
             await interaction.response.defer()
             drawn = draw_gachabox(pack, all_cards)
             half = len(drawn) // 2
-            image1 = await create_deck_grid_image_off_thread(drawn[:half], columns=5, filename='gachabox_1.webp')
-            image2 = await create_deck_grid_image_off_thread(drawn[half:], columns=5, filename='gachabox_2.webp')
+            image1 = await create_deck_grid_image_off_thread(drawn[:half], columns=5, filename='gachabox_1.jpg')
+            image2 = await create_deck_grid_image_off_thread(drawn[half:], columns=5, filename='gachabox_2.jpg')
             files = [f for f in (image1, image2) if f]
             if files:
-                await interaction.followup.send(files=files)
+                await send_images_with_retry(
+                    interaction.followup.send,
+                    label='image followup',
+                    files=files,
+                )
             else:
                 await interaction.followup.send(
                     'Something went wrong generating the gacha box image.',
@@ -627,9 +654,13 @@ class GameCog(commands.Cog):
             return
 
         drawn = draw_gacha(pack, all_cards)
-        image = await create_deck_grid_image_off_thread(drawn, columns=5, filename='gacha.webp')
+        image = await create_deck_grid_image_off_thread(drawn, columns=5, filename='gacha.jpg')
         if image:
-            await interaction.response.send_message(file=image)
+            await send_images_with_retry(
+                interaction.response.send_message,
+                label='image response',
+                file=image,
+            )
         else:
             await interaction.response.send_message(
                 'Something went wrong generating the gacha image.',

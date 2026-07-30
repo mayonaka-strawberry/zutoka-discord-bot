@@ -110,38 +110,41 @@ async def send_box_reveal(
     pack_number: int,
     box_cards: list['Card'],
 ) -> None:
-    """Reveal one opened box as a single message holding both 25-card grid images.
+    """Reveal one opened box as two messages, one per 25-card grid image.
 
     The owning player always gets the images in their DM. When the draft is
-    public, the same images are also posted in the game channel. A fresh set of
-    ``discord.File`` objects is rendered per destination because a File cannot be
+    public, the same images are also posted in the game channel. A fresh
+    ``discord.File`` is rendered per destination because a File cannot be
     sent twice. The final deck a player builds is never revealed here.
+
+    One message per half rather than one message carrying both: a DM is capped at 10 MiB
+    however the guild is boosted, and two 25-card grids share that budget, which forces
+    both down to a visibly degraded quality. Split, each grid gets the whole allowance and
+    stays at full quality.
     """
     header = f'**{player_name}** - Box {box_number} of {total_boxes} (Pack {pack_number})'
     halves = ((box_cards[:CARDS_PER_PAGE], '1'), (box_cards[CARDS_PER_PAGE:], '2'))
 
-    async def render_box_files() -> list['discord.File']:
-        files: list['discord.File'] = []
-        for half_cards, half_label in halves:
-            rendered = await create_deck_grid_image_off_thread(
-                half_cards, columns=5, filename=f'draft_box_{box_number}_{half_label}.webp',
-            )
-            if rendered is not None:
-                files.append(rendered)
-        return files
-
-    dm_files = await render_box_files()
-    if dm_files:
-        await session.transport.send_to_player(
-            session, player_index, content=header, files=dm_files,
+    async def render_half(half_cards: list['Card'], half_label: str):
+        return await create_deck_grid_image_off_thread(
+            half_cards, columns=5, filename=f'draft_box_{box_number}_{half_label}.jpg',
         )
 
-    if session.draft_visibility == 'public':
-        channel_files = await render_box_files()
-        if channel_files:
-            await session.transport.send_to_channel(
-                session, content=header, files=channel_files,
+    for half_cards, half_label in halves:
+        half_header = f'{header} - {half_label}/2'
+
+        rendered = await render_half(half_cards, half_label)
+        if rendered is not None:
+            await session.transport.send_to_player(
+                session, player_index, content=half_header, files=[rendered],
             )
+
+        if session.draft_visibility == 'public':
+            rendered = await render_half(half_cards, half_label)
+            if rendered is not None:
+                await session.transport.send_to_channel(
+                    session, content=half_header, files=[rendered],
+                )
 
 
 def _standard_intro(session: 'GameSession') -> str:

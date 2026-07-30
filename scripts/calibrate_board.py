@@ -41,6 +41,7 @@ from zutomayo.ui.board_renderer import (
     SCALE,
     _get_board_base,
 )
+from zutomayo.ui.image_utils import save_jpeg_file
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -125,8 +126,8 @@ def main() -> None:
 
     board = Image.alpha_composite(board, overlay)
 
-    out_path = PROJECT_ROOT / 'scripts' / 'calibration_output.png'
-    board.save(out_path)
+    out_path = PROJECT_ROOT / 'scripts' / 'calibration_output.jpg'
+    save_jpeg_file(board, out_path)
 
     print(f'Card size: {CARD_WIDTH}x{CARD_HEIGHT} native')
     print(f'Rotational centre: x={MIRROR_X_SUM / 2}, y={MIRROR_Y_SUM / 2} native')

@@ -15,6 +15,7 @@ from zutomayo.data.deck_storage_tcg import (
 )
 from zutomayo.data.deck_validator_tcg import parse_tcg_deck_input
 from zutomayo.ui.embeds import build_deck_list_embed, create_deck_grid_image_off_thread
+from zutomayo.utils.discord_utils import send_images_with_retry
 
 if TYPE_CHECKING:
     from zutomayo.engine.game_session import GameSession
@@ -91,10 +92,22 @@ class MakeDeckTcgModal(discord.ui.Modal):
         )
         grid = await create_deck_grid_image_off_thread(main_cards)
         if grid:
-            await interaction.followup.send(content='**Main Deck:**', file=grid, ephemeral=True)
+            await send_images_with_retry(
+                interaction.followup.send,
+                label='image followup',
+                content='**Main Deck:**',
+                file=grid,
+                ephemeral=True,
+            )
         side_grid = await create_deck_grid_image_off_thread(side_cards, columns=4)
         if side_grid:
-            await interaction.followup.send(content='**Side Deck:**', file=side_grid, ephemeral=True)
+            await send_images_with_retry(
+                interaction.followup.send,
+                label='image followup',
+                content='**Side Deck:**',
+                file=side_grid,
+                ephemeral=True,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -173,10 +186,22 @@ class EditDeckTcgModal(discord.ui.Modal):
         )
         grid = await create_deck_grid_image_off_thread(main_cards)
         if grid:
-            await interaction.followup.send(content='**Main Deck:**', file=grid, ephemeral=True)
+            await send_images_with_retry(
+                interaction.followup.send,
+                label='image followup',
+                content='**Main Deck:**',
+                file=grid,
+                ephemeral=True,
+            )
         side_grid = await create_deck_grid_image_off_thread(side_cards, columns=4)
         if side_grid:
-            await interaction.followup.send(content='**Side Deck:**', file=side_grid, ephemeral=True)
+            await send_images_with_retry(
+                interaction.followup.send,
+                label='image followup',
+                content='**Side Deck:**',
+                file=side_grid,
+                ephemeral=True,
+            )
 
 
 class ManageDeckTcgActionsView(discord.ui.View):
@@ -538,10 +563,22 @@ class TcgSavedDeckSelectView(DeckNamePaginationMixin, discord.ui.View):
         self.stop()
         grid = await create_deck_grid_image_off_thread(main_cards)
         if grid:
-            await interaction.followup.send(content='**Main Deck:**', file=grid, ephemeral=True)
+            await send_images_with_retry(
+                interaction.followup.send,
+                label='image followup',
+                content='**Main Deck:**',
+                file=grid,
+                ephemeral=True,
+            )
         side_grid = await create_deck_grid_image_off_thread(side_cards, columns=4)
         if side_grid:
-            await interaction.followup.send(content='**Side Deck:**', file=side_grid, ephemeral=True)
+            await send_images_with_retry(
+                interaction.followup.send,
+                label='image followup',
+                content='**Side Deck:**',
+                file=side_grid,
+                ephemeral=True,
+            )
 
     async def _prev_page(self, interaction: discord.Interaction):
         self.page = max(0, self.page - 1)

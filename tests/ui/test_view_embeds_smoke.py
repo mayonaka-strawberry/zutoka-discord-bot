@@ -68,24 +68,49 @@ def test_battle_and_game_over_embeds():
     assert 'GAME COMPLETE' in game_over.title
 
 
+def _assert_sendable_jpeg(discord_file, label: str):
+    """Every image the bot uploads must be a real JPEG named .jpg, and still sendable.
+
+    Asserting the decoded format rather than just non-None is what catches a filename that
+    was missed during a rename, and asserting mode RGB is what catches a paste that dropped
+    its mask and left the rounded corners opaque.
+    """
+    import io
+
+    from PIL import Image
+
+    assert discord_file is not None, f'{label} should have rendered'
+    assert discord_file.filename.endswith('.jpg'), (
+        f'{label} attachment is named {discord_file.filename!r}'
+    )
+
+    discord_file.fp.seek(0)
+    image = Image.open(io.BytesIO(discord_file.fp.getvalue()))
+    image.load()
+    assert image.format == 'JPEG', f'{label} is {image.format}, not JPEG'
+    assert image.mode == 'RGB', f'{label} is mode {image.mode}, not RGB'
+    discord_file.fp.seek(0)
+
+
 def test_board_renderer_and_images_accept_views():
     from zutomayo.enums.chronos import Chronos
     from zutomayo.ui.board_renderer import generate_zone_messages, render_board_image
     from zutomayo.ui.embeds import create_deck_grid_image, create_hand_image
 
     board_view = _played_board_view()
-    board_file = render_board_image(board_view, Chronos.DAY)
-    assert board_file is not None
-    night_file = render_board_image(board_view, Chronos.NIGHT)
-    assert night_file is not None
+    _assert_sendable_jpeg(render_board_image(board_view, Chronos.DAY), 'board (day)')
+    _assert_sendable_jpeg(render_board_image(board_view, Chronos.NIGHT), 'board (night)')
 
     zone_messages = generate_zone_messages(board_view, PLAYER_NAMES)
     assert zone_messages, 'zone messages should list abyss and charger zones'
+    for label, zone_file in zone_messages:
+        if zone_file is not None:  # an empty zone renders nothing
+            _assert_sendable_jpeg(zone_file, label)
 
     player_view = board_view.players[0]
     if player_view.hand:
-        assert create_hand_image(list(player_view.hand)) is not None
-    assert create_deck_grid_image(list(player_view.deck)[:10]) is not None
+        _assert_sendable_jpeg(create_hand_image(list(player_view.hand)), 'hand')
+    _assert_sendable_jpeg(create_deck_grid_image(list(player_view.deck)[:10]), 'deck grid')
 
 
 def test_effect_resolution_embed_accepts_card_views():

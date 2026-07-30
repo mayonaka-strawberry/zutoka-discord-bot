@@ -51,6 +51,7 @@ COVERAGE_GATES = [
     ('ui core (embeds, renderers)', 80.0, [
         'zutomayo/ui/embeds.py',
         'zutomayo/ui/board_renderer.py',
+        'zutomayo/ui/card_art.py',
         'zutomayo/ui/image_utils.py',
         'zutomayo/ui/deck_management_common.py',
     ]),

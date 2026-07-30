@@ -54,6 +54,7 @@ from zutomayo.ui.board_renderer import (
     _get_board_base,
     paste_chronos_coin,
 )
+from zutomayo.ui.image_utils import save_jpeg_file
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -216,9 +217,13 @@ def main() -> None:
     _draw_slot_markers(draw, font)
     board = Image.alpha_composite(board, overlay)
 
-    out_path = PROJECT_ROOT / 'scripts' / 'calibration_output_chronos.png'
-    board.save(out_path)
+    out_path = PROJECT_ROOT / 'scripts' / 'calibration_output_chronos.jpg'
+    save_jpeg_file(board, out_path)
 
+    # The montage stays PNG, deliberately. It works by stretching the board's narrow glyph
+    # brightness band to full range, so JPEG's ringing would land at the same amplitude as
+    # the faint detail the montage exists to reveal -- and it is the image the docstring
+    # above calls the actual alignment check. Compressing it saves under 0.2 MB.
     montage_path = PROJECT_ROOT / 'scripts' / 'calibration_output_chronos_glyphs.png'
     montage = _draw_glyph_montage(_load_label_font(22))
     montage.save(montage_path)

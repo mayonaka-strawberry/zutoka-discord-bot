@@ -290,8 +290,8 @@ class TcgSeriesFlow:
     ) -> None:
         from zutomayo.ui.embeds import create_deck_grid_image_off_thread
 
-        main_img = await create_deck_grid_image_off_thread(deck, columns=5, filename='main_deck.webp')
-        side_img = await create_deck_grid_image_off_thread(side, columns=4, filename='side_deck.webp')
+        main_img = await create_deck_grid_image_off_thread(deck, columns=5, filename='main_deck.jpg')
+        side_img = await create_deck_grid_image_off_thread(side, columns=4, filename='side_deck.jpg')
         if main_img:
             await session.transport.send_to_player(
                 session, player_index, content='**Main Deck (20):**', file=main_img)

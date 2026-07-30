@@ -1,7 +1,7 @@
-from pathlib import Path
 import asyncio
 import discord
 from PIL import Image
+from zutomayo.ui.card_art import GRID_BACKGROUND, load_card_image
 from zutomayo.ui.image_utils import save_image_for_discord
 from engine_alpha.battle import CHRONOS_SIZE, NIGHT_END
 from zutomayo.enums.card_type import CardType
@@ -258,14 +258,11 @@ def build_effect_resolution_embed(
 # ---------------------------------------------------------------------------
 
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-
-
 def create_deck_grid_image(
     cards: list,
     columns: int = 5,
     padding: int = 10,
-    filename: str = 'deck.webp',
+    filename: str = 'deck.jpg',
 ) -> discord.File | None:
     """
     Combine card images into a single grid image.
@@ -276,38 +273,40 @@ def create_deck_grid_image(
     Returns a single ``discord.File`` ready to send, or ``None`` if no
     valid card images were found. Each call creates a fresh File object.
     """
-    image_paths: list[Path] = []
+    card_images: list[Image.Image] = []
     for item in cards:
         card = getattr(item, 'card', item)
         if not card.image:
             continue
-        image_path = _PROJECT_ROOT / card.image
-        if image_path.is_file():
-            image_paths.append(image_path)
+        try:
+            card_images.append(load_card_image(card.image))
+        except Exception:
+            # Missing or unreadable art is skipped, as it always has been. Note this
+            # shifts the grid rather than leaving a gap, so the data-layer test asserting
+            # every card's image exists is what keeps it from happening silently.
+            continue
 
-    if not image_paths:
+    if not card_images:
         return None
 
-    # Open first image to get card dimensions
-    sample = Image.open(image_paths[0])
-    card_w, card_h = sample.size
-    sample.close()
+    card_w, card_h = card_images[0].size
 
-    rows = -(-len(image_paths) // columns)  # ceil division
+    rows = -(-len(card_images) // columns)  # ceil division
     grid_w = columns * card_w + (columns - 1) * padding
     grid_h = rows * card_h + (rows - 1) * padding
     grid = Image.new('RGBA', (grid_w, grid_h), (0, 0, 0, 0))
 
-    for idx, path in enumerate(image_paths):
+    for idx, card_img in enumerate(card_images):
         col = idx % columns
         row = idx // columns
         x = col * (card_w + padding)
         y = row * (card_h + padding)
-        with Image.open(path) as card_img:
-            card_img = card_img.resize((card_w, card_h))
-            grid.paste(card_img, (x, y))
-    
-    return save_image_for_discord(grid, filename)
+        # The mask argument is required: without it the paste overwrites the canvas alpha
+        # with the card's own, and the rounded corners come out opaque.
+        resized = card_img.resize((card_w, card_h), Image.LANCZOS)
+        grid.paste(resized, (x, y), resized)
+
+    return save_image_for_discord(grid, filename, background=GRID_BACKGROUND)
 
 
 def create_hand_image(hand: list) -> discord.File | None:
@@ -321,7 +320,7 @@ async def create_deck_grid_image_off_thread(
     cards: list,
     columns: int = 5,
     padding: int = 10,
-    filename: str = 'deck.webp',
+    filename: str = 'deck.jpg',
 ) -> discord.File | None:
     """Run create_deck_grid_image in a worker thread so the event loop stays responsive."""
     return await asyncio.to_thread(create_deck_grid_image, cards, columns, padding, filename)

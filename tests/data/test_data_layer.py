@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPOSITORY_ROOT) not in sys.path:
@@ -510,3 +510,45 @@ class TestCardLoader:
         assert index_a is index_b
         assert cards_a == cards_b and cards_a is not cards_b
         assert build_card_index(cards_a) == index_a
+
+
+class TestCardArtPaths:
+    """The renderers assume every card resolves to a real jpg in its pack's directory.
+
+    create_deck_grid_image skips art it cannot open, which shifts the grid rather than
+    raising, and the board renderer substitutes the card back -- so a broken path is
+    invisible at runtime. These assertions are what make it visible.
+    """
+
+    def test_every_card_image_exists_on_disk(self):
+        missing = [
+            f'{card.pack}-{card.id:03d} {card.name} -> {card.image!r}'
+            for card in load_cards()
+            if not card.image or not (REPOSITORY_ROOT / card.image).is_file()
+        ]
+        assert not missing, 'cards with missing image files: ' + '; '.join(missing)
+
+    def test_every_card_image_is_a_jpg(self):
+        wrong_format = [
+            card.image for card in load_cards()
+            if not card.image.lower().endswith('.jpg')
+        ]
+        assert not wrong_format, f'non-jpg card art: {wrong_format[:5]}'
+
+    def test_image_directory_matches_the_pack_field(self):
+        """card_art derives the corner radius from the directory, so the two must agree."""
+        mismatched = [
+            (card.image, card.pack) for card in load_cards()
+            if PurePosixPath(card.image).parent.name != str(card.pack)
+        ]
+        assert not mismatched, f'image directory disagrees with pack: {mismatched[:5]}'
+
+    def test_every_pack_has_a_corner_radius_constant(self):
+        """A new pack must not fall through to the default radius unnoticed."""
+        from zutomayo.ui.card_art import CORNER_RADIUS_BY_PACK_DIRECTORY
+
+        unknown = sorted({
+            PurePosixPath(card.image).parent.name for card in load_cards()
+            if PurePosixPath(card.image).parent.name not in CORNER_RADIUS_BY_PACK_DIRECTORY
+        })
+        assert not unknown, f'packs without a corner radius constant: {unknown}'

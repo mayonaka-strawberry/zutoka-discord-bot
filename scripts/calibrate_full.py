@@ -52,6 +52,7 @@ from zutomayo.ui.board_renderer import (
     NIGHT_ZONES,
     _get_board_base,
 )
+from zutomayo.ui.image_utils import save_jpeg_file
 
 # Overlay helpers, reused rather than reimplemented, from the two focused scripts.
 from calibrate_board import (
@@ -108,8 +109,8 @@ def main() -> None:
         print(f'{slot:<6} {half:<7} {CHRONOS_CENTERS[slot]}')
 
     board = _positions_only()
-    out_path = PROJECT_ROOT / 'scripts' / 'calibration_output_full.png'
-    board.save(out_path)
+    out_path = PROJECT_ROOT / 'scripts' / 'calibration_output_full.jpg'
+    save_jpeg_file(board, out_path)
 
     print()
     print(f'Saved calibration image to {out_path}')

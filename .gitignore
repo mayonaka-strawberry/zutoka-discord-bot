@@ -242,3 +242,12 @@ model_common/migrate_checkpoint.py
 # Coverage artifacts
 .coverage
 tests/coverage_summary.json
+
+# Regenerable image output from the calibration and render-preview scripts. Both are
+# reproduced by running the script, so they do not belong in the repo -- the same reason the
+# card png derivatives were dropped in favour of rounding corners at render time.
+# Matched on extension, not just prefix, so the scripts that write them stay tracked.
+scripts/calibration_output*.jpg
+scripts/calibration_output*.png
+scripts/preview_*.jpg
+scripts/preview_*.png

@@ -12,11 +12,13 @@ ORDINAL_SUFFIX = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th"}
 
 
 def get_image_path(pack: int, card_id: int) -> str:
+    # The jpg scans are the source art. Corners are rounded at render time by
+    # zutomayo/ui/card_art.py, so there are no png derivatives to point at any more.
     suffix = ORDINAL_SUFFIX[pack]
     if pack == 4:
-        filename = f"zutomayocard_{suffix}_{card_id:03d}.png"
+        filename = f"zutomayocard_{suffix}_{card_id:03d}.jpg"
     else:
-        filename = f"zutomayocard_{suffix}_{card_id}.png"
+        filename = f"zutomayocard_{suffix}_{card_id}.jpg"
     return f"zutomayo/images/{pack}/{filename}"
 
 

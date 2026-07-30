@@ -68,7 +68,11 @@ class DiscordMatchTransport:
         if discord_id is None or discord_id == BOT_SENTINEL_DISCORD_ID:
             return None
         dm_channel = await self._get_dm_channel(discord_id)
-        return await send_with_retry(lambda: dm_channel.send(**kwargs), label='DM send')
+        return await send_with_retry(
+            lambda: dm_channel.send(**kwargs),
+            label='DM send',
+            attachment_kwargs=kwargs,
+        )
 
     async def send_to_channel(self, session: 'GameSession', **kwargs: Any) -> Optional['discord.Message']:
         from zutomayo.utils.discord_utils import send_with_retry
@@ -79,7 +83,11 @@ class DiscordMatchTransport:
         channel = self.bot.get_channel(session.channel_id)
         if channel is None:
             return None
-        return await send_with_retry(lambda: channel.send(**kwargs), label='channel send')
+        return await send_with_retry(
+            lambda: channel.send(**kwargs),
+            label='channel send',
+            attachment_kwargs=kwargs,
+        )
 
     @staticmethod
     def _record_narration(session: 'GameSession', kwargs: dict[str, Any]) -> None:
