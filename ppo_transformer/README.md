@@ -96,13 +96,16 @@ python -m ppo_transformer.train.run_train
 python -m ppo_transformer.train.run_train --resume    # continue an existing run
 ```
 
-Each iteration prints three lines, plus a fourth on gating iterations:
+Each iteration prints four lines, plus a fifth on gating iterations. The
+`win_rate_vs_random` line is absent when `PPO_TRAIN_P_VS_RANDOM` is 0, since
+then nothing plays the baseline:
 
 ```
 iteration 42: games=13820 samples=65536 total_loss=0.2109
   learning_rate=2.6e-04 epochs=2/3 elapsed=119s
   policy_loss=-0.0041 value_loss=0.4361 entropy=1.823
   clip_fraction=0.112 approximate_kl_divergence=0.0071 explained_variance=+0.564
+  win_rate_vs_random=0.914 (573 games)
   gate 0.583 vs best -> promoted (pool_size: 9, gpu_memory 4.1G)
 ```
 
@@ -131,11 +134,39 @@ Lines 3 and 4 are the split, averaged over every minibatch actually run:
 | `approximate_kl_divergence` | Schulman's low-variance KL estimator between the old and new policy. Also the early-stop trigger — see `PPO_TRAIN_TARGET_KL` below. |
 | `explained_variance` | Of the value head, `1 - Var(target - value) / Var(target)`, on-policy and pre-update. This is the value-head progress metric: scale-free, comparable across runs, and rising from ~0 toward 1. |
 
+Line 5 is not part of that split — it scores games, not minibatches:
+
+| Field | What it means |
+|---|---|
+| `win_rate_vs_random` | Score over the `PPO_TRAIN_P_VS_RANDOM` share of this iteration's rollout, drawn games counted as half. The game count in parentheses is the denominator. |
+
+`win_rate_vs_random` is the **only absolute** measurement in the log. Every other
+signal here — the gate, the pool's per-snapshot win rates — is scored against a
+past self, so a flat reading cannot on its own separate "training has stalled"
+from "self-play has converged on a strong policy". This one can: it is measured
+against a fixed opponent that never improves, so it must rise while the policy is
+still gaining real strength, and a plateau at a high value is convergence rather
+than stagnation.
+
+Read it with two caveats. It is sampled from the games a *stochastic* policy
+played during collection, so it reads slightly below what the same checkpoint
+scores at argmax — compare against a `model_common.arena.run_series` against
+`engine_alpha.baselines.RandomAgent` when an exact figure matters. And the
+denominator moves with `PPO_TRAIN_P_VS_RANDOM`: the shift to `0.50 / 0.45 / 0.05`
+that the opponent-mix note plans for a filled pool cuts it from ~570 games per
+iteration to ~190, which roughly doubles the noise on this field. Uniform-random
+play is also a low bar — once this sits near 1.0 it has stopped discriminating,
+and the gate is the only remaining signal.
+
 Labels are spelled out to match the keys they come from. Every field, plus the
 gate result and VRAM, is also appended to `runs/metrics.jsonl` — one JSON object
 per line, readable with `model_common.metrics_log.read_metrics`. The keys there
 are namespaced (`policy/clip_fraction`, `value/explained_variance`) and are the
-stable record; the console labels are display only.
+stable record; the console labels are display only. Keys that depend on what
+happened that iteration are written only when they apply: `gate/win_rate` and
+`gate/promoted` on gating iterations, `rollout/win_rate_vs_random` and
+`rollout/games_vs_random` when a baseline game actually finished. An absent key
+is not a zero.
 
 ### The KL early stop
 
