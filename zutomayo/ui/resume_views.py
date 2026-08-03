@@ -1,6 +1,11 @@
 """Confirmation view for resuming a saved PvP game: both players must agree
 before replay starts. The invoker asked via /zutomayo resume; the opponent
-accepts or declines here. On timeout or decline the game simply stays saved."""
+accepts or declines here. On timeout or decline the game simply stays saved.
+
+Requests made from a server channel carry a Cancel button for the invoker, who
+can see the message. Requests made from a DM are delivered to the opponent's
+DM, where the invoker can never press anything, so Cancel is dropped
+(``allow_cancel=False``) and the request simply expires on timeout."""
 
 from __future__ import annotations
 
@@ -21,6 +26,7 @@ class ResumeConfirmationView(discord.ui.View):
         invoker_id: int,
         opponent_id: int,
         on_accept: Callable[[discord.Interaction], Awaitable[None]],
+        allow_cancel: bool = True,
     ) -> None:
         super().__init__(timeout=RESUME_CONFIRMATION_TIMEOUT_SECONDS)
         self.game_id = game_id
@@ -29,6 +35,8 @@ class ResumeConfirmationView(discord.ui.View):
         self.on_accept = on_accept
         self.message: Optional[discord.Message] = None
         self.resolved = False
+        if not allow_cancel:
+            self.remove_item(self.cancel)
 
     async def _finish(self, interaction: discord.Interaction, content: str) -> None:
         self.resolved = True

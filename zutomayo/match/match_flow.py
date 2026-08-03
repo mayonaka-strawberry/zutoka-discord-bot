@@ -66,11 +66,24 @@ class SingleMatchFlow:
     # -- runtime -----------------------------------------------------------
 
     def _ensure_decision_runtime(self, session: 'GameSession') -> None:
+        """Install the transport and broker when the caller has not already.
+        Solo games seat a model on player 1; run_solo_game builds its own broker
+        up front, so this branch is what a resumed solo game relies on (without
+        it the bot seat would be prompted by DM at sentinel id 0, never answer,
+        and forfeit on consecutive timeouts)."""
         if session.transport is None:
             session.transport = DiscordMatchTransport(self.bot)
         if session.broker is None:
             discord_adapter = DiscordMatchDecisionAdapter(session.transport)
-            session.broker = MatchDecisionBroker(session, {0: discord_adapter, 1: discord_adapter})
+            adapters = {0: discord_adapter, 1: discord_adapter}
+            if session.is_solo:
+                # Local import: solo_flow imports SingleMatchFlow at module level.
+                from zutomayo.match.solo_flow import MODEL_PLAYER_INDEX, create_model_adapter
+
+                adapters[MODEL_PLAYER_INDEX] = create_model_adapter(
+                    session, session.solo_difficulty,
+                )
+            session.broker = MatchDecisionBroker(session, adapters)
 
     def _player_names(self, session: 'GameSession') -> dict[int, str]:
         self._ensure_decision_runtime(session)

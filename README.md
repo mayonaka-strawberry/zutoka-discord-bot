@@ -54,7 +54,7 @@ plus the `deck` subgroup):
 | `join <game_id>` | | Join a created game. Guild-only. |
 | `end <game_id>` | autocomplete | End an active game. Guild-only. |
 | `quit` | `save`: True \| False (default False) | Leave your active game; `save: True` replaces the old saveandquit. |
-| `resume <game_id>` | autocomplete | Resume a saved game. Two-player resumes need both players to confirm. |
+| `resume <game_id>` | autocomplete | Resume a saved game, from a DM or a server channel. Two-player resumes need both players to confirm; asked for from a DM, the request is delivered to the opponent's DM. |
 | `deck make` | `name`, `format`: Standard \| TCG | Opens the deck builder. |
 | `deck view` | `deck` (autocomplete), `format` | Shows a saved deck. |
 | `deck manage` | `deck` (autocomplete), `format` | Rename, edit, or delete a saved deck. |
@@ -70,6 +70,12 @@ atomically in the database). Saving a game keeps no partial results; resuming
 replays the game deterministically from its decision log, so saved games are
 best-effort across bot updates (a diverged game is marked unrecoverable, but
 its summary keeps working).
+
+Every game is played out in DMs and the channel only carries public narration,
+so a saved game can be resumed from anywhere. Resuming a two-player game from a
+server channel moves its narration to that channel; resuming from a DM leaves
+the game on the channel it was already on. Solo games are recorded with no
+channel at all, so nothing about them is ever posted publicly.
 
 In-game decision prompts time out after 300 seconds (the TCG side-deck switch
 allows 750) and resolve to a deterministic fallback action; three consecutive

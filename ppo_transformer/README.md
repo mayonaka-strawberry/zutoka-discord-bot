@@ -234,7 +234,7 @@ Promote a checkpoint by copying it:
 
 ```powershell
 New-Item -ItemType Directory -Force ppo_transformer\deploy
-Copy-Item ppo_transformer\runs\checkpoints\iteration_00320.pt ppo_transformer\deploy\model.pt
+Copy-Item ppo_transformer\runs\checkpoints\iteration_00400.pt ppo_transformer\deploy\model.pt
 ```
 
 `PpoAgent` plays argmax over the masked legal actions — a single forward pass
@@ -275,8 +275,8 @@ it is a window over the most recent promotions rather than a full league, and th
 gate plays only the newest entry. Both mean a policy can drift around a strategy
 loop — beating its recent self, and so passing gates, while losing to its own
 policy from far earlier in the run. If strength plateaus while gates keep passing,
-suspect that before suspecting the learning rate. The window covers most of a
-320-iteration run and only a small fraction of a 4800-iteration one, which is why
+suspect that before suspecting the learning rate. At 40 slots the window covers a
+400-iteration run and only a small fraction of a 4800-iteration one, which is why
 capacity sits in the horizon block.
 
 **`clip_fraction` above ~0.3 and `approximate_kl_divergence` above ~0.05,
@@ -301,7 +301,7 @@ later than it used to: the update peaks at ~9 GB under bf16 where fp32 needed
 **Out of memory late in a long run.** Should no longer happen. Snapshot
 opponents are cached on the GPU by path, and the cache is pruned to current pool
 membership after every promotion, so residency is capped at
-`PPO_TRAIN_SNAPSHOT_CAPACITY` networks (~3.9 GB at 30 x 32.3M fp32 params).
+`PPO_TRAIN_SNAPSHOT_CAPACITY` networks (~5.2 GB at 40 x 32.3M fp32 params).
 Before that pruning existed, every promotion pinned another 129 MB for the rest
 of the run, which put a several-thousand-iteration run over a 24 GB card
 regardless of batch size. `system/vram_allocated_gb` in `metrics.jsonl` should
@@ -335,7 +335,7 @@ Applied defaults worth knowing about, and knobs worth trying:
 - **Iteration cost.** ~119.5 s at the settings above, measured 2026-07-29 over
   iterations 16-31 of a live run (averaged after the first snapshot promotion —
   earlier iterations are cheaper because there is no opponent net to run). So
-  320 iterations is ~10.6 h and 4800 is ~6.6 d. Gating iterations cost ~45 s
+  400 iterations is ~13.3 h and 4800 is ~6.6 d. Gating iterations cost ~45 s
   extra for the 200-game series.
 - **`PPO_TRAIN_GAE_LAMBDA` (0.98).** The reward is terminal-only, so lambda
   controls how much of the actual game outcome reaches early decisions: at 0.95

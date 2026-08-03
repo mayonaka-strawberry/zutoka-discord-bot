@@ -727,9 +727,11 @@ class GameCog(commands.Cog):
     @group.command(name='resume', description='Resume one of your saved games')
     @app_commands.describe(game_id='The saved game to resume')
     async def resume_saved_game(self, interaction: discord.Interaction, game_id: str) -> None:
-        from zutomayo.engine.game_persistence import STATUS_ACTIVE, GameRecordStore
-        from zutomayo.match.resume import load_saved_game_for_resume, resume_game
-        from zutomayo.ui.resume_views import ResumeConfirmationView
+        """Resume from a DM or a server channel. Every game already plays out in
+        DMs; the channel only carries public narration, so where the command is
+        used decides how a two-player confirmation is delivered, not whether the
+        game can run."""
+        from zutomayo.match.resume import load_saved_game_for_resume
 
         try:
             row = await load_saved_game_for_resume(game_id, interaction.user.id)
@@ -738,43 +740,79 @@ class GameCog(commands.Cog):
             return
 
         if row['is_solo']:
-            if interaction.guild is not None:
-                await interaction.response.send_message(
-                    'Solo games are resumed in DMs â€” use this command in a DM with the bot.',
-                    ephemeral=True,
-                )
-                return
-            await GameRecordStore.attach_for_resume(game_id).set_status(STATUS_ACTIVE)
-            await interaction.response.send_message(f'Resuming game `{game_id}`...')
-            await resume_game(self.bot, game_id, announcement='**Game resumed.**')
-            return
+            await self._resume_solo_game(interaction, game_id, row)
+        else:
+            await self._request_two_player_resume(interaction, game_id, row)
 
-        if interaction.guild is None:
-            await interaction.response.send_message(
-                'Two-player games are resumed in a server channel, not in DMs.', ephemeral=True,
+    async def _resume_solo_game(
+        self, interaction: discord.Interaction, game_id: str, row: dict,
+    ) -> None:
+        """Solo games are played entirely over DM, so they resume from anywhere
+        and keep their recorded channel (0 - nothing is posted publicly)."""
+        from zutomayo.engine.game_persistence import (
+            STATUS_ACTIVE,
+            STATUS_SAVED,
+            GameRecordStore,
+        )
+        from zutomayo.match.resume import resume_game
+
+        store = GameRecordStore.attach_for_resume(game_id)
+        await store.set_status(STATUS_ACTIVE)
+        await interaction.response.send_message(f'Resuming game `{game_id}`...')
+        try:
+            await resume_game(
+                self.bot, game_id,
+                channel_id_override=row['channel_id'],
+                announcement='**Game resumed.**',
             )
-            return
+        except ValueError as error:
+            # Usually the solo opponent's checkpoint is no longer deployed.
+            # Leave the game saved rather than starting a match whose bot seat
+            # nobody can answer for.
+            log.warning('Solo resume of game %s failed: %s', game_id, error)
+            await store.set_status(STATUS_SAVED)
+            await interaction.followup.send(
+                f'Game `{game_id}` could not be resumed: {error} It remains saved.',
+                ephemeral=True,
+            )
+
+    async def _request_two_player_resume(
+        self, interaction: discord.Interaction, game_id: str, row: dict,
+    ) -> None:
+        """Ask the opponent to confirm. In a server channel both players can see
+        the request, so it goes there; from a DM it is delivered to the
+        opponent's DM instead."""
+        from zutomayo.data.name_storage import resolve_display_name
+        from zutomayo.engine.game_persistence import STATUS_ACTIVE, GameRecordStore
+        from zutomayo.match.resume import load_saved_game_for_resume, resume_game
+        from zutomayo.match.transport import open_dm_channel
+        from zutomayo.ui.resume_views import ResumeConfirmationView
 
         manifest = row['manifest']
         opponent_id = next(
             player_id for player_id, _ in manifest['player_discord_ids']
             if player_id != interaction.user.id
         )
-        channel_id = interaction.channel_id
+        in_guild = interaction.guild is not None
+        invoking_channel_id = interaction.channel_id
         invoker_id = interaction.user.id
         bot = self.bot
 
         async def start_resume(button_interaction: discord.Interaction) -> None:
             try:
-                await load_saved_game_for_resume(game_id, invoker_id)
+                current_row = await load_saved_game_for_resume(game_id, invoker_id)
             except ValueError as error:
                 await button_interaction.response.edit_message(content=str(error), view=None)
                 return
+            # Resuming from a server channel moves the game there; resuming from
+            # a DM leaves it wherever it already was. The row is re-read because
+            # minutes can pass between the request and the answer.
+            channel_id = invoking_channel_id if in_guild else current_row['channel_id']
             await GameRecordStore.attach_for_resume(game_id).set_status(
                 STATUS_ACTIVE, channel_id=channel_id,
             )
             await button_interaction.response.edit_message(
-                content=f'Both players agreed â€” resuming game `{game_id}`...', view=None,
+                content=f'Both players agreed - resuming game `{game_id}`...', view=None,
             )
             await resume_game(
                 bot, game_id,
@@ -782,22 +820,64 @@ class GameCog(commands.Cog):
                 announcement='**Game resumed.**',
             )
 
+        mode_label = f'TCG best of {row["best_of"]}' if row['is_tcg'] else 'standard'
+        saved_date = row['saved_at'].date().isoformat() if row['saved_at'] else 'unknown date'
+
+        if in_guild:
+            view = ResumeConfirmationView(
+                game_id=game_id,
+                invoker_id=invoker_id,
+                opponent_id=opponent_id,
+                on_accept=start_resume,
+            )
+            await interaction.response.send_message(
+                f'<@{opponent_id}> - **{interaction.user.display_name}** wants to resume '
+                f'saved game `{game_id}` ({mode_label}, saved {saved_date}). '
+                'Both players must agree before the game continues.',
+                view=view,
+                allowed_mentions=discord.AllowedMentions(users=[discord.Object(id=opponent_id)]),
+            )
+            view.message = await interaction.original_response()
+            return
+
+        # Opening the opponent's DM costs extra round trips, so answer the
+        # interaction first. Cancel is dropped: the request lives in the
+        # opponent's DM, where the invoker can never press it.
+        await interaction.response.defer()
         view = ResumeConfirmationView(
             game_id=game_id,
             invoker_id=invoker_id,
             opponent_id=opponent_id,
             on_accept=start_resume,
+            allow_cancel=False,
         )
-        mode_label = f'TCG best of {row["best_of"]}' if row['is_tcg'] else 'standard'
-        saved_date = row['saved_at'].date().isoformat() if row['saved_at'] else 'unknown date'
-        await interaction.response.send_message(
-            f'<@{opponent_id}> â€” **{interaction.user.display_name}** wants to resume '
-            f'saved game `{game_id}` ({mode_label}, saved {saved_date}). '
-            'Both players must agree before the game continues.',
-            view=view,
-            allowed_mentions=discord.AllowedMentions(users=[discord.Object(id=opponent_id)]),
+        try:
+            dm_channel = await open_dm_channel(bot, opponent_id)
+            view.message = await dm_channel.send(
+                content=(
+                    f'**{interaction.user.display_name}** wants to resume saved game `{game_id}` '
+                    f'({mode_label}, saved {saved_date}). '
+                    'Both players must agree before the game continues.'
+                ),
+                view=view,
+            )
+        except discord.HTTPException:
+            log.warning(
+                'Could not DM the resume request for game %s to %s', game_id, opponent_id,
+            )
+            await interaction.followup.send(
+                'I could not send the resume request to your opponent - they may have '
+                'DMs turned off. Ask them to open their DMs, or run `/zutomayo resume` '
+                'in a server channel you both share.',
+                ephemeral=True,
+            )
+            return
+
+        opponent_name = resolve_display_name(bot, opponent_id)
+        await interaction.followup.send(
+            f'Resume request for game `{game_id}` sent to **{opponent_name}** in a DM. '
+            'It expires in 5 minutes if they do not respond.'
         )
-        view.message = await interaction.original_response()
 
     @resume_saved_game.autocomplete('game_id')
     async def resume_autocomplete(

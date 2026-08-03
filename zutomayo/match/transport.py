@@ -23,6 +23,17 @@ log = logging.getLogger(__name__)
 BOT_SENTINEL_DISCORD_ID = 0
 
 
+async def open_dm_channel(bot: 'discord.Client', discord_id: int) -> 'discord.DMChannel':
+    """Open (or reuse) the bot's DM channel with one user. Module level because
+    the resume command needs a DM before any session or transport exists."""
+    from zutomayo.utils.discord_utils import send_with_retry
+
+    user = bot.get_user(discord_id)
+    if user is None:
+        user = await send_with_retry(lambda: bot.fetch_user(discord_id), label='fetch_user')
+    return await send_with_retry(lambda: user.create_dm(), label='create_dm')
+
+
 class MatchTransport(Protocol):
     muted: bool
 
@@ -52,12 +63,7 @@ class DiscordMatchTransport:
         self.muted = False
 
     async def _get_dm_channel(self, discord_id: int) -> 'discord.DMChannel':
-        from zutomayo.utils.discord_utils import send_with_retry
-
-        user = self.bot.get_user(discord_id)
-        if user is None:
-            user = await send_with_retry(lambda: self.bot.fetch_user(discord_id), label='fetch_user')
-        return await send_with_retry(lambda: user.create_dm(), label='create_dm')
+        return await open_dm_channel(self.bot, discord_id)
 
     async def send_to_player(self, session: 'GameSession', player_index: int, **kwargs: Any) -> Optional['discord.Message']:
         from zutomayo.utils.discord_utils import send_with_retry

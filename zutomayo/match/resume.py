@@ -128,33 +128,43 @@ async def resume_game(
     from zutomayo.data.deck_validator import get_card_index
     from zutomayo.engine.game_persistence import resolve_card_keys
 
-    _, card_index = get_card_index()
+    entry_coroutine = None
+    try:
+        _, card_index = get_card_index()
 
-    if manifest.get('is_tcg'):
-        from zutomayo.match.series_flow import TcgSeriesFlow
+        if manifest.get('is_tcg'):
+            from zutomayo.match.series_flow import TcgSeriesFlow
 
-        series_flow = TcgSeriesFlow(bot, manifest['best_of'])
-        series_flow.match_flow._ensure_decision_runtime(session)
-        resumed_decks = (
-            resolve_card_keys(manifest['deck_0'], card_index),
-            resolve_card_keys(manifest['side_0'], card_index),
-            resolve_card_keys(manifest['deck_1'], card_index),
-            resolve_card_keys(manifest['side_1'], card_index),
-        )
-        entry_coroutine = series_flow.run_tcg(session, resumed_decks=resumed_decks)
-    else:
-        flow = SingleMatchFlow(bot)
-        flow._ensure_decision_runtime(session)
-        deck_0 = resolve_card_keys(manifest['deck_0'], card_index)
-        deck_1 = resolve_card_keys(manifest['deck_1'], card_index)
-        entry_coroutine = _run_single_resumed_match(flow, session, deck_0, deck_1)
+            series_flow = TcgSeriesFlow(bot, manifest['best_of'])
+            series_flow.match_flow._ensure_decision_runtime(session)
+            resumed_decks = (
+                resolve_card_keys(manifest['deck_0'], card_index),
+                resolve_card_keys(manifest['side_0'], card_index),
+                resolve_card_keys(manifest['deck_1'], card_index),
+                resolve_card_keys(manifest['side_1'], card_index),
+            )
+            entry_coroutine = series_flow.run_tcg(session, resumed_decks=resumed_decks)
+        else:
+            flow = SingleMatchFlow(bot)
+            flow._ensure_decision_runtime(session)
+            deck_0 = resolve_card_keys(manifest['deck_0'], card_index)
+            deck_1 = resolve_card_keys(manifest['deck_1'], card_index)
+            entry_coroutine = _run_single_resumed_match(flow, session, deck_0, deck_1)
 
-    session.persistence = MatchRecordStore.attach_for_resume(game_id, session)
-    session.persistence.next_event_index = await next_event_index(game_id)
-    session.broker.persistence = session.persistence
-    await load_replay_state(session.broker, game_id)
-    session.transport.muted = True
-    session.broker.on_go_live = _make_go_live_callback(session, announcement)
+        session.persistence = MatchRecordStore.attach_for_resume(game_id, session)
+        session.persistence.next_event_index = await next_event_index(game_id)
+        session.broker.persistence = session.persistence
+        await load_replay_state(session.broker, game_id)
+        session.transport.muted = True
+        session.broker.on_go_live = _make_go_live_callback(session, announcement)
+    except BaseException:
+        # Nothing is running yet, so the registration above would otherwise
+        # strand both players in a game that never starts (a solo opponent
+        # whose checkpoint is gone raises here, for example).
+        if entry_coroutine is not None:
+            entry_coroutine.close()
+        session_manager.remove_game(session.game_id)
+        raise
 
     session.game_task = asyncio.get_running_loop().create_task(
         _run_resumed_game(session, entry_coroutine)
