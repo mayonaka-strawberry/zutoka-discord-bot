@@ -34,6 +34,7 @@ class FakeSession:
 class RecordingTransport:
     def __init__(self) -> None:
         self.muted = False
+        self.suppress_phase_delays = True
         self.player_messages: dict[int, list[dict]] = {0: [], 1: []}
         self.channel_messages: list[dict] = []
 

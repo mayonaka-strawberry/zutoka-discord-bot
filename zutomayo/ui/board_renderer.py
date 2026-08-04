@@ -448,6 +448,7 @@ def render_zone_strip(
 def generate_zone_messages(
     game_state: GameState,
     player_names: dict[int, str],
+    indices: Optional[set[int]] = None,
 ) -> list[tuple[str, Optional[discord.File]]]:
     """
     Generate (label, file_or_None) tuples for Abyss and Power Charger zones.
@@ -456,6 +457,10 @@ def generate_zone_messages(
       Player 0 Abyss, Player 0 Power Charger,
       Player 1 Abyss, Player 1 Power Charger.
 
+    ``indices`` selects which of those four to render (None renders all); a
+    caller re-sending only the zones that changed passes their positions so the
+    rest are never composed.
+
     Must be called once per destination because discord.File is consumed on send.
     """
     messages: list[tuple[str, Optional[discord.File]]] = []
@@ -463,11 +468,13 @@ def generate_zone_messages(
         player = game_state.players[index]
         name = player_names.get(index, f'Player {index + 1}')
 
-        abyss_strip = render_zone_strip(player.abyss, f'{name} Abyss')
-        messages.append((f'{name} Abyss', abyss_strip))
-
-        pc_strip = render_zone_strip(player.power_charger, f'{name} Power Charger')
-        messages.append((f'{name} Power Charger', pc_strip))
+        for position, (label, cards) in enumerate((
+            (f'{name} Abyss', player.abyss),
+            (f'{name} Power Charger', player.power_charger),
+        )):
+            if indices is not None and index * 2 + position not in indices:
+                continue
+            messages.append((label, render_zone_strip(cards, label)))
 
     return messages
 
@@ -488,6 +495,7 @@ async def render_board_image_off_thread(
 async def generate_zone_messages_off_thread(
     game_state: GameState,
     player_names: dict[int, str],
+    indices: Optional[set[int]] = None,
 ) -> list[tuple[str, Optional[discord.File]]]:
     """Run generate_zone_messages in a worker thread so the event loop stays responsive."""
-    return await asyncio.to_thread(generate_zone_messages, game_state, player_names)
+    return await asyncio.to_thread(generate_zone_messages, game_state, player_names, indices)

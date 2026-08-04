@@ -103,9 +103,16 @@ def test_board_renderer_and_images_accept_views():
 
     zone_messages = generate_zone_messages(board_view, PLAYER_NAMES)
     assert zone_messages, 'zone messages should list abyss and charger zones'
+    assert [label for label, _ in zone_messages] == [
+        'Alpha Abyss', 'Alpha Power Charger', 'Beta Abyss', 'Beta Power Charger',
+    ]
     for label, zone_file in zone_messages:
         if zone_file is not None:  # an empty zone renders nothing
             _assert_sendable_jpeg(zone_file, label)
+
+    # A caller re-sending only what changed never composes the other zones.
+    selected = generate_zone_messages(board_view, PLAYER_NAMES, indices={0, 3})
+    assert [label for label, _ in selected] == ['Alpha Abyss', 'Beta Power Charger']
 
     player_view = board_view.players[0]
     if player_view.hand:

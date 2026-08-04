@@ -25,6 +25,7 @@ from engine_alpha.actions import (
     P_SET_SLOT_B,
     P_SKIP_SWAP,
 )
+from engine_alpha.state import PH_PROCESS_EFFECTS
 from zutomayo.match.decisions import (
     KIND_BINARY_CHOICE,
     KIND_CARD_CHOICE,
@@ -68,16 +69,37 @@ def _effect_prefix(state) -> str:
     return f'**{card.name}** [{card.name_jp}] effect: '
 
 
+def _effect_order_prompt(state, engine_request) -> str:
+    """Numbered the way the pre-port engine numbered it: the step counts every
+    effect already placed in the resolution order, including the cost-reducing
+    ones the rules force to the front."""
+    card_names = ', '.join(
+        definition_index_to_card(state.inst_def[instance_id]).name
+        for instance_id in engine_request.candidates
+    )
+    ordered_count = 0
+    if state.phase == PH_PROCESS_EFFECTS and len(state.phase_ctx) == 7:
+        ordered_count = len(state.phase_ctx[4])
+    return (
+        f'**Choose effect order ({ordered_count + 1}/'
+        f'{ordered_count + len(engine_request.candidates)})** '
+        f'[効果の処理順を選んでください]\n'
+        f'Remaining effects: {card_names}\n'
+        f'Select which effect to resolve next:'
+    )
+
+
 def _prompt_for(state, engine_request) -> str:
     purpose = engine_request.purpose
     if purpose == P_MULLIGAN:
         return 'Select the cards you want to redraw [最初の手札を引いたとき、一度だけ引き直しができます。]'
     if purpose == P_INITIAL_CARD:
-        return 'Choose your initial battle card.'
+        return ('Choose one card to place face-down in the Battle Zone '
+                '[手札からカードを１枚選びバトルゾーンに裏向きにして置きます。]')
     if purpose in (P_SET_SLOT_A, P_SET_SLOT_B):
         return 'Set cards from your hand.'
     if purpose == P_EFFECT_ORDER:
-        return 'Multiple effects are waiting. Select the effect to resolve next.'
+        return _effect_order_prompt(state, engine_request)
     if purpose == P_EFFECT_TARGET:
         return f'{_effect_prefix(state)}select a card.'
     if purpose == P_EFFECT_NUMBER:

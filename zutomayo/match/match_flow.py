@@ -1,10 +1,11 @@
 """
 SingleMatchFlow: one standard match run on the engine_alpha state machine.
 
-Owns everything around the engine: deck building, the initial announcements
-(hands, boards, zone strips), the driver loop, board re-rendering, result
-recording (Elo, game status), and forfeit handling. The engine owns every
-rule; this flow never mutates game state.
+Owns everything around the engine: deck building, the opening hand DMs, the
+driver loop, result recording (Elo, game status), and forfeit handling. Phase
+gates - the board, zone strips and field embed posted at every phase boundary -
+belong to the narrator's GatePresenter, which this flow hands its renderers to.
+The engine owns every rule; this flow never mutates game state.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from zutomayo.match.discord_adapter import DiscordMatchDecisionAdapter
 from zutomayo.match.match_driver import EngineMatchDriver, MatchOutcome
 from zutomayo.match.narrator import MatchNarrator
 from zutomayo.match.persistence import MatchRecordStore, card_keys_for_definition_indices
-from zutomayo.match.state_view import BoardView, project_board_view
+from zutomayo.match.state_view import project_board_view
 from zutomayo.match.transport import DiscordMatchTransport
 
 if TYPE_CHECKING:
@@ -216,11 +217,8 @@ class SingleMatchFlow:
             )
         session.broker.persistence = session.persistence
 
-        narrator = MatchNarrator(session, session.transport)
-        driver = EngineMatchDriver(
-            session, game, session.broker, narrator, names,
-            on_board_changed=lambda board_view: self._broadcast_board(session, board_view),
-        )
+        narrator = self._build_narrator(session)
+        driver = EngineMatchDriver(session, game, session.broker, narrator, names)
 
         await self._announce_game_start(session, names)
 
@@ -237,6 +235,20 @@ class SingleMatchFlow:
         return outcome
 
     # -- announcements -------------------------------------------------------
+
+    def _build_narrator(self, session: 'GameSession') -> MatchNarrator:
+        """The narrator and its gate presenter render nothing on their own; the
+        Discord flow is what hands them the image builders."""
+        from zutomayo.ui.board_renderer import (
+            generate_zone_messages_off_thread, render_board_image_off_thread,
+        )
+        from zutomayo.ui.embeds import create_hand_image_off_thread
+
+        narrator = MatchNarrator(session, session.transport)
+        narrator.hand_image_provider = create_hand_image_off_thread
+        narrator.gate_presenter.board_image_provider = render_board_image_off_thread
+        narrator.gate_presenter.zone_messages_provider = generate_zone_messages_off_thread
+        return narrator
 
     async def _announce_game_start(self, session: 'GameSession', names: dict[int, str]) -> None:
         from zutomayo.ui.embeds import build_hand_embed, create_hand_image_off_thread
@@ -257,28 +269,6 @@ class SingleMatchFlow:
             hand_file = await create_hand_image_off_thread(list(player_view.hand))
             if hand_file:
                 await session.transport.send_to_player(session, index, files=[hand_file])
-
-        start_content = f'**ゲームスタート: {names[0]} vs. {names[1]}**'
-        await session.transport.send_to_channel(session, content=start_content)
-
-    async def _broadcast_board(self, session: 'GameSession', board_view: BoardView) -> None:
-        from zutomayo.enums.chronos import Chronos
-        from zutomayo.ui.board_renderer import render_board_image_off_thread
-        from zutomayo.ui.embeds import build_field_embed_from_board_view
-
-        if getattr(session.transport, 'muted', False):
-            return
-        field_embed = build_field_embed_from_board_view(board_view)
-        board_file = await render_board_image_off_thread(board_view, Chronos.DAY)
-        await session.transport.send_to_channel(session, embed=field_embed, files=[board_file])
-        for index in range(2):
-            if not session.transport.delivers_to_player(session, index):
-                continue
-            player_view = board_view.players[index]
-            board_file = await render_board_image_off_thread(board_view, player_view.side)
-            await session.transport.send_to_player(
-                session, index, embed=field_embed, files=[board_file],
-            )
 
     # -- results -------------------------------------------------------------
 

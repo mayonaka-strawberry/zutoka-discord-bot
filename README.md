@@ -156,14 +156,25 @@ is_terminal() / returns()`:
   a deterministic fallback action (pass when legal, otherwise the lowest
   legal action); three consecutive timeouts forfeit.
 - `presentation.py` / `discord_adapter.py`: maps engine decisions onto the
-  Discord views; the mulligan and set-cards prompts are compound (one view
-  answers the engine's iterative requests, both players prompted
-  concurrently).
+  Discord views; the mulligan, initial-card and set-cards prompts are compound
+  (one view answers the engine's iterative requests, both players prompted
+  concurrently). Concurrency is also what keeps a placement secret: neither
+  player learns anything from the other's timing, and nothing is posted between
+  the two commitments.
 - `state_view.py`: read-only `BoardView` / `PlayerView` / `CardView`
   projections consumed by embeds and the PIL board renderer.
 - `narrator.py`: translates engine events (`engine_alpha/events.py`) into
   channel/DM messages and the permanent `game_events` stream that powers
   `/zutomayo summary`.
+- `gate_presenter.py`: the phase gates. `Game.apply` runs a whole chain of
+  phases at once (set cards, reveal, chronos, swaps, effects, battle, end
+  turn), so `SnapshottingEventSink` - the plain list the engine already appends
+  events to - captures a `BoardView` at each phase boundary as it happens. The
+  `GatePresenter` posts one bundle per boundary: the abyss / power charger
+  strips that changed, a phase header, the field embed, and a board image per
+  perspective (channel sees the day side, each player their own). That is what
+  makes the set cards visible face-down in their set slots before the reveal
+  gate turns them over.
 - `transport.py`: the `MatchTransport` protocol all outgoing messages route
   through - Discord DMs live, a recorder in tests, or muted during replay.
 - `match_driver.py` / `match_flow.py` / `series_flow.py` / `draft_flow.py` /

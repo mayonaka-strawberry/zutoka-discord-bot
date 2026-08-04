@@ -36,6 +36,9 @@ async def open_dm_channel(bot: 'discord.Client', discord_id: int) -> 'discord.DM
 
 class MatchTransport(Protocol):
     muted: bool
+    # Skips the pause the gate presenter leaves between phase bundles, so
+    # headless runs do not sleep their way through a game.
+    suppress_phase_delays: bool
 
     async def send_to_player(self, session: 'GameSession', player_index: int, **kwargs: Any) -> Optional['discord.Message']:
         ...
@@ -61,6 +64,7 @@ class DiscordMatchTransport:
     def __init__(self, bot: 'discord.Client') -> None:
         self.bot = bot
         self.muted = False
+        self.suppress_phase_delays = False
 
     async def _get_dm_channel(self, discord_id: int) -> 'discord.DMChannel':
         return await open_dm_channel(self.bot, discord_id)

@@ -8,10 +8,10 @@ import random
 
 from engine_alpha.actions import (
     BINARY, SELECT_CARD, SELECT_IDENTITY, SELECT_NUMBER,
-    P_MULLIGAN, P_SET_SLOT_A, P_SET_SLOT_B, select_card,
+    P_INITIAL_CARD, P_MULLIGAN, P_SET_SLOT_A, P_SET_SLOT_B, select_card,
 )
 from engine_alpha.game import Game
-from engine_alpha.state import PH_SET_CARDS
+from engine_alpha.state import PH_INITIAL_SET, PH_SET_CARDS
 from zutomayo.match.decisions import (
     KIND_BINARY_CHOICE, KIND_CARD_CHOICE, KIND_CARD_MULTI_CHOICE,
     KIND_IDENTITY_INPUT, KIND_NUMBER_CHOICE, MatchDecisionRequest,
@@ -129,6 +129,43 @@ def test_set_cards_cache_mismatch_returns_none():
     selection = _selection_with([99])
     slot_a = _request_for(P_SET_SLOT_A, [30, 31, 32])
     assert adapter._compound_action(selection, slot_a) is None
+
+
+def test_initial_card_cache_picks_the_chosen_card():
+    adapter = DiscordMatchDecisionAdapter(transport=None)
+    selection = _selection_with([31])
+
+    request = _request_for(P_INITIAL_CARD, [30, 31, 32])
+    assert adapter._compound_action(selection, request) == 1
+
+    stale = _selection_with([99])
+    assert adapter._compound_action(stale, request) is None
+
+
+def test_initial_card_legal_sets_are_independent_between_players():
+    """Same property as set-cards, for the opening placement: the second
+    mover's candidates are their own untouched hand, so both prompts can be
+    presented at once."""
+    for seed in range(6):
+        decks = random_full_pool_decks(400 + seed)
+        game = Game(seed=seed, mode='fixed_decks', decks=decks)
+        rng = random.Random(seed)
+        steps = 0
+        while not game.is_terminal() and steps < 600:
+            state = game.state
+            if state.phase == PH_INITIAL_SET and state.pending is not None:
+                first_mover = state.acting
+                second_mover = 1 - first_mover
+                second_hand_before = list(state.players[second_mover].hand)
+
+                probe = game.clone()
+                probe.apply(rng.choice(probe.legal_actions()))
+                assert probe.state.phase == PH_INITIAL_SET
+                assert probe.state.acting == second_mover
+                assert list(probe.state.pending.candidates) == second_hand_before
+                break
+            game.apply(rng.choice(game.legal_actions()))
+            steps += 1
 
 
 def test_set_cards_legal_sets_are_independent_between_players():

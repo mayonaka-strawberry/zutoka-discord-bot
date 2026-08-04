@@ -107,6 +107,7 @@ class PlayerView:
 class BoardView:
     turn: int
     chronos: int
+    chronos_at_turn_start: int
     is_night: bool
     phase: int
     phase_name: str
@@ -152,6 +153,7 @@ def project_board_view(game, player_names: dict[int, str]) -> BoardView:
     return BoardView(
         turn=state.turn,
         chronos=state.chronos,
+        chronos_at_turn_start=state.chronos_at_turn_start,
         is_night=state.chronos <= NIGHT_END,
         phase=state.phase,
         phase_name=PHASE_NAMES.get(state.phase, str(state.phase)),

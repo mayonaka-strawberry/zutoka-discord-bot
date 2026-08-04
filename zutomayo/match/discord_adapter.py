@@ -2,15 +2,17 @@
 DiscordMatchDecisionAdapter: presents MatchDecisionRequests as Discord DM
 views and answers the engine's iterative decisions from compound selections.
 
-Two prompt families are compound: the mulligan (the engine asks card-by-card,
-the player answers once with a set of cards to redraw) and set-cards (the
-engine asks slot A then slot B, the player answers once with an ordered pick
-of up to two cards). For those, the full legacy view (RedrawView /
-TwoStepCardSelectView) is presented once and a PendingSelection cache feeds
-the engine's individual requests. Both players' compound views go out
-concurrently, exactly like the pre-port flows: the second mover's view is
-pre-presented while the engine still waits on the first, which is safe
-because each player's candidates are their own hand.
+Three prompt families are compound: the mulligan (the engine asks card-by-card,
+the player answers once with a set of cards to redraw), the initial battle card,
+and set-cards (the engine asks slot A then slot B, the player answers once with
+an ordered pick of up to two cards). For those, the full legacy view
+(RedrawView / TwoStepCardSelectView) is presented once and a PendingSelection
+cache feeds the engine's individual requests. Both players' compound views go
+out concurrently, exactly like the pre-port flows: the second mover's view is
+pre-presented while the engine still waits on the first, which is safe because
+each player's candidates are their own hand. Concurrency is what keeps a
+placement secret - neither player learns anything from the other's timing, and
+committing a card never advances the phase, so no gate can fire in between.
 
 If a cached selection ever fails to match the engine's live candidates, the
 cache is dropped and the prompt is re-presented sequentially.
@@ -21,7 +23,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Optional
 
-from engine_alpha.actions import P_MULLIGAN, P_SET_SLOT_A, P_SET_SLOT_B
+from engine_alpha.actions import P_INITIAL_CARD, P_MULLIGAN, P_SET_SLOT_A, P_SET_SLOT_B
 from zutomayo.match.decisions import (
     KIND_BINARY_CHOICE,
     KIND_CARD_CHOICE,
@@ -39,6 +41,7 @@ from zutomayo.match.state_view import card_view
 log = logging.getLogger(__name__)
 
 FAMILY_MULLIGAN = 'mulligan'
+FAMILY_INITIAL_CARD = 'initial_card'
 FAMILY_SET_CARDS = 'set_cards'
 
 
@@ -74,6 +77,9 @@ class DiscordMatchDecisionAdapter:
     async def present_decision(self, session: Any, request: MatchDecisionRequest) -> None:
         if request.purpose == P_MULLIGAN:
             await self._handle_compound(session, request, FAMILY_MULLIGAN)
+            return
+        if request.purpose == P_INITIAL_CARD:
+            await self._handle_compound(session, request, FAMILY_INITIAL_CARD)
             return
         if request.purpose in (P_SET_SLOT_A, P_SET_SLOT_B):
             await self._handle_compound(session, request, FAMILY_SET_CARDS)
@@ -144,6 +150,13 @@ class DiscordMatchDecisionAdapter:
                 return None
             return len(candidates)  # PASS: all marked
 
+        if request.purpose == P_INITIAL_CARD:
+            # Exactly one card, no pass: the engine requires a battle card.
+            if chosen and chosen[0] in candidates:
+                selection.consumed_count = 1
+                return candidates.index(chosen[0])
+            return None
+
         if request.purpose == P_SET_SLOT_A:
             if not chosen:
                 return len(candidates)  # PASS: set nothing
@@ -196,7 +209,27 @@ class DiscordMatchDecisionAdapter:
             await self.transport.send_to_player(session, player_index, content=prompt, view=view)
             return
 
+        if family == FAMILY_INITIAL_CARD:
+            def initial_callback(payload_type: str, payload: Any) -> None:
+                selection.resolve([instance_ids[payload]])
+
+            view = ActionSelectView(
+                session, player_index, hand_views,
+                placeholder='Select a card to set...',
+                allow_pass=False,
+                confirm=True,
+                opponent_name=self._opponent_name(session, player_index),
+                submit_callback=initial_callback,
+            )
+            prompt = (
+                'Choose one card to place face-down in the Battle Zone '
+                '[手札からカードを１枚選びバトルゾーンに裏向きにして置きます。]'
+            )
+            await self.transport.send_to_player(session, player_index, content=prompt, view=view)
+            return
+
         maximum = min(maximum_cards_to_set(state, player_index), len(instance_ids))
+        await self._send_hand_briefing(session, player_index, hand_views, maximum)
         if maximum >= 2:
             def two_step_callback(payload_type: str, payload: Any) -> None:
                 selection.resolve([instance_ids[i] for i in payload])
@@ -222,6 +255,35 @@ class DiscordMatchDecisionAdapter:
             )
             prompt = 'Set a card from your hand.'
         await self.transport.send_to_player(session, player_index, content=prompt, view=view)
+
+    async def _send_hand_briefing(
+        self, session: Any, player_index: int, hand_views: list, maximum: int,
+    ) -> None:
+        """Last turn's result and this turn's hand, DM'd ahead of the set-cards
+        view - the reminder of why one player gets two slots and the other one."""
+        from types import SimpleNamespace
+
+        from zutomayo.ui.embeds import build_hand_embed, create_hand_image_off_thread
+
+        if not self.transport.delivers_to_player(session, player_index):
+            return
+        last_battle_winner = session.game.state.last_battle_winner
+        if maximum >= 2:
+            status = f'Last Turn Result: LOSE | Set up to {maximum} cards'
+        elif last_battle_winner == player_index:
+            status = 'Last Turn Result: WIN | Set 1 card'
+        elif last_battle_winner == -1:
+            status = 'Last Turn Result: DRAW | Set 1 card'
+        else:
+            status = 'Set 1 card'
+
+        await self.transport.send_to_player(
+            session, player_index, content=status,
+            embed=build_hand_embed(SimpleNamespace(hand=hand_views)),
+        )
+        hand_file = await create_hand_image_off_thread(list(hand_views))
+        if hand_file:
+            await self.transport.send_to_player(session, player_index, files=[hand_file])
 
     # -- simple kinds --------------------------------------------------------
 
