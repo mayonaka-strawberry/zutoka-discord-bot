@@ -239,6 +239,25 @@ model_common/arena.py
 model_common/opponent_pool.py
 model_common/migrate_checkpoint.py
 
+# Deployment drop point for trained checkpoints, filled by hand (see the
+# Solo opponents section of README.md). A bare PPO state dict is ~129 MB,
+# over GitHub's per-file limit, so the weights never enter git.
+model/
+
+# Training-only support modules, plus the tests and script that exercise
+# them. Nothing on the inference path imports these: the live bot needs only
+# model_common/device.py (device selection) and env_config.py (read by the
+# two config.py modules).
+model_common/checkpoint_retention.py
+model_common/deck_pool.py
+model_common/graceful_stop.py
+model_common/metrics_log.py
+model_common/termination.py
+tests/models/test_deck_pool.py
+tests/models/test_metrics_log.py
+tests/models/test_self_defeat_shaping.py
+scripts/export_training_decks.py
+
 # Coverage artifacts
 .coverage
 tests/coverage_summary.json

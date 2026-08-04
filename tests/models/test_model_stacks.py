@@ -168,14 +168,17 @@ def test_checkpoint_migration_grows_identity_capacity(tmp_path):
         migrate.migrate_state_dict(original, identity_capacity=NUM_CARDS)
 
 
-def test_solo_opponents_unavailable_without_checkpoints():
+def test_solo_opponents_track_deployed_checkpoints():
+    """A stack is offered as a solo opponent exactly when its `find_checkpoint`
+    locates one. Asserted as a contract rather than "nothing is deployed", so
+    the test holds on a machine that has a checkpoint in `model/`."""
     from alpha_zero.inference import find_checkpoint as alpha_zero_checkpoint
     from ppo_transformer.inference import find_checkpoint as ppo_checkpoint
     from zutomayo.match.agents import available_solo_opponents
 
-    assert alpha_zero_checkpoint() is None
-    assert ppo_checkpoint() is None
-    assert available_solo_opponents() == []
+    available = available_solo_opponents()
+    assert ('alphazero' in available) is (alpha_zero_checkpoint() is not None)
+    assert ('ppo' in available) is (ppo_checkpoint() is not None)
 
 
 def test_agent_adapter_submits_agent_action():

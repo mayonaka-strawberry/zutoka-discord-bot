@@ -3,10 +3,11 @@ Deployment inference for the PPO opponent: one forward pass per decision,
 masked to the legal actions, on the runtime-selected device (CUDA, then
 Apple Silicon MPS, then CPU).
 
-Checkpoint discovery looks for ``ppo_transformer/deploy/model.pt`` first,
-then the newest training checkpoint under ``ppo_transformer/runs``.
-Self-contained over the tracked modules; it must keep working on a clone
-that carries no training code.
+Checkpoint discovery looks in the repository-root ``model/`` directory first
+(``model/ppo_transformer``, the untracked deployment drop point), then
+``ppo_transformer/deploy/model.pt``, then the newest training checkpoint under
+``ppo_transformer/runs``. Self-contained over the tracked modules; it must keep
+working on a clone that carries no training code.
 """
 
 from __future__ import annotations
@@ -15,8 +16,11 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+from model_common.deployed_model import resolve_deployed_checkpoint
+
 log = logging.getLogger(__name__)
 
+DEPLOYED_MODEL_NAME = 'ppo_transformer'
 PACKAGE_ROOT = Path(__file__).resolve().parent
 DEPLOY_PATH = PACKAGE_ROOT / 'deploy' / 'model.pt'
 CHECKPOINT_DIRECTORY = PACKAGE_ROOT / 'runs' / 'checkpoints'
@@ -25,6 +29,9 @@ LATEST_WEIGHTS = PACKAGE_ROOT / 'runs' / 'latest_weights.pt'
 
 def find_checkpoint() -> Optional[Path]:
     """The checkpoint the bot would play with, or None when untrained."""
+    deployed = resolve_deployed_checkpoint(DEPLOYED_MODEL_NAME)
+    if deployed is not None:
+        return deployed
     if DEPLOY_PATH.exists():
         return DEPLOY_PATH
     if LATEST_WEIGHTS.exists():

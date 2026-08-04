@@ -35,6 +35,12 @@ log = logging.getLogger(__name__)
 
 LEADERBOARD_MINIMUM_GAMES = 1
 
+# Players choose a solo opponent by letter; these are the identifiers
+# zutomayo.match.agents.SOLO_OPPONENT_MODULES keys the model stacks by.
+SOLO_MODEL_ALPHA_ZERO = 'alphazero'
+SOLO_MODEL_PPO = 'ppo'
+SOLO_MODEL_LABELS = {SOLO_MODEL_ALPHA_ZERO: 'A', SOLO_MODEL_PPO: 'B'}
+
 
 class GameCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
@@ -53,66 +59,98 @@ class GameCog(commands.Cog):
             return
         remember_user(interaction.user.id, interaction.user.global_name or interaction.user.name)
 
-    @group.command(name='create', description='Create a ZUTOMAYO CARD game (standard or TCG, built decks or draft, versus a player or solo)')
+    @group.command(name='create', description='Create a ZUTOMAYO CARD game against another player')
+    @app_commands.guild_only()
     @app_commands.describe(
         game_format='Standard single game or TCG best-of-N series (default: standard)',
-        deck='Use saved/built decks, or draft from opened gacha boxes (default: saved)',
-        opponent='Another player (default), or a solo game against a trained opponent (DMs only)',
         best_of='TCG only: best of 3 or 5 (default: 3)',
-        boxes='Draft only: gacha boxes each player opens (1-5; default 2, TCG 3)',
-        visibility='Draft only: whether opened boxes are shown in the channel (default: public)',
     )
     @app_commands.rename(game_format='format')
     @app_commands.choices(
         game_format=[
             app_commands.Choice(name='Standard', value='standard'),
-            app_commands.Choice(name='TCG (best of N)', value='tcg'),
-        ],
-        deck=[
-            app_commands.Choice(name='Saved or built deck', value='saved'),
-            app_commands.Choice(name='Draft from gacha boxes', value='draft'),
+            app_commands.Choice(name='TCG', value='tcg'),
         ],
         best_of=[
-            app_commands.Choice(name='Best of 3', value=3),
-            app_commands.Choice(name='Best of 5', value=5),
-        ],
-        visibility=[
-            app_commands.Choice(name='Public', value='public'),
-            app_commands.Choice(name='Private', value='private'),
+            app_commands.Choice(name='3', value=3),
+            app_commands.Choice(name='5', value=5),
         ],
     )
     async def create_game(
         self,
         interaction: discord.Interaction,
         game_format: str = 'standard',
-        deck: str = 'saved',
-        opponent: str = 'player',
         best_of: int | None = None,
-        boxes: app_commands.Range[int, 1, 5] | None = None,
-        visibility: str | None = None,
     ):
         if game_format != 'tcg' and best_of is not None:
             await interaction.response.send_message(
                 'best_of only applies to TCG games (format: TCG).', ephemeral=True,
             )
             return
-        if deck != 'draft' and (boxes is not None or visibility is not None):
+
+        await self._create_two_player_game(
+            interaction, is_tcg=game_format == 'tcg', best_of=best_of,
+        )
+
+    @group.command(
+        name='createdraft',
+        description='Create a draft game: both players build a deck from gacha boxes they open',
+    )
+    @app_commands.guild_only()
+    @app_commands.describe(
+        boxes='Gacha boxes each player opens (1-5; default 2, TCG 3)',
+        visibility='Whether opened boxes are shown in the channel (default: public)',
+        game_format='Standard single game or TCG best-of-N series (default: standard)',
+        best_of='TCG only: best of 3 or 5 (default: 3)',
+    )
+    @app_commands.rename(game_format='format')
+    @app_commands.choices(
+        visibility=[
+            app_commands.Choice(name='Public', value='public'),
+            app_commands.Choice(name='Private', value='private'),
+        ],
+        game_format=[
+            app_commands.Choice(name='Standard', value='standard'),
+            app_commands.Choice(name='TCG', value='tcg'),
+        ],
+        best_of=[
+            app_commands.Choice(name='3', value=3),
+            app_commands.Choice(name='5', value=5),
+        ],
+    )
+    async def create_draft_game(
+        self,
+        interaction: discord.Interaction,
+        boxes: app_commands.Range[int, 1, 5] | None = None,
+        visibility: str | None = None,
+        game_format: str = 'standard',
+        best_of: int | None = None,
+    ):
+        if game_format != 'tcg' and best_of is not None:
             await interaction.response.send_message(
-                'boxes and visibility only apply to draft games (deck: Draft).', ephemeral=True,
+                'best_of only applies to TCG games (format: TCG).', ephemeral=True,
             )
             return
 
-        if opponent != 'player':
-            await self._create_solo_game(interaction, game_format, deck, opponent)
-            return
+        is_tcg = game_format == 'tcg'
+        await self._create_two_player_game(
+            interaction,
+            is_tcg=is_tcg,
+            best_of=best_of,
+            draft_boxes=boxes if boxes is not None else (3 if is_tcg else 2),
+            draft_visibility=visibility or 'public',
+        )
 
-        if interaction.guild is None:
-            await interaction.response.send_message(
-                'Two-player games are created in a server channel. '
-                'For a solo game, set the opponent option.', ephemeral=True,
-            )
-            return
-
+    async def _create_two_player_game(
+        self,
+        interaction: discord.Interaction,
+        is_tcg: bool,
+        best_of: int | None = None,
+        draft_boxes: int | None = None,
+        draft_visibility: str | None = None,
+    ) -> None:
+        """Open a lobby for a two-player game. A `draft_boxes` count makes it a
+        draft; leaving it None keeps the saved/built deck path."""
         try:
             session = await session_manager.create_game(interaction.channel_id, interaction.user.id)
         except ValueError as e:
@@ -120,14 +158,14 @@ class GameCog(commands.Cog):
             return
 
         title_parts = ['**ZUTOMAYO CARD']
-        if game_format == 'tcg':
+        if is_tcg:
             session.is_tcg = True
             session.best_of = best_of or 3
             title_parts.append(' TCG')
-        if deck == 'draft':
+        if draft_boxes is not None:
             session.is_draft = True
-            session.draft_boxes = boxes if boxes is not None else (3 if game_format == 'tcg' else 2)
-            session.draft_visibility = visibility or 'public'
+            session.draft_boxes = draft_boxes
+            session.draft_visibility = draft_visibility or 'public'
             title_parts.append(' DRAFT')
         title_parts.append('**')
         details = []
@@ -145,24 +183,16 @@ class GameCog(commands.Cog):
             view=view,
         )
 
-    @create_game.autocomplete('opponent')
-    async def create_opponent_autocomplete(
-        self, interaction: discord.Interaction, current: str,
-    ) -> list[app_commands.Choice[str]]:
-        from zutomayo.match.agents import available_solo_opponents
-
-        try:
-            names = ['player'] + available_solo_opponents()
-        except Exception:
-            names = ['player']
-        return [
-            app_commands.Choice(name=name, value=name)
-            for name in names if current.lower() in name.lower()
-        ][:25]
-
-    async def _create_solo_game(
-        self, interaction: discord.Interaction, game_format: str, deck: str, opponent: str,
-    ) -> None:
+    @group.command(
+        name='playuniguri',
+        description='Play a solo game against a trained model opponent (DMs only)',
+    )
+    @app_commands.describe(model='A (AlphaZero) or B (PPO transformer)')
+    @app_commands.choices(model=[
+        app_commands.Choice(name='A', value=SOLO_MODEL_ALPHA_ZERO),
+        app_commands.Choice(name='B', value=SOLO_MODEL_PPO),
+    ])
+    async def play_uniguri(self, interaction: discord.Interaction, model: str) -> None:
         from zutomayo.match.agents import available_solo_opponents
 
         if interaction.guild is not None:
@@ -170,22 +200,29 @@ class GameCog(commands.Cog):
                 'Solo games run in DMs - use this command in a DM with the bot.', ephemeral=True,
             )
             return
-        if game_format == 'tcg':
+
+        # Checked ahead of availability so model A gives its own message rather
+        # than the generic one, and starts working with no code change the
+        # moment a checkpoint is dropped into model/.
+        if model == SOLO_MODEL_ALPHA_ZERO:
+            from alpha_zero.inference import find_checkpoint
+
+            if find_checkpoint() is None:
+                await interaction.response.send_message(
+                    'Model A has not yet been trained. Play against model B', ephemeral=True,
+                )
+                return
+
+        if model not in available_solo_opponents():
             await interaction.response.send_message(
-                'TCG series are not available for solo games.', ephemeral=True,
-            )
-            return
-        if deck == 'draft':
-            await interaction.response.send_message(
-                'Draft is not available for solo games.', ephemeral=True,
-            )
-            return
-        if opponent not in available_solo_opponents():
-            await interaction.response.send_message(
-                f'The solo opponent `{opponent}` is not available yet.', ephemeral=True,
+                f'Model {SOLO_MODEL_LABELS.get(model, model)} is not available yet.',
+                ephemeral=True,
             )
             return
 
+        await self._start_solo_game(interaction, model)
+
+    async def _start_solo_game(self, interaction: discord.Interaction, opponent: str) -> None:
         try:
             session = await session_manager.create_solo_game(0, interaction.user.id)
         except ValueError as e:
@@ -612,47 +649,14 @@ class GameCog(commands.Cog):
                 ephemeral=True,
             )
 
-    @group.command(name='gacha', description='Open a card pack (5 cards) or a full box (10 packs)')
-    @app_commands.describe(
-        pack='Pack number (1-4)',
-        amount='One pack of 5 cards, or a box of 10 packs (default: pack)',
-    )
-    @app_commands.choices(amount=[
-        app_commands.Choice(name='Pack (5 cards)', value='pack'),
-        app_commands.Choice(name='Box (10 packs)', value='box'),
-    ])
-    async def gacha(self, interaction: discord.Interaction, pack: int, amount: str = 'pack'):
-        if pack < 1 or pack > 4:
-            await interaction.response.send_message(
-                'Pack must be between 1 and 4.', ephemeral=True,
-            )
-            return
-
+    @group.command(name='gacha', description='Open a card pack (5 cards)')
+    @app_commands.describe(pack='Pack number (1-4)')
+    async def gacha(self, interaction: discord.Interaction, pack: app_commands.Range[int, 1, 4]):
         from zutomayo.data.card_loader import load_cards
-        from zutomayo.data.gacha import draw_gacha, draw_gachabox
+        from zutomayo.data.gacha import draw_gacha
         from zutomayo.ui.embeds import create_deck_grid_image_off_thread
 
         all_cards = load_cards()
-
-        if amount == 'box':
-            await interaction.response.defer()
-            drawn = draw_gachabox(pack, all_cards)
-            half = len(drawn) // 2
-            image1 = await create_deck_grid_image_off_thread(drawn[:half], columns=5, filename='gachabox_1.jpg')
-            image2 = await create_deck_grid_image_off_thread(drawn[half:], columns=5, filename='gachabox_2.jpg')
-            files = [f for f in (image1, image2) if f]
-            if files:
-                await send_images_with_retry(
-                    interaction.followup.send,
-                    label='image followup',
-                    files=files,
-                )
-            else:
-                await interaction.followup.send(
-                    'Something went wrong generating the gacha box image.',
-                )
-            return
-
         drawn = draw_gacha(pack, all_cards)
         image = await create_deck_grid_image_off_thread(drawn, columns=5, filename='gacha.jpg')
         if image:
@@ -665,6 +669,30 @@ class GameCog(commands.Cog):
             await interaction.response.send_message(
                 'Something went wrong generating the gacha image.',
                 ephemeral=True,
+            )
+
+    @group.command(name='gachabox', description='Open a card box (10 packs)')
+    @app_commands.describe(pack='Pack number (1-4)')
+    async def gachabox(self, interaction: discord.Interaction, pack: app_commands.Range[int, 1, 4]):
+        from zutomayo.data.card_loader import load_cards
+        from zutomayo.data.gacha import draw_gachabox
+        from zutomayo.ui.embeds import create_deck_grid_image_off_thread
+
+        await interaction.response.defer()
+        drawn = draw_gachabox(pack, load_cards())
+        half = len(drawn) // 2
+        image1 = await create_deck_grid_image_off_thread(drawn[:half], columns=5, filename='gachabox_1.jpg')
+        image2 = await create_deck_grid_image_off_thread(drawn[half:], columns=5, filename='gachabox_2.jpg')
+        files = [f for f in (image1, image2) if f]
+        if files:
+            await send_images_with_retry(
+                interaction.followup.send,
+                label='image followup',
+                files=files,
+            )
+        else:
+            await interaction.followup.send(
+                'Something went wrong generating the gacha box image.',
             )
 
     @group.command(name='quit', description='Quit your current game, optionally saving it to resume later')

@@ -15,8 +15,9 @@ Both the mode and the live budget are overridable from the environment
 (``ALPHA_LIVE_MODE``, ``ALPHA_LIVE_SIMULATIONS``), so a deployment can trade
 strength for latency without a code change.
 
-Checkpoint discovery looks for ``alpha_zero/deploy/model.pt`` first (the
-deliberate deployment location), then falls back to the newest training
+Checkpoint discovery looks in the repository-root ``model/`` directory first
+(``model/alpha_zero``, the untracked deployment drop point), then
+``alpha_zero/deploy/model.pt``, then falls back to the newest training
 checkpoint under ``alpha_zero/runs/checkpoints/``.
 
 Self-contained over the tracked modules (net/model.py, mcts/, config.py and
@@ -29,8 +30,11 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+from model_common.deployed_model import resolve_deployed_checkpoint
+
 log = logging.getLogger(__name__)
 
+DEPLOYED_MODEL_NAME = 'alpha_zero'
 PACKAGE_ROOT = Path(__file__).resolve().parent
 DEPLOY_PATH = PACKAGE_ROOT / 'deploy' / 'model.pt'
 CHECKPOINT_DIRECTORY = PACKAGE_ROOT / 'runs' / 'checkpoints'
@@ -42,6 +46,9 @@ LIVE_SIMULATIONS = 64
 
 def find_checkpoint() -> Optional[Path]:
     """The checkpoint the bot would play with, or None when untrained."""
+    deployed = resolve_deployed_checkpoint(DEPLOYED_MODEL_NAME)
+    if deployed is not None:
+        return deployed
     if DEPLOY_PATH.exists():
         return DEPLOY_PATH
     if CHECKPOINT_DIRECTORY.exists():

@@ -1,16 +1,17 @@
-"""Command tree shape and the merged create command's validation matrix."""
+"""Command tree shape and the per-command validation the cog does itself."""
 
 from __future__ import annotations
 
 import asyncio
 
-from zutomayo.cogs.game_cog import GameCog
+from zutomayo.cogs.game_cog import GameCog, SOLO_MODEL_ALPHA_ZERO
 
 DISCORD_SUBCOMMAND_LIMIT = 25
 
 EXPECTED_TOP_LEVEL = {
-    'create', 'deck', 'join', 'end', 'quit', 'resume', 'gacha',
-    'editname', 'summary', 'profilestats', 'history', 'leaderboard',
+    'create', 'createdraft', 'playuniguri', 'deck', 'join', 'end', 'quit',
+    'resume', 'gacha', 'gachabox', 'editname', 'summary', 'profilestats',
+    'history', 'leaderboard',
 }
 EXPECTED_DECK_SUBCOMMANDS = {'make', 'view', 'manage'}
 
@@ -57,8 +58,8 @@ class FakeInteraction:
         self.user = User()
 
 
-def run_create(cog: GameCog, interaction: FakeInteraction, **kwargs) -> None:
-    asyncio.run(GameCog.create_game.callback(cog, interaction, **kwargs))
+def run_command(command, cog: GameCog, interaction: FakeInteraction, **kwargs) -> None:
+    asyncio.run(command.callback(cog, interaction, **kwargs))
 
 
 def build_cog() -> GameCog:
@@ -67,40 +68,28 @@ def build_cog() -> GameCog:
 
 def test_create_rejects_best_of_without_tcg():
     interaction = FakeInteraction()
-    run_create(build_cog(), interaction, best_of=3)
+    run_command(GameCog.create_game, build_cog(), interaction, best_of=3)
     assert 'best_of' in interaction.response.messages[0]['content']
 
 
-def test_create_rejects_draft_options_without_draft():
+def test_create_draft_rejects_best_of_without_tcg():
     interaction = FakeInteraction()
-    run_create(build_cog(), interaction, boxes=2)
-    assert 'draft' in interaction.response.messages[0]['content']
-
-    interaction = FakeInteraction()
-    run_create(build_cog(), interaction, visibility='public')
-    assert 'draft' in interaction.response.messages[0]['content']
+    run_command(GameCog.create_draft_game, build_cog(), interaction, boxes=2, best_of=5)
+    assert 'best_of' in interaction.response.messages[0]['content']
 
 
-def test_create_rejects_two_player_game_in_direct_message():
-    interaction = FakeInteraction(in_guild=False)
-    run_create(build_cog(), interaction)
-    assert 'server channel' in interaction.response.messages[0]['content']
-
-
-def test_create_rejects_solo_in_guild_and_unavailable_opponents():
+def test_play_uniguri_rejects_a_guild_channel():
     interaction = FakeInteraction(in_guild=True)
-    run_create(build_cog(), interaction, opponent='alphazero')
+    run_command(GameCog.play_uniguri, build_cog(), interaction, model=SOLO_MODEL_ALPHA_ZERO)
     assert 'DM' in interaction.response.messages[0]['content']
 
-    interaction = FakeInteraction(in_guild=False)
-    run_create(build_cog(), interaction, opponent='alphazero', game_format='tcg')
-    assert 'TCG' in interaction.response.messages[0]['content']
 
-    interaction = FakeInteraction(in_guild=False)
-    run_create(build_cog(), interaction, opponent='alphazero', deck='draft')
-    assert 'Draft' in interaction.response.messages[0]['content']
+def test_play_uniguri_reports_model_a_untrained(monkeypatch):
+    import alpha_zero.inference
 
-    # No trained checkpoints exist, so every model opponent is rejected.
+    monkeypatch.setattr(alpha_zero.inference, 'find_checkpoint', lambda: None)
     interaction = FakeInteraction(in_guild=False)
-    run_create(build_cog(), interaction, opponent='alphazero')
-    assert 'not available' in interaction.response.messages[0]['content']
+    run_command(GameCog.play_uniguri, build_cog(), interaction, model=SOLO_MODEL_ALPHA_ZERO)
+    assert interaction.response.messages[0]['content'] == (
+        'Model A has not yet been trained. Play against model B'
+    )

@@ -259,17 +259,115 @@ Set the value to `0` to keep everything.
 
 ## Deploying a checkpoint
 
-`find_checkpoint()` looks for `ppo_transformer/deploy/model.pt` first, then
-`runs/latest_weights.pt`, then the newest `runs/checkpoints/iteration_*.pt`.
-Promote a checkpoint by copying it:
+`find_checkpoint()` looks in the repository-root `model/` directory first
+(`model/ppo_transformer`, the untracked deployment drop point shared by both
+stacks), then `ppo_transformer/deploy/model.pt`, then `runs/latest_weights.pt`,
+then the newest `runs/checkpoints/iteration_*.pt`. Promote a checkpoint by
+copying it into `model/`:
 
 ```powershell
-New-Item -ItemType Directory -Force ppo_transformer\deploy
-Copy-Item ppo_transformer\runs\checkpoints\iteration_00400.pt ppo_transformer\deploy\model.pt
+New-Item -ItemType Directory -Force model
+Copy-Item ppo_transformer\runs\checkpoints\iteration_00400.pt model\ppo_transformer
 ```
+
+The extension is optional, and `model/ppo_transformer` may instead be a
+directory of `*.pt` files, in which case the newest by name wins. The two
+in-package fallbacks are kept so a training machine keeps playing with its own
+run without any promotion step.
 
 `PpoAgent` plays argmax over the masked legal actions — a single forward pass
 per decision, with no search to configure.
+
+## Ranking decks
+
+`best_deck_ppo.py` plays every deck in the training pool against every other
+deck with the deployed checkpoint on **both** seats, so the only variable in a
+game is the deck, and writes the strongest to `data/best_decks_ppo.json`:
+
+```powershell
+python -m ppo_transformer.best_deck_ppo
+python -m ppo_transformer.best_deck_ppo --max-decks 8 --games-per-pair 2   # quick check
+```
+
+| Flag | Default | What it does |
+|---|---|---|
+| `--deck-pool` | `data/training_decks.json` | Pool to rank, read by `load_deck_pool` |
+| `--games-per-pair` | 3 | Games between each pair of decks |
+| `--top` | 15 | How many decks reach the output file |
+| `--output` | `data/best_decks_ppo.json` | Where the ranking is written |
+| `--seed-base` | 0 | Base game seed; the run reproduces from it |
+| `--max-decks` | all | Truncate the pool for a fast run |
+| `--workers` | 8 | Worker processes; `1` runs in-process |
+| `--executor` | `process` | `thread` is available but see below |
+
+Decks are ranked on win rate, and **every** deck is printed best to worst, with
+the ones written to the output file starred. The file is a deck source and
+nothing else — a `decks` list whose entries carry only a `guid` and the deck's
+`cards`, in the same `{'pack', 'id'}` shape as `default_decks.json`, so
+`resolve_deck_cards` reads it directly. No tallies and no run metadata are
+written, so the console table is the only place any of the standings survive.
+
+Every deck plays the same number of games, so ranking by win rate and by wins
+minus losses differ only where draw counts differ; `net` is reported next to
+`win%` for that reason.
+
+**Livelocks.** `PpoAgent` plays strict argmax, so a position offering a
+repeatable option is answered identically forever and the game cycles. The
+engine's `max_turns` cannot catch this — that cap is only tested when a turn
+advances, and a game stuck inside a turn never gets there. One matchup in the
+first full run spent 20,000 decisions on turn 8 and hung the whole tournament at
+6,100 of 6,105 pairs. When a turn exceeds `TURN_DECISION_LIMIT` decisions the
+script now samples uniformly from the legal actions until the turn moves on: the
+observed livelock needed exactly one sampled action, and healthy games never
+reach the limit, so their play is unchanged. Perturbed games still replay
+identically, since the sampler is seeded from the game seed. The count is
+printed at the end of the run.
+
+Every game therefore resolves to a real winner. A draw can now only come from
+the engine's own 200-turn cap, which a ~20-turn game never approaches, so the
+script prints a warning if any appear.
+
+The default pool is gitignored and produced by `scripts/export_training_decks.py`;
+without it the script exits with a message rather than a traceback.
+
+**Why processes and not threads.** Most of a game is the engine's step loop,
+which is pure Python and so GIL-bound; batch-1 forwards are launch-bound rather
+than compute-bound. Threads therefore stop helping almost immediately — measured
+on a 5950X with a 3090, one shared agent, 48 games per configuration:
+
+| Workers | s/game | Speedup |
+|---|---|---|
+| serial | 0.227 | 1.00x |
+| 4 threads | 0.186 | 1.22x |
+| 8 threads | 0.164 | 1.38x |
+| 16 threads | 0.173 | 1.31x |
+| 24 threads | 0.192 | 1.18x |
+
+Threads peak at 8 and **regress past it**. Processes each get their own GIL and
+do parallelise the engine work — but only up to a point. Measured on the same
+machine, 780 pairs each:
+
+| Workers | Throughput |
+|---|---|
+| 8 processes | 10.3 games/s |
+| 16 processes | 10.1 games/s |
+| 24 processes | 9.7 games/s |
+
+Throughput is **flat to slightly falling** in the worker count, against a serial
+baseline near 5 games/s — so the whole pool buys about 2x, and it is saturated
+well below 8 workers. Reasoning from core count suggested ~22 workers and was
+simply wrong; whatever binds here (per-process CUDA contexts, driver-side
+serialisation of many tiny batch-1 launches) tops out early. The default is 8:
+fastest of the three and the cheapest in memory, at roughly 450 MiB of VRAM per
+worker. Raising it costs memory and returns nothing.
+
+Each worker loads the checkpoint once, in the pool initializer, and calls
+`torch.set_num_threads(1)` — without that, the processes each spawn a thread per
+core and only contend.
+
+Results do not depend on the worker count. Seeds derive from the pair index
+alone, so a pair plays the same games whichever worker takes it, and runs at
+different `--workers` produce identical output.
 
 ## Troubleshooting
 

@@ -166,13 +166,21 @@ unindexed ones, so this leaks a little disk but never corrupts the buffer.
 
 ## Deploying a checkpoint
 
-`find_checkpoint()` looks for `alpha_zero/deploy/model.pt` first, then the newest
-`runs/checkpoints/step_*.pt`. Promote a checkpoint by copying it:
+`find_checkpoint()` looks in the repository-root `model/` directory first
+(`model/alpha_zero`, the untracked deployment drop point shared by both stacks),
+then `alpha_zero/deploy/model.pt`, then the newest `runs/checkpoints/step_*.pt`.
+Promote a checkpoint by copying it into `model/`:
 
 ```powershell
-New-Item -ItemType Directory -Force alpha_zero\deploy
-Copy-Item alpha_zero\runs\checkpoints\step_00120000.pt alpha_zero\deploy\model.pt
+New-Item -ItemType Directory -Force model
+Copy-Item alpha_zero\runs\checkpoints\step_00120000.pt model\alpha_zero
 ```
+
+The extension is optional, and `model/alpha_zero` may instead be a directory of
+`*.pt` files, in which case the newest by name wins. The two in-package
+fallbacks are kept so a training machine keeps playing with its own run without
+any promotion step. Until a checkpoint exists somewhere, `/zutomayo playuniguri
+model:A` reports that model A has not been trained yet.
 
 The live agent defaults to **search** mode (`ALPHA_LIVE_SIMULATIONS`, default
 64) rather than a single policy forward. Training and gating both select for

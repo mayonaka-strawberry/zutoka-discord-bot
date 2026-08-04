@@ -1,8 +1,8 @@
-"""Config/env override layer for both model stacks.
+"""Config/env override layer and checkpoint discovery for both model stacks.
 
-These tests cover tracked, torch-free modules (`model_common.env_config`, the
-two `config.py` files), so they run on a fresh clone that carries no training
-code and no checkpoints.
+These tests cover tracked, torch-free modules (`model_common.env_config`,
+`model_common.deployed_model`, the two `config.py` files), so they run on a
+fresh clone that carries no training code and no checkpoints.
 
 Every test that touches `load_config()` monkeypatches the stack's `ENV_FILE` to
 a temp path. Without that, results would depend on whatever the developer
@@ -21,7 +21,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
-from model_common import env_config  # noqa: E402
+from model_common import deployed_model, env_config  # noqa: E402
 from alpha_zero import config as alpha_config  # noqa: E402
 from ppo_transformer import config as ppo_config  # noqa: E402
 
@@ -61,6 +61,56 @@ def test_coerce_error_names_the_offending_variable():
     threading env_key through."""
     with pytest.raises(ValueError, match=r'ALPHA_TRAIN_BATCH_SIZE=.not a number.'):
         env_config.coerce('not a number', int, 'ALPHA_TRAIN_BATCH_SIZE')
+
+
+# ---------------------------------------------------------------------------
+# deployed checkpoint discovery
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def model_directory(monkeypatch, tmp_path):
+    """Points the resolver at a temp `model/` that starts out missing."""
+    directory = tmp_path / 'model'
+    monkeypatch.setattr(deployed_model, 'MODEL_DIRECTORY', directory)
+    return directory
+
+
+def test_resolve_returns_none_without_a_model_directory(model_directory):
+    assert deployed_model.resolve_deployed_checkpoint('ppo_transformer') is None
+    model_directory.mkdir()
+    assert deployed_model.resolve_deployed_checkpoint('ppo_transformer') is None
+
+
+def test_resolve_accepts_an_extensionless_file(model_directory):
+    """The layout the manual placement actually produces: a file named after
+    the stack, with no `.pt`."""
+    model_directory.mkdir()
+    checkpoint = model_directory / 'ppo_transformer'
+    checkpoint.write_bytes(b'')
+    assert deployed_model.resolve_deployed_checkpoint('ppo_transformer') == checkpoint
+
+
+def test_resolve_accepts_a_suffixed_file(model_directory):
+    model_directory.mkdir()
+    checkpoint = model_directory / 'alpha_zero.pt'
+    checkpoint.write_bytes(b'')
+    assert deployed_model.resolve_deployed_checkpoint('alpha_zero') == checkpoint
+
+
+def test_resolve_takes_the_newest_from_a_directory(model_directory):
+    model_directory.mkdir()
+    nested = model_directory / 'ppo_transformer'
+    nested.mkdir()
+    (nested / 'iteration_00001.pt').write_bytes(b'')
+    newest = nested / 'iteration_00002.pt'
+    newest.write_bytes(b'')
+    assert deployed_model.resolve_deployed_checkpoint('ppo_transformer') == newest
+
+
+def test_resolve_ignores_an_empty_directory(model_directory):
+    model_directory.mkdir()
+    (model_directory / 'ppo_transformer').mkdir()
+    assert deployed_model.resolve_deployed_checkpoint('ppo_transformer') is None
 
 
 def test_coerce_rejects_ambiguous_boolean():

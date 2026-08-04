@@ -45,12 +45,14 @@ scripts described in [Scripts and admin tooling](#scripts-and-admin-tooling).
 
 ## Commands
 
-All slash commands live under `/zutomayo` (12 top-level entries: 11 commands
+All slash commands live under `/zutomayo` (15 top-level entries: 14 commands
 plus the `deck` subgroup):
 
 | Command | Parameters | Notes |
 | --- | --- | --- |
-| `create` | `format`: Standard (default) \| TCG (best of N) · `deck`: Saved (default) \| Draft · `opponent`: player name (default `player`) · `best_of`: 3 \| 5 (TCG) · `boxes`: 1-5 (draft) · `visibility`: Public \| Private (draft) | One command for every game mode. The `opponent` autocomplete lists trained model opponents alongside `player` once a checkpoint is deployed; picking one starts a solo game in DMs. |
+| `create` | `format`: Standard (default) \| TCG · `best_of`: 3 \| 5 (TCG) | A game against another player, using saved or built decks. Guild-only. |
+| `createdraft` | `boxes`: 1-5 · `visibility`: Public (default) \| Private · `format`: Standard (default) \| TCG · `best_of`: 3 \| 5 (TCG) | Same, but both players draft from gacha boxes they open. `boxes` defaults to 2 (3 for TCG). Guild-only. |
+| `playuniguri` | `model`: A \| B (required) | A solo game against a trained model opponent, in DMs. A is the AlphaZero stack, B the PPO transformer; a model that has no deployed checkpoint says so rather than starting a game. |
 | `join <game_id>` | | Join a created game. Guild-only. |
 | `end <game_id>` | autocomplete | End an active game. Guild-only. |
 | `quit` | `save`: True \| False (default False) | Leave your active game; `save: True` replaces the old saveandquit. |
@@ -58,7 +60,8 @@ plus the `deck` subgroup):
 | `deck make` | `name`, `format`: Standard \| TCG | Opens the deck builder. |
 | `deck view` | `deck` (autocomplete), `format` | Shows a saved deck. |
 | `deck manage` | `deck` (autocomplete), `format` | Rename, edit, or delete a saved deck. |
-| `gacha` | `pack`: 1-4 (required) · `amount`: Pack (default) \| Box | One pack of 5 cards or a box of 10 packs from the chosen expansion pack. |
+| `gacha` | `pack`: 1-4 (required) | One pack of 5 cards from the chosen expansion pack. |
+| `gachabox` | `pack`: 1-4 (required) | A box of 10 packs from the chosen expansion pack. |
 | `summary <game_id>` | autocomplete | Full replay of a finished game, from the permanent event stream. |
 | `history` | `player` (optional, autocomplete) | Recent game results. |
 | `profilestats` | `player` (optional, autocomplete) | Profile with Elo, win/loss, per-deck and per-opponent stats. |
@@ -95,8 +98,10 @@ timeouts forfeit the game.
   through a paginated menu in DM - 20 picks for Standard, 28 for TCG (of
   which 8 then become the side deck), at most 2 copies per card. Downstream
   play, Elo, and leaderboards are identical to the non-draft formats.
-- Solo: a standard game against a trained model opponent in DMs, available
-  once a checkpoint from `alpha_zero/` or `ppo_transformer/` is deployed.
+- Solo: a standard game against a trained model opponent in DMs, started with
+  `/zutomayo playuniguri`. Model A is the `alpha_zero/` stack and model B the
+  `ppo_transformer/` one; each is playable once its checkpoint is deployed
+  (see [Solo opponents](#solo-opponents)).
 
 Playing a CHAOS bank-or-lose card (`04-006`, `04-027`, `04-028`, `04-088`)
 without the abyss cards to pay for it loses the game on the spot, which makes it
@@ -175,9 +180,10 @@ is_terminal() / returns()`:
   game unrecoverable and announces it.
 - `agents/`: the solo opponents. `available_solo_opponents()` includes a
   model stack only when its `find_checkpoint()` locates a deployed
-  checkpoint, so solo choices appear in `/zutomayo create` only when one
-  exists. Inference runs off the event loop with a watchdog; any agent
-  failure submits a legal fallback action rather than hanging the game.
+  checkpoint, so `/zutomayo playuniguri` turns a model down rather than
+  starting a game it cannot play. Inference runs off the event loop with a
+  watchdog; any agent failure submits a legal fallback action rather than
+  hanging the game.
 
 ### The rest of the bot
 
@@ -221,11 +227,38 @@ is_terminal() / returns()`:
 `alpha_zero/` and `ppo_transformer/` are the model training stacks. Their
 training code is intentionally untracked; git carries only what the bot
 needs to play from a checkpoint (model definitions, configs, and the
-inference modules). Checkpoints are discovered at `<stack>/deploy/model.pt`
-first, falling back to the newest checkpoint under `<stack>/runs/`.
+inference modules). Of `model_common/`, that is `device.py` and
+`env_config.py` plus `deployed_model.py` — everything else there is
+training-only and untracked alongside the tests that exercise it.
 `model_common/device.py` picks CUDA, then Apple Silicon MPS, then CPU at
 runtime, and caps inference threads so the Discord event loop is never
 starved.
+
+#### Solo opponents
+
+The weights themselves never enter git — a bare PPO state dict is ~129 MB,
+over GitHub's per-file limit. They go in an untracked `model/` directory at
+the repository root, one entry per stack, named after the package:
+
+```
+model/ppo_transformer     model B, the PPO transformer
+model/alpha_zero          model A, the AlphaZero stack
+```
+
+The file extension is optional, and an entry may instead be a directory of
+`*.pt` files, in which case the newest by name wins
+(`model_common/deployed_model.py`). Deploying is therefore just a copy:
+
+```powershell
+New-Item -ItemType Directory -Force model
+Copy-Item ppo_transformer\runs\latest_weights.pt model\ppo_transformer
+```
+
+`find_checkpoint()` consults `model/` first, then the older
+`<stack>/deploy/model.pt` location, then the newest checkpoint under
+`<stack>/runs/`, so a machine that is mid-training keeps playing with its own
+run. A stack with no checkpoint anywhere is simply not offered:
+`/zutomayo playuniguri model:A` answers that model A has not been trained yet.
 
 Each stack has its own README covering configuration, running, stopping
 safely, and resuming: [alpha_zero/README.md](alpha_zero/README.md) and
