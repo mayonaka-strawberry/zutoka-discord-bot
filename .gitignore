@@ -208,51 +208,65 @@ __marimo__/
 
 .claude/
 
-train_uniguri_v2.py
-best_decks_uniguri_v2.py
-best_decks_uniguri_v2_easy.py
-
 zutomayo/.DS_Store
 .DS_Store
 
 zutomayo/bot_decks.json
 
-training_hyperparameters.json
+# Training deck pool exported from the database (scripts/export_training_decks.py)
+data/training_decks.json
 
 zutomayo/progress/*
 !zutomayo/progress/.gitkeep
 
 
-# AlphaZero engine rewrite (engine_alpha) — fully local
-engine_alpha/
+# Model training code and artifacts (tracked files are limited to what the
+# bot needs to play from a checkpoint: engine, model definitions, configs,
+# inference modules, device selection)
+engine_alpha/runs/
+engine_alpha/.env
+alpha_zero/train/
+alpha_zero/selfplay/
+alpha_zero/eval/
+alpha_zero/scripts/
+alpha_zero/net/wrapper.py
+alpha_zero/runs/
+alpha_zero/.env
+ppo_transformer/train/
+ppo_transformer/runs/
+ppo_transformer/.env
+model_common/arena.py
+model_common/opponent_pool.py
+model_common/migrate_checkpoint.py
 
-# In-flight game persistence (runtime state, recreated on demand)
-zutomayo/active_games/
+# Deployment drop point for trained checkpoints, filled by hand (see the
+# Solo opponents section of README.md). A bare PPO state dict is ~129 MB,
+# over GitHub's per-file limit, so the weights never enter git.
+model/
+
+# Training-only support modules, plus the tests and script that exercise
+# them. Nothing on the inference path imports these: the live bot needs only
+# model_common/device.py (device selection) and env_config.py (read by the
+# two config.py modules).
+model_common/checkpoint_retention.py
+model_common/deck_pool.py
+model_common/graceful_stop.py
+model_common/metrics_log.py
+model_common/termination.py
+tests/models/test_deck_pool.py
+tests/models/test_metrics_log.py
+tests/models/test_self_defeat_shaping.py
+scripts/export_training_decks.py
 
 # Coverage artifacts
 .coverage
 tests/coverage_summary.json
-/alpha_zero/eval/__init__.py
-/alpha_zero/eval/arena.py
-/alpha_zero/eval/gating.py
-/alpha_zero/net/wrapper.py
-/alpha_zero/scripts/__init__.py
-/alpha_zero/scripts/inspect_decks.py
-/alpha_zero/scripts/run_gate_m3.py
-/alpha_zero/scripts/run_selfplay.py
-/alpha_zero/scripts/run_train.py
-/alpha_zero/selfplay/__init__.py
-/alpha_zero/selfplay/game_record.py
-/alpha_zero/selfplay/league.py
-/alpha_zero/selfplay/replay_buffer.py
-/alpha_zero/selfplay/worker.py
-/alpha_zero/train/__init__.py
-/alpha_zero/train/losses.py
-/alpha_zero/train/train.py
-/model_common/arena.py
-/model_common/migrate_checkpoint.py
-/model_common/opponent_pool.py
-/ppo_transformer/train/__init__.py
-/ppo_transformer/train/ppo.py
-/ppo_transformer/train/rollout.py
-/ppo_transformer/train/run_train.py
+
+# Regenerable image output from the calibration and render-preview scripts. Both are
+# reproduced by running the script, so they do not belong in the repo -- the same reason the
+# card png derivatives were dropped in favour of rounding corners at render time.
+# Matched on extension, not just prefix, so the scripts that write them stay tracked.
+scripts/calibration_output*.jpg
+scripts/calibration_output*.png
+scripts/preview_*.jpg
+scripts/preview_*.png

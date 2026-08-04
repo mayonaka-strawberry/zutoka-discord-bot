@@ -16,6 +16,7 @@ from zutomayo.data.deck_storage import (
 )
 from zutomayo.data.deck_validator import parse_deck_input
 from zutomayo.ui.embeds import build_deck_list_embed, create_deck_grid_image_off_thread
+from zutomayo.utils.discord_utils import send_images_with_retry
 
 if TYPE_CHECKING:
     from zutomayo.engine.game_session import GameSession
@@ -79,7 +80,12 @@ class MakeDeckModal(discord.ui.Modal):
         )
         grid = await create_deck_grid_image_off_thread(cards)
         if grid:
-            await interaction.followup.send(file=grid, ephemeral=True)
+            await send_images_with_retry(
+                interaction.followup.send,
+                label='image followup',
+                file=grid,
+                ephemeral=True,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +151,12 @@ class EditDeckModal(discord.ui.Modal):
         )
         grid = await create_deck_grid_image_off_thread(cards)
         if grid:
-            await interaction.followup.send(file=grid, ephemeral=True)
+            await send_images_with_retry(
+                interaction.followup.send,
+                label='image followup',
+                file=grid,
+                ephemeral=True,
+            )
 
 
 class ManageDeckActionsView(discord.ui.View):
@@ -420,7 +431,12 @@ class SavedDeckSelectView(DeckNamePaginationMixin, discord.ui.View):
         self.stop()
         grid = await create_deck_grid_image_off_thread(cards)
         if grid:
-            await interaction.followup.send(file=grid, ephemeral=True)
+            await send_images_with_retry(
+                interaction.followup.send,
+                label='image followup',
+                file=grid,
+                ephemeral=True,
+            )
 
     async def _prev_page(self, interaction: discord.Interaction):
         self.page = max(0, self.page - 1)
@@ -594,7 +610,12 @@ class DefaultDeckSelectView(discord.ui.View):
         self.stop()
         grid = await create_deck_grid_image_off_thread(cards)
         if grid:
-            await interaction.followup.send(file=grid, ephemeral=True)
+            await send_images_with_retry(
+                interaction.followup.send,
+                label='image followup',
+                file=grid,
+                ephemeral=True,
+            )
 
     async def _go_back(self, interaction: discord.Interaction):
         view = DeckSourceView(

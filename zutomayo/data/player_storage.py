@@ -277,6 +277,37 @@ def _apply_elo_update(
     profile_b[games_field] = profile_b.get(games_field, 0) + 1
 
 
+def _apply_one_sided_elo_loss(
+    loser_profile: dict,
+    winner_profile: dict,
+    *,
+    rating_field: str = 'elo',
+    peak_field: str = 'elo_peak',
+    games_field: str = 'elo_games',
+) -> tuple[int, int]:
+    """
+    Charge the loser the Elo they would normally lose and give the winner nothing.
+
+    Used when the loser threw the game (a turn-1 CHAOS self-defeat): a wintrade must not
+    pay out, or two colluding players can pump one account's rating for free. The thrower
+    still pays in full, so this is not an escape hatch from a losing game either.
+
+    The winner's rating, peak, and games_field are all left untouched — no rating event
+    happened for them. Returns (rating_before, rating_after) for the loser so the caller
+    can build the elo_history row.
+    """
+    rating_loser = loser_profile.get(rating_field, ELO_STARTING_RATING)
+    rating_winner = winner_profile.get(rating_field, ELO_STARTING_RATING)
+    expected_loser = _expected_score(rating_loser, rating_winner)
+    delta_loser = round(ELO_K_FACTOR * (0.0 - expected_loser))
+
+    loser_profile[rating_field] = rating_loser + delta_loser
+    loser_profile[games_field] = loser_profile.get(games_field, 0) + 1
+    # No peak update: a one-sided loss only ever lowers the rating.
+    loser_profile.setdefault(peak_field, ELO_STARTING_RATING)
+    return rating_loser, loser_profile[rating_field]
+
+
 def _apply_elo_update_with_history(
     profile_a: dict,
     profile_b: dict,
@@ -357,6 +388,7 @@ async def record_match_result(
     is_solo: bool,
     solo_difficulty: str = 'normal',
     game_id: Optional[str] = None,
+    suppress_winner_elo_gain: bool = False,
 ) -> None:
     """
     Record one match's result.
@@ -365,6 +397,12 @@ async def record_match_result(
     For solo, only the human player's profile is updated and only solo_* counters change.
     For PvP, both profiles are updated: top-level stats, opponent_stats, deck_stats, and Elo
     (standard mode only, with an elo_history row per player when game_id is known).
+
+    suppress_winner_elo_gain marks a game the loser deliberately threw (a turn-1 CHAOS
+    self-defeat). The loser still takes their full Elo loss but the winner gains nothing,
+    which is what makes abyss-bomb wintrading pointless. Win/loss counters, deck_stats and
+    opponent_stats are unaffected and record the game normally for both players. Ignored
+    outside standard mode and on draws.
     """
     if is_solo:
         human_id = player_zero_id if player_zero_id != BOT_DISCORD_ID else player_one_id
@@ -416,12 +454,31 @@ async def record_match_result(
 
         # Elo is intentionally scoped to standard PvP only — TCG matches are tracked but do
         # not move the rating used by the leaderboard.
-        if mode == 'standard':
-            return _apply_elo_update_with_history(
-                profile_zero, profile_one, score_zero,
-                ladder='standard', game_id=game_id,
+        if mode != 'standard':
+            return []
+
+        if suppress_winner_elo_gain and winner_index_or_none in (0, 1):
+            loser_id = player_one_id if winner_index_or_none == 0 else player_zero_id
+            winner_id = player_zero_id if winner_index_or_none == 0 else player_one_id
+            loser_profile = profiles[loser_id]
+            elo_before, elo_after = _apply_one_sided_elo_loss(
+                loser_profile, profiles[winner_id],
             )
-        return []
+            if game_id is None:
+                return []
+            # One row only: nothing happened to the winner's rating to record.
+            return [{
+                'game_id': game_id,
+                'user_id': loser_id,
+                'ladder': 'standard',
+                'elo_before': elo_before,
+                'elo_after': elo_after,
+            }]
+
+        return _apply_elo_update_with_history(
+            profile_zero, profile_one, score_zero,
+            ladder='standard', game_id=game_id,
+        )
 
     await backend.mutate_profiles([player_zero_id, player_one_id], pvp_mutator)
 

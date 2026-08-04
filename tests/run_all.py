@@ -1,17 +1,17 @@
 """
-One-command verification for the whole repository.
+One-command verification gate.
 
 Runs, in order:
-1. the full pytest suite under coverage,
-2. the Tier B flow-transcript comparison under appended coverage (this is
-   both a regression gate and the coverage source for the flow modules),
-3. per-area coverage gates evaluated from the combined coverage data,
-4. the full Tier A engine-transcript comparison.
+1. the full pytest suite (engine_alpha tests + bot tests) under coverage,
+2. the match transcript regression tier under appended coverage,
+3. per-area coverage gates,
+4. the match transcript compare (already executed in step 2; its exit code
+   gates the run).
 
-Usage (from the repository root):
-    python tests/run_all.py
+Thresholds are set from measured values minus a small flake margin; raise
+them when coverage improves, never lower them to pass.
 
-Exits nonzero on any test failure, transcript mismatch, or coverage gate miss.
+Usage: python tests/run_all.py
 """
 
 from __future__ import annotations
@@ -24,48 +24,41 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 PYTHON = sys.executable
 
-# The three excluded effect modules are intentionally dead code: their logic
-# was inlined into check_area_enchant_removal / should_force_day_attack /
-# TurnManager.do_character_swap, which the engine tests cover.
-DEAD_EFFECT_MODULES = ('effect_02_005.py', 'effect_02_007.py', 'effect_02_062.py')
-
-# Coverage gates per area. Thresholds sit slightly below measured values so
-# ordinary drift does not flake, but any real coverage regression fails.
-# Report-only areas (cogs, interactive views, bot model internals, the V2
-# training stack) are deliberately ungated: mocked-interaction tests would
-# prove the mock, not the bot — manual playtests own those surfaces.
-COVERAGE_GATES: list[tuple[str, float, list[str]]] = [
-    ('effect handlers (zutomayo/effects/cards + card_effect_helpers)', 99.0, [
-        'zutomayo/effects/cards/',
-        'zutomayo/effects/card_effect_helpers.py',
+# (area name, minimum percent, path prefixes)
+COVERAGE_GATES = [
+    ('engine_alpha core (game, state, zones, battle, effects, events)', 84.0, [
+        'engine_alpha/game.py',
+        'engine_alpha/state.py',
+        'engine_alpha/zones.py',
+        'engine_alpha/battle.py',
+        'engine_alpha/actions.py',
+        'engine_alpha/events.py',
+        'engine_alpha/rng.py',
+        'engine_alpha/cards.py',
+        'engine_alpha/draft.py',
+        'engine_alpha/effects/',
     ]),
-    ('engine core (effect_engine, turn_manager, game_controller)', 94.0, [
-        'zutomayo/effects/effect_engine.py',
-        'zutomayo/engine/turn_manager.py',
-        'zutomayo/engine/game_controller.py',
-    ]),
-    ('decision infrastructure (broker, persistence, resume, adapters, transport)', 88.0, [
-        'zutomayo/engine/decisions.py',
-        'zutomayo/engine/decision_broker.py',
-        'zutomayo/engine/game_persistence.py',
-        'zutomayo/engine/resume_manager.py',
-        'zutomayo/engine/match_transport.py',
-        'zutomayo/engine/adapters/',
-    ]),
-    ('game flows (game_flow, solo, tcg, session)', 83.0, [
-        'zutomayo/engine/game_flow.py',
-        'zutomayo/engine/solo_game_flow.py',
-        'zutomayo/engine/tcg_match_flow.py',
-        'zutomayo/engine/game_session.py',
+    ('match layer (broker, driver, presentation, state view, narrator, persistence)', 90.0, [
+        'zutomayo/match/broker.py',
+        'zutomayo/match/decisions.py',
+        'zutomayo/match/gate_presenter.py',
+        'zutomayo/match/match_driver.py',
+        'zutomayo/match/narrator.py',
+        'zutomayo/match/persistence.py',
+        'zutomayo/match/presentation.py',
+        'zutomayo/match/state_view.py',
     ]),
     ('data layer (zutomayo/data)', 87.0, ['zutomayo/data/']),
-    ('ui core (embeds, renderers)', 75.0, [
+    ('ui core (embeds, renderers)', 80.0, [
         'zutomayo/ui/embeds.py',
         'zutomayo/ui/board_renderer.py',
+        'zutomayo/ui/card_art.py',
         'zutomayo/ui/image_utils.py',
         'zutomayo/ui/deck_management_common.py',
     ]),
 ]
+# Report-only areas (no gate): cogs, Discord views and flows, resume glue,
+# model stacks. Their guarantee is the transcript tier plus dev-bot playtests.
 
 
 def _run(description: str, command: list[str]) -> None:
@@ -93,8 +86,6 @@ def _evaluate_coverage_gates(coverage_json_path: Path) -> bool:
             normalized = _normalize(file_path)
             if not any(prefix in normalized for prefix in prefixes):
                 continue
-            if any(normalized.endswith(dead) for dead in DEAD_EFFECT_MODULES):
-                continue
             summary = file_report['summary']
             statements += summary['num_statements']
             covered += summary['covered_lines']
@@ -111,21 +102,18 @@ def main() -> int:
 
     _run('Erase previous coverage data', [PYTHON, '-m', 'coverage', 'erase'])
     _run('Pytest suite under coverage', [
-        PYTHON, '-m', 'coverage', 'run', '--source=zutomayo', '-m', 'pytest', 'tests/', '-q',
+        PYTHON, '-m', 'coverage', 'run', '--source=zutomayo,engine_alpha',
+        '-m', 'pytest', 'engine_alpha/tests', 'tests/', '-q',
     ])
-    _run('Tier B flow transcripts under appended coverage', [
-        PYTHON, '-m', 'coverage', 'run', '--source=zutomayo', '--append',
-        'tests/run_flow_regression.py', 'compare',
+    _run('Match transcript regression under appended coverage', [
+        PYTHON, '-m', 'coverage', 'run', '--source=zutomayo,engine_alpha', '--append',
+        'tests/run_match_regression.py', 'compare',
     ])
     _run('Export coverage json', [
         PYTHON, '-m', 'coverage', 'json', '-o', str(coverage_json_path),
     ])
 
     gates_passed = _evaluate_coverage_gates(coverage_json_path)
-
-    _run('Tier A engine transcripts', [
-        PYTHON, 'tests/run_engine_regression.py', 'compare',
-    ])
 
     if not gates_passed:
         print('\nRESULT: FAIL (coverage gate)')

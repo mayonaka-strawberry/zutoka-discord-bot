@@ -23,7 +23,7 @@ from zutomayo.engine.game_persistence import (  # noqa: E402
     list_saved_games_for_player,
 )
 from zutomayo.engine.game_session import GameSession, session_manager  # noqa: E402
-from zutomayo.engine.resume_manager import load_saved_game_for_resume  # noqa: E402
+from zutomayo.match.resume import load_saved_game_for_resume  # noqa: E402
 
 PLAYER_ZERO = 111111
 PLAYER_ONE = 222222
@@ -38,9 +38,17 @@ def _make_session(game_id: str, *, solo: bool = False) -> GameSession:
     return session
 
 
-async def _create_saved_game(game_id: str, *, solo: bool = False) -> GameRecordStore:
+async def _create_record(session: GameSession, mode: str):
+    from zutomayo.match.persistence import MatchRecordStore
+
+    return await MatchRecordStore.create_for_match(
+        session, mode, engine_seed=session.random_seed, deck_card_keys={},
+    )
+
+
+async def _create_saved_game(game_id: str, *, solo: bool = False):
     session = _make_session(game_id, solo=solo)
-    store = await GameRecordStore.create_for_session(session, 'solo' if solo else 'standard')
+    store = await _create_record(session, 'solo' if solo else 'standard')
     await store.set_status(STATUS_SAVED)
     return store
 
@@ -62,7 +70,7 @@ class TestResumeEligibility:
     def test_non_saved_statuses_are_rejected(self):
         async def run():
             session = _make_session('20260710-00000')
-            store = await GameRecordStore.create_for_session(session, 'standard')
+            store = await _create_record(session, 'standard')
             with pytest.raises(ValueError, match='not a saved game'):
                 await load_saved_game_for_resume('20260710-00000', PLAYER_ZERO)
             await store.set_status('completed')
@@ -112,7 +120,7 @@ class TestSavedGameListing:
             await _create_saved_game('20260710-00000')
             # A completed game must never appear.
             session = _make_session('20260710-00001')
-            completed_store = await GameRecordStore.create_for_session(session, 'standard')
+            completed_store = await _create_record(session, 'standard')
             await completed_store.set_status('completed')
             return (
                 await list_saved_games_for_player(PLAYER_ZERO),

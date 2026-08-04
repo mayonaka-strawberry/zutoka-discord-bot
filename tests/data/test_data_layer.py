@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPOSITORY_ROOT) not in sys.path:
@@ -19,7 +19,7 @@ from zutomayo.data.card_loader import load_cards  # noqa: E402
 from zutomayo.data.deck_validator import build_card_index, get_card_index, parse_deck_input  # noqa: E402
 from zutomayo.data.deck_validator_tcg import parse_tcg_deck_input  # noqa: E402
 
-from tests.support.game_state_builder import card_by_identity  # noqa: E402
+from tests.support.cards import card_by_identity  # noqa: E402
 
 VALID_TWENTY = ('01-013 01-013 01-014 01-014 01-017 01-017 01-020 01-020 01-023 01-023 '
                 '01-026 01-026 01-029 01-029 01-032 01-032 01-035 01-035 01-038 01-038')
@@ -271,6 +271,119 @@ class TestPlayerStorage:
         assert human['deck_stats']['standard']['Alpha']['solo']['wins'] == 1
         assert install_in_memory_backends['profiles'].elo_history == [], 'solo games write no elo history'
 
+    # -- turn-1 self-defeat: the loser pays, the winner gains nothing ----------
+
+    def test_thrown_game_charges_the_loser_and_pays_the_winner_nothing(
+        self, install_in_memory_backends,
+    ):
+        from zutomayo.data.player_storage import load_profile, record_match_result
+
+        async def run():
+            await record_match_result(111, 222, 'Alpha', 'Beta', 0,
+                                      mode='standard', is_solo=False,
+                                      game_id='20260724-00000',
+                                      suppress_winner_elo_gain=True)
+            return await load_profile(111), await load_profile(222)
+
+        winner, loser = asyncio.run(run())
+        assert loser['elo'] < 1000, 'the thrower still pays in full'
+        assert winner['elo'] == 1000, 'a wintrade must not pay out'
+        assert winner['elo_peak'] == 1000 and winner['elo_games'] == 0
+        assert loser['elo_games'] == 1
+
+    def test_thrown_game_still_records_win_loss_history(self, install_in_memory_backends):
+        from zutomayo.data.player_storage import load_profile, record_match_result
+
+        async def run():
+            await record_match_result(111, 222, 'Alpha', 'Beta', 0,
+                                      mode='standard', is_solo=False,
+                                      game_id='20260724-00001',
+                                      suppress_winner_elo_gain=True)
+            return await load_profile(111), await load_profile(222)
+
+        winner, loser = asyncio.run(run())
+        assert winner['stats']['standard']['wins'] == 1
+        assert loser['stats']['standard']['losses'] == 1
+        assert winner['deck_stats']['standard']['Alpha']['pvp']['wins'] == 1
+        assert loser['deck_stats']['standard']['Beta']['pvp']['losses'] == 1
+        assert winner['opponent_stats']['222']['wins'] == 1
+        assert loser['opponent_stats']['111']['losses'] == 1
+
+    def test_thrown_game_charges_a_full_loss_not_a_discounted_one(
+        self, install_in_memory_backends,
+    ):
+        from zutomayo.data.player_storage import load_profile, record_match_result
+
+        async def run(suppress: bool):
+            await record_match_result(111, 222, None, None, 0,
+                                      mode='standard', is_solo=False,
+                                      suppress_winner_elo_gain=suppress)
+            return (await load_profile(222))['elo']
+
+        suppressed_elo = asyncio.run(run(True))
+        install_in_memory_backends['profiles'].profiles.clear()
+        normal_elo = asyncio.run(run(False))
+        assert suppressed_elo == normal_elo, 'the loser pays the same either way'
+
+    def test_thrown_game_writes_one_elo_history_row(self, install_in_memory_backends):
+        from zutomayo.data.player_storage import load_profile, record_match_result
+
+        async def run():
+            await record_match_result(111, 222, None, None, 0,
+                                      mode='standard', is_solo=False,
+                                      game_id='20260724-00002',
+                                      suppress_winner_elo_gain=True)
+            return await load_profile(222)
+
+        loser = asyncio.run(run())
+        history = install_in_memory_backends['profiles'].elo_history
+        assert len(history) == 1, 'nothing happened to the winner to record'
+        assert history[0]['user_id'] == 222
+        assert history[0]['ladder'] == 'standard'
+        assert history[0]['elo_before'] == 1000
+        assert history[0]['elo_after'] == loser['elo']
+
+    def test_thrown_game_without_a_game_id_writes_no_history(self, install_in_memory_backends):
+        from zutomayo.data.player_storage import load_profile, record_match_result
+
+        async def run():
+            await record_match_result(111, 222, None, None, 0,
+                                      mode='standard', is_solo=False,
+                                      suppress_winner_elo_gain=True)
+            return await load_profile(111), await load_profile(222)
+
+        winner, loser = asyncio.run(run())
+        assert install_in_memory_backends['profiles'].elo_history == []
+        assert winner['elo'] == 1000 and loser['elo'] < 1000
+
+    def test_thrown_tcg_match_moves_no_ladder(self, install_in_memory_backends):
+        from zutomayo.data.player_storage import load_profile, record_match_result
+
+        async def run():
+            await record_match_result(111, 222, None, None, 0,
+                                      mode='tcg_match', is_solo=False,
+                                      game_id='20260724-00003',
+                                      suppress_winner_elo_gain=True)
+            return await load_profile(111), await load_profile(222)
+
+        winner, loser = asyncio.run(run())
+        assert winner['elo'] == 1000 and loser['elo'] == 1000
+        assert winner['tcg_elo'] == 1000 and loser['tcg_elo'] == 1000
+        assert winner['stats']['tcg_match']['wins'] == 1
+
+    def test_thrown_flag_is_ignored_on_a_draw(self, install_in_memory_backends):
+        from zutomayo.data.player_storage import load_profile, record_match_result
+
+        async def run():
+            await record_match_result(111, 222, None, None, None,
+                                      mode='standard', is_solo=False,
+                                      suppress_winner_elo_gain=True)
+            return await load_profile(111), await load_profile(222)
+
+        profile_zero, profile_one = asyncio.run(run())
+        assert profile_zero['elo'] == 1000 and profile_one['elo'] == 1000
+        assert profile_zero['stats']['standard']['draws'] == 1
+
     def test_tcg_series_moves_the_parallel_ladder(self, install_in_memory_backends):
         from zutomayo.data.player_storage import load_profile, record_tcg_series
 
@@ -397,3 +510,45 @@ class TestCardLoader:
         assert index_a is index_b
         assert cards_a == cards_b and cards_a is not cards_b
         assert build_card_index(cards_a) == index_a
+
+
+class TestCardArtPaths:
+    """The renderers assume every card resolves to a real jpg in its pack's directory.
+
+    create_deck_grid_image skips art it cannot open, which shifts the grid rather than
+    raising, and the board renderer substitutes the card back -- so a broken path is
+    invisible at runtime. These assertions are what make it visible.
+    """
+
+    def test_every_card_image_exists_on_disk(self):
+        missing = [
+            f'{card.pack}-{card.id:03d} {card.name} -> {card.image!r}'
+            for card in load_cards()
+            if not card.image or not (REPOSITORY_ROOT / card.image).is_file()
+        ]
+        assert not missing, 'cards with missing image files: ' + '; '.join(missing)
+
+    def test_every_card_image_is_a_jpg(self):
+        wrong_format = [
+            card.image for card in load_cards()
+            if not card.image.lower().endswith('.jpg')
+        ]
+        assert not wrong_format, f'non-jpg card art: {wrong_format[:5]}'
+
+    def test_image_directory_matches_the_pack_field(self):
+        """card_art derives the corner radius from the directory, so the two must agree."""
+        mismatched = [
+            (card.image, card.pack) for card in load_cards()
+            if PurePosixPath(card.image).parent.name != str(card.pack)
+        ]
+        assert not mismatched, f'image directory disagrees with pack: {mismatched[:5]}'
+
+    def test_every_pack_has_a_corner_radius_constant(self):
+        """A new pack must not fall through to the default radius unnoticed."""
+        from zutomayo.ui.card_art import CORNER_RADIUS_BY_PACK_DIRECTORY
+
+        unknown = sorted({
+            PurePosixPath(card.image).parent.name for card in load_cards()
+            if PurePosixPath(card.image).parent.name not in CORNER_RADIUS_BY_PACK_DIRECTORY
+        })
+        assert not unknown, f'packs without a corner radius constant: {unknown}'

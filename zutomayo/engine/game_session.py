@@ -1,17 +1,11 @@
 import asyncio
 import random
 from typing import TYPE_CHECKING, Any, Optional
-from zutomayo.effects.effect_engine import EffectEngine
-from zutomayo.engine.deck_builder import build_deck_from_cards
-from zutomayo.engine.game_controller import GameController
-from zutomayo.engine.turn_manager import TurnManager
-from zutomayo.models.card import Card
-from zutomayo.models.game_state import GameState
 
 if TYPE_CHECKING:
-    from zutomayo.engine.decision_broker import DecisionBroker
     from zutomayo.engine.game_persistence import GameRecordStore
-    from zutomayo.engine.match_transport import MatchTransport
+    from zutomayo.match.broker import MatchDecisionBroker
+    from zutomayo.match.transport import MatchTransport
 
 
 class GameSession:
@@ -19,20 +13,17 @@ class GameSession:
         self.game_id = game_id
         self.channel_id = channel_id
         self.player_discord_ids: dict[int, int] = {}  # discord user ID -> player index
-        self.game_state: Optional[GameState] = None
-        self.turn_manager: Optional[TurnManager] = None
-        self.effect_engine = EffectEngine()
 
-        # Per-game seeded RNG: every shuffle and the coin flip draw from this
-        # generator so a logged game can be replayed deterministically from the
-        # seed (restart resumability). The seed is persisted in the game
-        # manifest once persistence is wired.
+        # Engine seed: Game(seed=...) consumes it directly, and it is persisted
+        # in the game manifest so a logged game replays deterministically.
         self.random_seed: int = random.SystemRandom().getrandbits(64)
-        self.random_generator: random.Random = random.Random(self.random_seed)
 
         # Decision-broker runtime, installed by the flow that runs this game.
-        self.broker: Optional['DecisionBroker'] = None
+        self.broker: Optional['MatchDecisionBroker'] = None
         self.transport: Optional['MatchTransport'] = None
+
+        # engine_alpha game, set by the match flow.
+        self.game: Any = None
 
         # Permanent game record store, created when the match is initialized.
         # Records are never deleted; game lifecycle is tracked by games.status.
@@ -41,7 +32,8 @@ class GameSession:
         # Track both players' Discord IDs
         self.player_discord_ids[creator_id] = 0
 
-        # Synchronization for simultaneous actions
+        # Synchronization for pre-match flows (deck building, draft) whose
+        # views answer through session.submit_action.
         self.pending_actions: dict[int, Any] = {}  # player index -> action
         self.player_events: dict[int, asyncio.Event] = {
             0: asyncio.Event(),
@@ -50,10 +42,6 @@ class GameSession:
 
         # Game flow task
         self.game_task: Optional[asyncio.Task] = None
-
-        # Zone snapshot tracking: maps zone key -> frozenset of card unique_ids
-        # Keys: "p0_abyss", "p0_power_charger", "p1_abyss", "p1_power_charger"
-        self._zone_snapshots: dict[str, frozenset[str]] = {}
 
         # TCG mode attributes
         self.is_tcg: bool = False
@@ -78,48 +66,6 @@ class GameSession:
         player_index = 1
         self.player_discord_ids[discord_id] = player_index
         return player_index
-
-    def initialize_game(
-        self,
-        deck_1_cards: list[Card] | None = None,
-        deck_2_cards: list[Card] | None = None,
-    ) -> GameState:
-        from zutomayo.data.deck_validator import get_card_index
-        from zutomayo.engine.bot_agent import load_random_saved_deck
-
-        all_cards, card_index = get_card_index()
-
-        discord_ids = list(self.player_discord_ids.keys())
-        name_1 = str(discord_ids[0])
-        name_2 = str(discord_ids[1])
-
-        if deck_1_cards is not None:
-            deck_1 = build_deck_from_cards(deck_1_cards, name_1)
-        else:
-            deck_1 = build_deck_from_cards(
-                load_random_saved_deck(card_index), name_1,
-            )
-
-        if deck_2_cards is not None:
-            deck_2 = build_deck_from_cards(deck_2_cards, name_2)
-        else:
-            deck_2 = build_deck_from_cards(
-                load_random_saved_deck(card_index), name_2,
-            )
-
-        controller = GameController(
-            name_1=name_1,
-            name_2=name_2,
-            deck_1=deck_1,
-            deck_2=deck_2,
-            effect_engine=self.effect_engine,
-            random_generator=self.random_generator,
-        )
-
-        self.game_state = controller.game_state
-        self.game_state.game_id = self.game_id
-        self.turn_manager = TurnManager(self.game_state, self.effect_engine)
-        return self.game_state
 
     def get_player_index(self, discord_id: int) -> Optional[int]:
         return self.player_discord_ids.get(discord_id)

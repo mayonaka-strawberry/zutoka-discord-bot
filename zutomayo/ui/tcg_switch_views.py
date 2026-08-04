@@ -3,7 +3,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Callable
 import discord
-from zutomayo.engine.decisions import PAYLOAD_CARD_KEYS
+from zutomayo.match.decisions import PAYLOAD_CARD_KEYS
 from zutomayo.enums.card_type import CardType
 from zutomayo.ui.embeds import ATTRIBUTE_EN, ATTRIBUTE_JP, CARD_TYPE_LABEL
 

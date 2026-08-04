@@ -27,7 +27,12 @@ async def _create_game(game_id: str, status: str, *, winner_index=None, solo: bo
     session.add_player(0 if solo else PLAYER_ONE)
     session.is_solo = solo
     session.random_seed = 42
-    store = await GameRecordStore.create_for_session(session, 'solo' if solo else 'standard')
+    from zutomayo.match.persistence import MatchRecordStore
+
+    store = await MatchRecordStore.create_for_match(
+        session, 'solo' if solo else 'standard',
+        engine_seed=session.random_seed, deck_card_keys={},
+    )
     await store.set_status(status, winner_index=winner_index)
 
 

@@ -14,22 +14,22 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
+from engine_alpha.actions import select_number, P_EFFECT_NUMBER
 from tests.support.database_support import run_with_database
 from zutomayo.data.game_id_allocator import PostgresGameIdAllocator
-from zutomayo.engine.decisions import (
-    KIND_EFFECT_NUMBER_SELECT,
-    PAYLOAD_NUMBER,
-    DecisionRequest,
-    DecisionResponse,
-)
 from zutomayo.engine.game_persistence import (
-    GameRecordStore,
     PostgresGameRecordBackend,
     list_game_ids_with_status,
-    load_decision_log,
     load_manifest,
 )
 from zutomayo.engine.game_session import GameSession
+from zutomayo.match.decisions import (
+    KIND_NUMBER_CHOICE,
+    PAYLOAD_ACTION,
+    MatchDecisionRequest,
+    MatchDecisionResponse,
+)
+from zutomayo.match.persistence import MatchRecordStore, load_match_decision_log
 
 
 def _use_postgres_backends(monkeypatch):
@@ -54,19 +54,23 @@ def test_game_record_round_trip_with_large_seed(integration_database_url, monkey
     session = _make_session()
 
     async def round_trip():
-        store = await GameRecordStore.create_for_session(session, 'standard', extra_fields={
-            'deck_0': [[1, 5]], 'deck_1': [[2, 3]],
-        })
+        store = await MatchRecordStore.create_for_match(
+            session, 'standard',
+            engine_seed=session.random_seed,
+            deck_card_keys={0: [[1, 5]], 1: [[2, 3]]},
+        )
 
-        request = DecisionRequest(
-            kind=KIND_EFFECT_NUMBER_SELECT, player_index=0, prompt_text='number',
+        request = MatchDecisionRequest(
+            kind=KIND_NUMBER_CHOICE, player_index=0, prompt_text='number',
+            engine_request=select_number(P_EFFECT_NUMBER, 0, 3),
+            purpose=P_EFFECT_NUMBER,
             minimum_value=0, maximum_value=3,
         )
         request.sequence_number = 0
-        await store.append_decision(request, DecisionResponse(0, PAYLOAD_NUMBER, 2))
+        await store.append_decision(request, MatchDecisionResponse(0, PAYLOAD_ACTION, 2))
 
         manifest = await load_manifest(session.game_id)
-        replay_log = await load_decision_log(session.game_id)
+        replay_log = await load_match_decision_log(session.game_id)
         active_ids = await list_game_ids_with_status('active')
 
         await store.set_status(

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 
 import discord
 
-from zutomayo.engine.draft_phase import (
+from zutomayo.match.draft_flow import (
     CARDS_PER_PAGE,
     MAXIMUM_COPIES_PER_CARD,
     TCG_DRAFT_SIDE_DECK_SIZE,
@@ -215,12 +215,12 @@ class DraftCardPickerView(discord.ui.View):
             return None
         if page in self._page_image_bytes:
             data = self._page_image_bytes[page]
-            return discord.File(io.BytesIO(data), filename=f'draft_page_{page}.webp') if data else None
+            return discord.File(io.BytesIO(data), filename=f'draft_page_{page}.jpg') if data else None
 
         start = page * CARDS_PER_PAGE
         page_cards = self.pool_cards[start:start + CARDS_PER_PAGE]
         rendered = await create_deck_grid_image_off_thread(
-            page_cards, columns=5, filename=f'draft_page_{page}.webp',
+            page_cards, columns=5, filename=f'draft_page_{page}.jpg',
         )
         if rendered is None:
             self._page_image_bytes[page] = None
@@ -454,7 +454,7 @@ class DraftPackSelectionView(discord.ui.View):
                     embed=None, view=None, attachments=[],
                 )
                 grid = await create_deck_grid_image_off_thread(
-                    selected_cards, columns=5, filename='draft_deck.webp',
+                    selected_cards, columns=5, filename='draft_deck.jpg',
                 )
                 if grid is not None:
                     await session.transport.send_to_player(
@@ -497,10 +497,10 @@ class DraftPackSelectionView(discord.ui.View):
                 embed=None, view=None, attachments=[],
             )
             main_image = await create_deck_grid_image_off_thread(
-                main_cards, columns=5, filename='draft_main.webp',
+                main_cards, columns=5, filename='draft_main.jpg',
             )
             side_image = await create_deck_grid_image_off_thread(
-                side_cards, columns=4, filename='draft_side.webp',
+                side_cards, columns=4, filename='draft_side.jpg',
             )
             if main_image is not None:
                 await session.transport.send_to_player(
