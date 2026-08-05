@@ -103,7 +103,7 @@ class TrainConfig:
     # decisions of the player handed the win are trained softer (a free win
     # is weak evidence that those positions were winning). Applies only to
     # that termination (see model_common.termination.chaos_self_defeat_loser).
-    self_defeat_loss_sample_weight: float = 2.0
+    self_defeat_loss_sample_weight: float = 4.0
     self_defeat_win_sample_weight: float = 0.25
     checkpoint_interval_steps: int = 2000
     # Checkpoints kept on disk, newest first. The best checkpoint and every

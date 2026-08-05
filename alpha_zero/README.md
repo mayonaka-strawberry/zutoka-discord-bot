@@ -242,7 +242,7 @@ Applied defaults worth knowing about, and knobs worth trying:
   lowering the fraction is the cheap mitigation.
 - **`ALPHA_TRAIN_VALUE_LOSS_WEIGHT` (1.0).** Weight on the win/draw/loss value
   cross-entropy relative to the policy loss; 0.5-1.5 is the usual range.
-- **CHAOS self-defeat weights (`ALPHA_TRAIN_SELF_DEFEAT_LOSS_SAMPLE_WEIGHT` 2.0,
+- **CHAOS self-defeat weights (`ALPHA_TRAIN_SELF_DEFEAT_LOSS_SAMPLE_WEIGHT` 4.0,
   `ALPHA_TRAIN_SELF_DEFEAT_WIN_SAMPLE_WEIGHT` 0.25).** The five CHAOS bank-or-lose
   cards end the game immediately when the Abyss minimum is not met, which is a
   self-inflicted blunder rather than a normal loss. The value head is a

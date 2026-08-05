@@ -73,7 +73,7 @@ class TrainConfig:
     # opponent is credited far less than an earned win so free wins are not
     # something the policy learns to play for. Applies only to that specific
     # termination (see model_common.termination.chaos_self_defeat_loser).
-    self_defeat_loss_reward: float = -2.0
+    self_defeat_loss_reward: float = -4.0
     self_defeat_win_reward: float = 0.25
     learning_rate: float = 3e-4
     learning_rate_final: float = 3e-5

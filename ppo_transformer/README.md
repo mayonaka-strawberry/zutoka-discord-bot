@@ -471,7 +471,7 @@ Applied defaults worth knowing about, and knobs worth trying:
   a decision 50 steps from the end sees it at weight 0.08, at 0.98 it sees 0.36.
   Try `1.0` (pure Monte Carlo, unbiased, higher variance) if early-game play
   looks weak.
-- **CHAOS self-defeat rewards (`PPO_TRAIN_SELF_DEFEAT_LOSS_REWARD` -2.0,
+- **CHAOS self-defeat rewards (`PPO_TRAIN_SELF_DEFEAT_LOSS_REWARD` -4.0,
   `PPO_TRAIN_SELF_DEFEAT_WIN_REWARD` 0.25).** The five CHAOS bank-or-lose cards
   end the game immediately when the Abyss minimum is not met. That is a
   self-inflicted blunder rather than a normal loss, so the terminal reward is
