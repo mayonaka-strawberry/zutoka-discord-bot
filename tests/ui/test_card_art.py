@@ -15,7 +15,6 @@ from zutomayo.ui.card_art import (  # noqa: E402
     CORNER_RADIUS_BY_PACK_DIRECTORY,
     DEFAULT_CORNER_RADIUS,
     REFERENCE_CARD_WIDTH,
-    SQUARE_CORNER_IMAGE_STEMS,
     _rounded_corner_mask,
     card_back_image,
     corner_radius_for,
@@ -91,11 +90,18 @@ def test_corner_arc_is_anti_aliased(image_path):
     assert partial, 'expected partially transparent pixels along the corner arc'
 
 
-@pytest.mark.parametrize('stem', sorted(SQUARE_CORNER_IMAGE_STEMS))
-def test_exempt_placeholder_cards_keep_square_corners(stem):
-    """105/106/107 are synthetic text placeholders with no dead space to remove."""
+@pytest.mark.parametrize('stem', [
+    'zutomayocard_4th_105',
+    'zutomayocard_4th_106',
+    'zutomayocard_4th_107',
+])
+def test_set_4_se_cards_round_like_the_rest_of_the_pack(stem):
+    """Regression: these shipped as square-cornered synthetic placeholders and were later
+    replaced by real scans, which carry the same white dead space as every pack-4 card.
+    The exemption that survived that swap left them with a visible white corner fringe.
+    """
     image_path = f'zutomayo/images/4/{stem}.jpg'
-    assert corner_radius_for(image_path, 700) == 0
+    assert corner_radius_for(image_path, 700) == CORNER_RADIUS_BY_PACK_DIRECTORY['4']
 
     card = load_card_image(image_path)
     alpha = card.getchannel('A')
@@ -105,7 +111,7 @@ def test_exempt_placeholder_cards_keep_square_corners(stem):
         (0, card.height - 1),
         (card.width - 1, card.height - 1),
     ]:
-        assert alpha.getpixel(corner) == 255
+        assert alpha.getpixel(corner) == 0, f'{image_path} corner {corner} should be clear'
 
 
 @pytest.mark.parametrize('stem', ['zutomayocard_2nd_36', 'zutomayocard_2nd_37'])

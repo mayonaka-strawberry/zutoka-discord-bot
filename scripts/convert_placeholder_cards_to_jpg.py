@@ -8,9 +8,9 @@ before the png derivatives are removed.
 
 Written at a higher quality than the render pipeline uses: these are source assets that
 every render re-encodes downstream, so they sit above the output quality to avoid
-stacking generation loss. They are also exempt from corner rounding (see
-SQUARE_CORNER_IMAGE_STEMS in zutomayo/ui/card_art.py), because the placeholder art has
-no white dead space to remove.
+stacking generation loss. The placeholders were exempt from corner rounding while they
+shipped, because the placeholder art had no white dead space to remove; they have since
+been replaced by real scans and now round with the normal pack-4 radius.
 
 This is a one-off. It touches only the three named files and never reads or rewrites the
 422 real card scans.

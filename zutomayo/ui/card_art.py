@@ -58,14 +58,6 @@ MASK_DOWNSAMPLE_FILTER = Image.BOX
 # board composites onto black instead, in board_renderer, because its cards sit on board art.
 GRID_BACKGROUND = (255, 255, 255)
 
-# Pack-4 105/106/107 are synthetic dark-background text placeholders rather than scans. They
-# have no white dead space, so rounding them would clip real pixels for no gain.
-SQUARE_CORNER_IMAGE_STEMS = frozenset({
-    'zutomayocard_4th_105',
-    'zutomayocard_4th_106',
-    'zutomayocard_4th_107',
-})
-
 # 700x978 RGBA is ~2.6 MB, so this caps resident card art at roughly 167 MB. It comfortably
 # covers every single render unit (a 20-card deck, a 25-card gacha or draft-box half, a
 # 25-card draft page, a board's filled zones), which is what matters -- the full 425-card
@@ -100,9 +92,6 @@ def _rounded_corner_mask(width: int, height: int, radius: int) -> Image.Image:
 def corner_radius_for(path: str, width: int) -> int:
     """The corner radius for a card image, scaled to the width it was loaded at."""
     pure_path = PurePosixPath(str(path).replace('\\', '/'))
-    if pure_path.stem in SQUARE_CORNER_IMAGE_STEMS:
-        return 0
-
     base_radius = CORNER_RADIUS_BY_PACK_DIRECTORY.get(
         pure_path.parent.name,
         DEFAULT_CORNER_RADIUS,
