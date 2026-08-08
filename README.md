@@ -165,7 +165,10 @@ is_terminal() / returns()`:
   projections consumed by embeds and the PIL board renderer.
 - `narrator.py`: translates engine events (`engine_alpha/events.py`) into
   channel/DM messages and the permanent `game_events` stream that powers
-  `/zutomayo summary`.
+  `/zutomayo summary`. Reveal effects (the TAIDADA family, 03-045) broadcast
+  the revealed cards to the owner's DM, the opponent's DM, and the channel, a
+  fresh card-grid image per leg because a `discord.File` is consumed on send;
+  revealing nothing tells the owner alone.
 - `gate_presenter.py`: the phase gates. `Game.apply` runs a whole chain of
   phases at once (set cards, reveal, chronos, swaps, effects, battle, end
   turn), so `SnapshottingEventSink` - the plain list the engine already appends

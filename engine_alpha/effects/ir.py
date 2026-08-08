@@ -73,7 +73,9 @@ Ops (interpreter.py OP_TABLE); `side` relative to owner:
              ('mill', side, expr)              top N of side's deck -> side's abyss
              ('charger_to_abyss', side)        04-105: empty side's charger into
                  that side's OWN abyss (actor = effect owner)
-             ('reveal_reg', reg)  ('reveal_hand', side)     face-up flag only
+             ('reveal_reg', reg)  ('reveal_hand', side)
+                 informational: mutate nothing, emit EVENT_CARDS_REVEALED for
+                 the driver to show. reveal_reg fires even on an empty reg.
              ('shuffle_hand', side)            rng event
              ('hand_bonus', side)              pending hand-size bonus +1
   area:      ('bounce_opp_area', order, cleanup)   opponent's area -> their deck

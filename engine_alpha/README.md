@@ -38,9 +38,12 @@ continuation frames (program counter + registers), cloned in ~2 µs.
   game and a flipped one agree on every shuffle.
 - **Engine events**: a `GameState` may carry an `event_sink` list
   (`events.py`); rule functions append observation-only int tuples (draws,
-  placements, battle results, phase changes, ...) for external drivers to
-  narrate. `fast_clone` always detaches the sink, so search clones are
-  silent and pay only a `None` check.
+  placements, battle results, phase changes, card reveals, ...) for external
+  drivers to narrate. `fast_clone` always detaches the sink, so search clones
+  are silent and pay only a `None` check. `EVENT_CARDS_REVEALED` is the one
+  variable-arity layout - the `reveal_reg` / `reveal_hand` ops change no zone,
+  so this event is the only trace a reveal leaves, and its card tail is empty
+  when a player chose to reveal nothing.
 - **Verified against the old engine** (historical): during development, a
   cross-engine equivalence harness replayed identical decision scripts
   through both engines and compared state snapshots every turn (plus

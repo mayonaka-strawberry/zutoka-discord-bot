@@ -21,6 +21,15 @@ Tuple layouts (all ints):
   (EVENT_BATTLE_RESULT, attack_0, attack_1, winner_index_or_minus_1, damage)
   (EVENT_MULLIGAN_DONE, player_index, redraw_count)
   (EVENT_GAME_OVER, winner_index)
+  (EVENT_CARDS_REVEALED, owner_index, revealed_owner_index,
+   source_definition_index, *revealed_definition_indices)
+
+EVENT_CARDS_REVEALED is the one variable-arity layout: the tail holds one
+definition index per revealed card, in zone order, and may be EMPTY when a
+player declined to reveal anything. `owner_index` resolves the effect,
+`revealed_owner_index` owns the exposed cards (they differ for 03-045, which
+reveals the opponent's hand), and `source_definition_index` is the card whose
+effect ran, so a driver can name the effect.
 """
 
 (
@@ -38,7 +47,11 @@ Tuple layouts (all ints):
     EVENT_BATTLE_RESULT,
     EVENT_MULLIGAN_DONE,
     EVENT_GAME_OVER,
-) = range(14)
+    # New types append here: the ints are transient (the persisted stream uses
+    # the string types in zutomayo/engine/game_events.py), but appending keeps
+    # any in-flight sink readable across a reload.
+    EVENT_CARDS_REVEALED,
+) = range(15)
 
 EVENT_NAMES = {
     EVENT_PHASE_CHANGED: "phase_changed",
@@ -55,4 +68,5 @@ EVENT_NAMES = {
     EVENT_BATTLE_RESULT: "battle_result",
     EVENT_MULLIGAN_DONE: "mulligan_done",
     EVENT_GAME_OVER: "game_over",
+    EVENT_CARDS_REVEALED: "cards_revealed",
 }

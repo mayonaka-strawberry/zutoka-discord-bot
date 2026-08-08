@@ -6,13 +6,17 @@ from __future__ import annotations
 import random
 
 from engine_alpha import cards
+from engine_alpha.effects import interpreter
 from engine_alpha.events import (
-    EVENT_BATTLE_RESULT, EVENT_CHRONOS_ADVANCED, EVENT_DRAW, EVENT_GAME_OVER,
-    EVENT_MULLIGAN_DONE, EVENT_NAMES, EVENT_PHASE_CHANGED,
+    EVENT_BATTLE_RESULT, EVENT_CARDS_REVEALED, EVENT_CHRONOS_ADVANCED,
+    EVENT_DRAW, EVENT_GAME_OVER, EVENT_MULLIGAN_DONE, EVENT_NAMES,
+    EVENT_PHASE_CHANGED,
 )
 from engine_alpha.game import Game
+from engine_alpha.state import PF_ATTACK_BONUS
 from .conftest import make_vanilla_game, random_playout, random_vanilla_deck
 from .test_invariants import snapshot
+from .test_rulings import card_with_effect, fx, make_game
 
 ALL_DEFS = [d.index for d in cards.CARD_DB]
 
@@ -106,3 +110,103 @@ def test_event_stream_deterministic():
         first = playout_with_sink(Game(seed=seed, mode="fixed_decks", decks=decks), seed)
         second = playout_with_sink(Game(seed=seed, mode="fixed_decks", decks=decks), seed)
         assert first == second
+
+
+# ---------------------------------------------------------------------------
+# Reveal events: the driver's only view of what a reveal effect exposed.
+# ---------------------------------------------------------------------------
+
+TAIDADA_CHARACTER_DEFS = [
+    d.index for d in cards.CARD_DB
+    if d.song == cards.SONG_NAMES.index("TAIDADA") and d.card_type == cards.TYPE_CHARACTER
+]
+
+
+def start_effect_on_battle_card(state, owner_index: int, effect_id: str) -> int:
+    """Spawn the effect's carrier into the owner's battle zone and push its
+    frame. Returns the instance id so a test can check the reported source."""
+    instance_id = state.new_instance(card_with_effect(effect_id))
+    state.players[owner_index].battle = instance_id
+    interpreter.start_effect(state, owner_index, instance_id, fx(effect_id))
+    return instance_id
+
+
+def resolve_frame(state, choose: str) -> None:
+    """Drain the frame stack, answering every request with the highest or the
+    lowest legal action ("max" reveals everything, "min" reveals nothing)."""
+    request = interpreter.resume(state, None, None)
+    while request is not None:
+        actions = request.legal_actions()
+        answer = actions[-1] if choose == "max" else actions[0]
+        request = interpreter.resume(state, request, answer)
+
+
+def reveal_events(state) -> list[tuple]:
+    return [event for event in state.event_sink if event[0] == EVENT_CARDS_REVEALED]
+
+
+def game_with_taidada_hand(player_index: int, count: int):
+    game = make_game()
+    state = game.state
+    state.event_sink = []
+    player = state.players[player_index]
+    player.hand.clear()
+    for def_index in TAIDADA_CHARACTER_DEFS[:count]:
+        player.hand.append(state.new_instance(def_index))
+    return game, state, player
+
+
+def test_reveal_reg_reports_the_picked_cards():
+    game, state, owner = game_with_taidada_hand(0, 2)
+    source = start_effect_on_battle_card(state, 0, "04-001")
+    resolve_frame(state, "max")
+
+    assert len(reveal_events(state)) == 1
+    event = reveal_events(state)[0]
+    assert event[1] == 0, "owner resolves the effect"
+    assert event[2] == 0, "04-001 reveals the owner's own hand"
+    assert event[3] == state.inst_def[source]
+    assert sorted(event[4:]) == sorted(state.inst_def[i] for i in owner.hand)
+    assert owner.flags[PF_ATTACK_BONUS] == 2 * 30
+
+
+def test_reveal_reg_reports_an_empty_reveal():
+    """The empty tail is what lets a driver say "nothing revealed" - without
+    it the effect would resolve completely silently."""
+    game, state, owner = game_with_taidada_hand(0, 2)
+    start_effect_on_battle_card(state, 0, "04-001")
+    resolve_frame(state, "min")
+
+    assert len(reveal_events(state)) == 1
+    assert len(reveal_events(state)[0]) == 4, "header only, no card indices"
+    assert owner.flags[PF_ATTACK_BONUS] == 0
+
+
+def test_reveal_hand_reports_the_opponent_hand_before_the_shuffle():
+    game, state, opponent = game_with_taidada_hand(1, 3)
+    hand_before = [state.inst_def[i] for i in opponent.hand]
+    source = start_effect_on_battle_card(state, 0, "03-045")
+    resolve_frame(state, "max")
+
+    assert len(reveal_events(state)) == 1
+    event = reveal_events(state)[0]
+    assert event[1] == 0, "player 0 resolves the effect"
+    assert event[2] == 1, "player 1's hand is the one exposed"
+    assert event[3] == state.inst_def[source]
+    assert list(event[4:]) == hand_before
+
+    # Guards the assertion above against going vacuous: 03-045 shuffles right
+    # after revealing, so capturing the hand post-shuffle has to be detectable.
+    assert [state.inst_def[i] for i in opponent.hand] != hand_before
+
+
+def test_reveal_events_are_silent_without_a_sink():
+    """Reveals are observation-only, so a detached sink must make both ops
+    behave exactly as they did before they emitted anything."""
+    game, state, owner = game_with_taidada_hand(0, 2)
+    state.event_sink = None
+    start_effect_on_battle_card(state, 0, "04-001")
+    resolve_frame(state, "max")
+
+    assert state.event_sink is None
+    assert owner.flags[PF_ATTACK_BONUS] == 2 * 30

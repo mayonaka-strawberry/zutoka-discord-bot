@@ -242,10 +242,13 @@ class SingleMatchFlow:
         from zutomayo.ui.board_renderer import (
             generate_zone_messages_off_thread, render_board_image_off_thread,
         )
-        from zutomayo.ui.embeds import create_hand_image_off_thread
+        from zutomayo.ui.embeds import (
+            create_deck_grid_image_off_thread, create_hand_image_off_thread,
+        )
 
         narrator = MatchNarrator(session, session.transport)
         narrator.hand_image_provider = create_hand_image_off_thread
+        narrator.reveal_image_provider = create_deck_grid_image_off_thread
         narrator.gate_presenter.board_image_provider = render_board_image_off_thread
         narrator.gate_presenter.zone_messages_provider = generate_zone_messages_off_thread
         return narrator

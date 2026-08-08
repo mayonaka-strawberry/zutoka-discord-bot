@@ -21,6 +21,7 @@ from typing import Any, Optional
 
 from engine_alpha.events import (
     EVENT_BATTLE_RESULT,
+    EVENT_CARDS_REVEALED,
     EVENT_DRAW,
     EVENT_EFFECT_SKIPPED_COST,
     EVENT_EFFECT_STARTED,
@@ -42,6 +43,31 @@ EFFECT_NARRATION_OVERRIDES: dict[str, str] = {}
 
 def describe_card(card: Any) -> dict[str, Any]:
     return {'card': [card.pack, card.id], 'name': card.name, 'effect': card.effect}
+
+
+def reveal_effect_details(effect_id: str) -> tuple[Optional[str], Optional[int]]:
+    """(song label, per-card attack bonus) read out of the effect's own IR.
+
+    The TAIDADA reveal line quotes both, and reading them from the catalog
+    rather than hard-coding them keeps the message from drifting if
+    catalog_data.py changes a bonus or reuses the family for another song.
+    """
+    from engine_alpha.cards import SONG_NAMES
+    from engine_alpha.effects.catalog import CATALOG
+    from engine_alpha.effects.ir import Sel
+
+    entry = CATALOG.get(effect_id)
+    if entry is None:
+        return None, None
+    song_label: Optional[str] = None
+    per_card_bonus: Optional[int] = None
+    for op in entry.ops:
+        for argument in op[1:]:
+            if isinstance(argument, Sel) and argument.song != -1:
+                song_label = SONG_NAMES[argument.song]
+        if op[0] == 'atk_bonus' and isinstance(op[2], tuple) and op[2][0] == 'mul':
+            per_card_bonus = op[2][2]
+    return song_label, per_card_bonus
 
 
 def _zone_key(view: Any) -> Optional[list[int]]:
@@ -81,6 +107,7 @@ class MatchNarrator:
         self.gate_presenter = GatePresenter(session, transport)
         # Set by the Discord flow; headless runs narrate without images.
         self.hand_image_provider: Optional[Any] = None
+        self.reveal_image_provider: Optional[Any] = None
         # Effect aggregation per player batch during process effects.
         self.resolved_effects: dict[int, list[Any]] = {0: [], 1: []}
         self.skipped_effects: dict[int, list[Any]] = {0: [], 1: []}
@@ -160,6 +187,13 @@ class MatchNarrator:
                 self._emit(stream.EVENT_EFFECT_SKIPPED_COST,
                            {'player_index': owner_index, **describe_card(card)})
 
+            elif event_type == EVENT_CARDS_REVEALED:
+                # The reveal is the point of these effects, so it goes out on
+                # its own rather than waiting for the batched effect embed.
+                await self._send_lines(lines)
+                lines = []
+                await self._broadcast_reveal(event)
+
             elif event_type == EVENT_HP_CHANGED:
                 # Battle damage is already spelled out by the battle result
                 # embed at the following gate; only effect-driven swings, which
@@ -194,6 +228,93 @@ class MatchNarrator:
                     await self.gate_presenter.on_game_over(snapshot)
 
         await self._send_lines(lines)
+
+    async def _broadcast_reveal(self, event: tuple) -> None:
+        """Show revealed cards to both players and the channel.
+
+        Keeps the pre-port send order - owner DM, opponent DM, channel - so a
+        reveal reads the same way it always has. Two shapes: the TAIDADA
+        family reveals the owner's own picks, 03-045 reveals the opponent's
+        whole hand, and `revealed_owner_index` is what tells them apart.
+        """
+        owner_index, revealed_owner_index = event[1], event[2]
+        source_card = definition_index_to_card(event[3])
+        effect_id = f'{source_card.pack:02d}-{source_card.id:03d}'
+        revealed = [definition_index_to_card(index) for index in event[4:]]
+
+        if not revealed:
+            # Owner only, as the pre-port announce_effect_fizzle was: a reveal
+            # that did not happen tells the opponent nothing.
+            await self.transport.send_to_player(
+                self.session, owner_index,
+                content=f'**Effect ({effect_id}):** Nothing revealed. No effect.',
+            )
+            return
+
+        names = ', '.join(card.name for card in revealed)
+        owner_embed = None
+
+        if revealed_owner_index == owner_index:
+            song_label, per_card_bonus = reveal_effect_details(effect_id)
+            noun = f'{song_label} character(s)' if song_label else 'card(s)'
+            owner_message = (
+                f'**Effect ({effect_id}):** Revealed {len(revealed)} {noun}: {names}.')
+            if per_card_bonus:
+                owner_message += f' Attack +{len(revealed) * per_card_bonus}!'
+            other_message = (
+                f'**Effect ({effect_id}):** Opponent revealed '
+                f'{len(revealed)} {noun}: {names}.')
+            channel_message = (
+                f'**Effect ({effect_id}):** {self._player_name(owner_index)} revealed '
+                f'{len(revealed)} {noun}: {names}.')
+        else:
+            from types import SimpleNamespace
+
+            from zutomayo.ui.embeds import build_hand_embed
+
+            # Built from the event, not the BoardView: 03-045 shuffles the hand
+            # immediately after revealing it, so the board already holds the
+            # post-shuffle order by the time this batch is narrated.
+            owner_embed = build_hand_embed(
+                SimpleNamespace(hand=[_CardHolder(card) for card in revealed]))
+            owner_embed.title = "Opponent's Hand [相手の手札]"
+            owner_message = f"**Effect ({effect_id}):** Opponent's hand revealed!"
+            other_message = (
+                f'**Effect ({effect_id}):** Your hand has been revealed: {names}.')
+            channel_message = (
+                f'**Effect ({effect_id}):** '
+                f"{self._player_name(revealed_owner_index)}'s hand revealed: {names}.")
+
+        await self._send_reveal(owner_index, owner_message, revealed, embed=owner_embed)
+        await self._send_reveal(1 - owner_index, other_message, revealed)
+        await self._send_reveal(None, channel_message, revealed)
+
+    async def _send_reveal(
+        self,
+        player_index: Optional[int],
+        content: str,
+        revealed: list,
+        embed: Any = None,
+    ) -> None:
+        """One leg of a reveal broadcast; `player_index` None means the channel.
+
+        The image is rendered here rather than once by the caller because a
+        discord.File is consumed on send, so each leg needs its own.
+        """
+        if player_index is not None and not self.transport.delivers_to_player(
+                self.session, player_index):
+            return
+        kwargs: dict[str, Any] = {'content': content}
+        if embed is not None:
+            kwargs['embed'] = embed
+        if self.reveal_image_provider is not None:
+            reveal_image = await self.reveal_image_provider(revealed, columns=len(revealed))
+            if reveal_image:
+                kwargs['files'] = [reveal_image]
+        if player_index is None:
+            await self.transport.send_to_channel(self.session, **kwargs)
+        else:
+            await self.transport.send_to_player(self.session, player_index, **kwargs)
 
     async def _send_redraw_result(
         self, player_index: int, count: int, board_view: BoardView,

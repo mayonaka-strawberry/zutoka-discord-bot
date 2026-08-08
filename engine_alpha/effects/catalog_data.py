@@ -369,11 +369,18 @@ for _eid, _amount in (("03-047", 50), ("03-059", 100), ("03-094", 40), ("03-105"
 # --- Family AA: TAIDADA reveal-count buffs ------------------------------------------
 # multiselect = number prompt (0..len) then that many picks, matching both the
 # old _prompt_card_multiselect cards and 04-035's hand-rolled version.
+# The if_reg_empty guard falls through to the next op rather than skipping the
+# reveal: reveal_reg emits an empty-tailed EVENT_CARDS_REVEALED that the
+# narrator renders as "nothing revealed", and atk_bonus already adds
+# 0 * _per == 0 on that path. The now-vestigial op is kept rather than deleted
+# because features.py featurizes op verbs into EFFECT_FEATURES, a registered
+# buffer in the deployed alpha_zero / ppo_transformer checkpoints; jump targets
+# are not featurized, so retargeting it leaves those checkpoints untouched.
 for _eid, _per in (("04-001", 30), ("04-007", 20), ("04-010", 20),
                    ("04-035", 10), ("04-091", 10)):
     ENTRIES.append(E(_eid, "AA", None,
                      (("multiselect", 0, Sel(SELF, "hand", card_type=TYPE_CHARACTER, song=SONG("TAIDADA")), 0),
-                      ("if_reg_empty", 0, 3),
+                      ("if_reg_empty", 0, 2),
                       ("reveal_reg", 0),
                       ("atk_bonus", SELF, ("mul", ("reg_len", 0), _per)))))
 ENTRIES.append(E("04-055", "AA", ("battle_song", SELF, SONG("TAIDADA")), (("heal", SELF, 20),)))

@@ -26,7 +26,7 @@ from ..actions import (
     select_card, select_identity, select_number,
 )
 from ..cards import CARD_TYPE_T, NUM_CARDS, SONG_T, TYPE_CHARACTER
-from ..events import EVENT_EFFECT_STARTED, EVENT_HP_CHANGED
+from ..events import EVENT_CARDS_REVEALED, EVENT_EFFECT_STARTED, EVENT_HP_CHANGED
 from ..state import (
     Frame, GameState,
     PF_ATTACK_BONUS, PF_DAMAGE_REDUCTION, PF_DAY_NIGHT_REVERSED,
@@ -614,13 +614,33 @@ def _op_mill(state, frame, op, request, answer):
     return None
 
 
+def _emit_reveal(state, frame, revealed_owner_index: int, instance_ids) -> None:
+    """Announce a reveal on the event sink. Informational only: no zone
+    contents change, so a detached sink (search, training) makes both reveal
+    ops pure no-ops, exactly as they were before."""
+    if state.event_sink is None:
+        return
+    state.event_sink.append(
+        (EVENT_CARDS_REVEALED, frame.owner, revealed_owner_index,
+         state.inst_def[frame.source],
+         *(state.inst_def[instance_id] for instance_id in instance_ids)))
+
+
 def _op_reveal_reg(state, frame, op, request, answer):
-    # Reveals are informational: they do not mutate any zone contents.
+    # Only used by the TAIDADA family, which always selects from the owner's
+    # own hand, so the revealed cards belong to the effect owner. Emitted even
+    # when the register is empty: that is what tells a driver the player chose
+    # to reveal nothing.
+    _emit_reveal(state, frame, frame.owner, frame.regs[op[1]] or ())
     frame.pc += 1
     return None
 
 
 def _op_reveal_hand(state, frame, op, request, answer):
+    # Captured before any following shuffle_hand, so the reveal reports the
+    # order the revealing player actually saw.
+    player = _side_player(state, frame, op[1])
+    _emit_reveal(state, frame, player.index, player.hand)
     frame.pc += 1
     return None
 
