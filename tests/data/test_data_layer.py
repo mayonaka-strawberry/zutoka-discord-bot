@@ -309,10 +309,13 @@ class TestPlayerStorage:
         assert winner['opponent_stats']['222']['wins'] == 1
         assert loser['opponent_stats']['111']['losses'] == 1
 
-    def test_thrown_game_charges_a_full_loss_not_a_discounted_one(
+    def test_thrown_game_charges_a_flat_penalty_plus_five_times_the_normal_loss(
         self, install_in_memory_backends,
     ):
-        from zutomayo.data.player_storage import load_profile, record_match_result
+        from zutomayo.data.player_storage import (
+            SELF_DEFEAT_ELO_LOSS_FLAT_PENALTY, SELF_DEFEAT_ELO_LOSS_MULTIPLIER,
+            load_profile, record_match_result,
+        )
 
         async def run(suppress: bool):
             await record_match_result(111, 222, None, None, 0,
@@ -323,7 +326,96 @@ class TestPlayerStorage:
         suppressed_elo = asyncio.run(run(True))
         install_in_memory_backends['profiles'].profiles.clear()
         normal_elo = asyncio.run(run(False))
-        assert suppressed_elo == normal_elo, 'the loser pays the same either way'
+
+        # Both players start at 1000, where the base loss is exactly 16 and the two
+        # roundings coincide. Away from parity round(5x) != 5 * round(x), so this exact
+        # identity is a property of equal starting ratings, not of the penalty.
+        expected_drop = (
+            SELF_DEFEAT_ELO_LOSS_FLAT_PENALTY
+            + SELF_DEFEAT_ELO_LOSS_MULTIPLIER * (1000 - normal_elo)
+        )
+        assert 1000 - suppressed_elo == expected_drop, 'throwing costs far more than losing'
+
+    def test_thrown_game_penalty_never_decays_to_nothing(self, install_in_memory_backends):
+        """The flat term is what stops a feeder account from eventually throwing for free.
+
+        Once the thrower is far enough below the winner the scaled part rounds away, so
+        without the flat penalty (or with the multiplier applied outside the round) the
+        rating would stop moving and the rule would quietly switch itself off.
+        """
+        from zutomayo.data.player_storage import (
+            SELF_DEFEAT_ELO_LOSS_FLAT_PENALTY, load_profile, record_match_result,
+            save_profile,
+        )
+
+        async def seed_elo(user_id: int, elo: int) -> None:
+            profile = await load_profile(user_id)
+            profile['elo'] = elo
+            await save_profile(user_id, profile)
+
+        async def run():
+            await seed_elo(111, 1400)
+            await seed_elo(222, 100)
+            await record_match_result(111, 222, None, None, 0,
+                                      mode='standard', is_solo=False,
+                                      suppress_winner_elo_gain=True)
+            return await load_profile(222)
+
+        loser = asyncio.run(run())
+        assert 100 - loser['elo'] >= SELF_DEFEAT_ELO_LOSS_FLAT_PENALTY
+
+    def test_thrown_game_floors_the_rating_at_zero(self, install_in_memory_backends):
+        """Both players are seeded low so the penalty exceeds the thrower's whole rating.
+
+        The penalty scales with the rating gap, so a thrower near zero facing a normal
+        opponent is charged only a few points and never reaches the clamp - it takes two
+        players who have both ground down to the floor to get there.
+        """
+        from zutomayo.data.player_storage import (
+            ELO_MINIMUM_RATING, load_profile, record_match_result, save_profile,
+        )
+
+        async def run():
+            await seed_elo(111, 50)
+            await seed_elo(222, 50)
+            await record_match_result(111, 222, None, None, 0,
+                                      mode='standard', is_solo=False,
+                                      game_id='20260809-00000',
+                                      suppress_winner_elo_gain=True)
+            return await load_profile(222)
+
+        async def seed_elo(user_id: int, elo: int) -> None:
+            profile = await load_profile(user_id)
+            profile['elo'] = elo
+            await save_profile(user_id, profile)
+
+        loser = asyncio.run(run())
+        assert loser['elo'] == ELO_MINIMUM_RATING, 'a rating must never go negative'
+
+    def test_floored_throw_records_the_real_drop_not_the_notional_one(
+        self, install_in_memory_backends,
+    ):
+        from zutomayo.data.player_storage import load_profile, record_match_result, save_profile
+
+        async def seed_elo(user_id: int, elo: int) -> None:
+            profile = await load_profile(user_id)
+            profile['elo'] = elo
+            await save_profile(user_id, profile)
+
+        async def run():
+            await seed_elo(111, 50)
+            await seed_elo(222, 50)
+            await record_match_result(111, 222, None, None, 0,
+                                      mode='standard', is_solo=False,
+                                      game_id='20260809-00001',
+                                      suppress_winner_elo_gain=True)
+            return await load_profile(222)
+
+        loser = asyncio.run(run())
+        history = install_in_memory_backends['profiles'].elo_history
+        assert len(history) == 1
+        assert history[0]['elo_before'] == 50
+        assert history[0]['elo_after'] == 0 == loser['elo'], 'the audit trail follows the clamp'
 
     def test_thrown_game_writes_one_elo_history_row(self, install_in_memory_backends):
         from zutomayo.data.player_storage import load_profile, record_match_result

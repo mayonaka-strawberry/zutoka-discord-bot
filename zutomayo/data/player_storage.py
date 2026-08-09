@@ -27,6 +27,12 @@ log = logging.getLogger(__name__)
 
 ELO_STARTING_RATING = 1000
 ELO_K_FACTOR = 32
+ELO_MINIMUM_RATING = 0
+
+# Turn-1 CHAOS self-defeat penalty: flat + multiplier * the loss the thrower would
+# normally take. See _apply_one_sided_elo_loss for why both terms exist.
+SELF_DEFEAT_ELO_LOSS_MULTIPLIER = 5
+SELF_DEFEAT_ELO_LOSS_FLAT_PENALTY = 4
 
 BOT_DISCORD_ID = 0  # sentinel; matches GameSessionManager.BOT_DISCORD_ID
 
@@ -286,22 +292,44 @@ def _apply_one_sided_elo_loss(
     games_field: str = 'elo_games',
 ) -> tuple[int, int]:
     """
-    Charge the loser the Elo they would normally lose and give the winner nothing.
+    Charge the loser a punitive Elo penalty and give the winner nothing.
 
     Used when the loser threw the game (a turn-1 CHAOS self-defeat): a wintrade must not
-    pay out, or two colluding players can pump one account's rating for free. The thrower
-    still pays in full, so this is not an escape hatch from a losing game either.
+    pay out, or two colluding players can pump one account's rating for free. Paying the
+    winner nothing removes the payout, but on its own it leaves the throw free — the
+    thrower was heading for that loss anyway. So the thrower is charged
+    SELF_DEFEAT_ELO_LOSS_FLAT_PENALTY plus SELF_DEFEAT_ELO_LOSS_MULTIPLIER times the loss
+    they would normally take.
+
+    Both terms are load-bearing. The scaled term shrinks as the thrower's rating falls
+    (their expected score against the winner drops with it), so a pure multiplier
+    asymptotes and a dedicated feeder account eventually throws for nothing. The flat term
+    ignores the rating gap and keeps landing, so the rating keeps descending. The
+    multiplier is applied inside the round for the same reason: rounding the base loss
+    first would let the scaled part collapse to exactly zero once the gap is wide enough.
+
+    ELO_MINIMUM_RATING is clamped here and nowhere else. The ordinary Elo path does not
+    need a floor — near zero a player's expected score against any live opponent is also
+    near zero, so its delta rounds away to nothing on its own. Only the flat term can push
+    a rating negative, so only this path guards against it.
+
+    Nothing about this is announced to the player. Keep it that way: the boundaries of the
+    rule (see should_suppress_winner_elo_gain) must not be probeable from bot output, or
+    the next wintrade just moves to a variant the rule does not cover.
 
     The winner's rating, peak, and games_field are all left untouched — no rating event
     happened for them. Returns (rating_before, rating_after) for the loser so the caller
-    can build the elo_history row.
+    can build the elo_history row; rating_after is post-clamp, so a floored throw records
+    the smaller real drop rather than the notional penalty.
     """
     rating_loser = loser_profile.get(rating_field, ELO_STARTING_RATING)
     rating_winner = winner_profile.get(rating_field, ELO_STARTING_RATING)
     expected_loser = _expected_score(rating_loser, rating_winner)
-    delta_loser = round(ELO_K_FACTOR * (0.0 - expected_loser))
+    penalty = SELF_DEFEAT_ELO_LOSS_FLAT_PENALTY + round(
+        ELO_K_FACTOR * SELF_DEFEAT_ELO_LOSS_MULTIPLIER * expected_loser,
+    )
 
-    loser_profile[rating_field] = rating_loser + delta_loser
+    loser_profile[rating_field] = max(ELO_MINIMUM_RATING, rating_loser - penalty)
     loser_profile[games_field] = loser_profile.get(games_field, 0) + 1
     # No peak update: a one-sided loss only ever lowers the rating.
     loser_profile.setdefault(peak_field, ELO_STARTING_RATING)
@@ -399,10 +427,11 @@ async def record_match_result(
     (standard mode only, with an elo_history row per player when game_id is known).
 
     suppress_winner_elo_gain marks a game the loser deliberately threw (a turn-1 CHAOS
-    self-defeat). The loser still takes their full Elo loss but the winner gains nothing,
-    which is what makes abyss-bomb wintrading pointless. Win/loss counters, deck_stats and
-    opponent_stats are unaffected and record the game normally for both players. Ignored
-    outside standard mode and on draws.
+    self-defeat). The winner gains nothing and the loser pays a punitive multiple of a
+    normal loss (see _apply_one_sided_elo_loss), which is what makes abyss-bomb
+    wintrading pointless rather than merely unprofitable. Win/loss counters, deck_stats
+    and opponent_stats are unaffected and record the game normally for both players.
+    Ignored outside standard mode and on draws.
     """
     if is_solo:
         human_id = player_zero_id if player_zero_id != BOT_DISCORD_ID else player_one_id

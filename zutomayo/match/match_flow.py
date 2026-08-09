@@ -44,12 +44,16 @@ def should_suppress_winner_elo_gain(
 
     Playing a bank-or-lose card without the abyss cards to pay for it ends the game
     immediately, which makes it the cheapest possible way for two colluding players to
-    pump one account's rating. Such a win pays the winner no Elo; the loser still takes
-    the full loss (see record_match_result).
+    pump one account's rating. Such a win pays the winner no Elo, and the loser pays a
+    punitive multiple of a normal loss (see _apply_one_sided_elo_loss).
 
     Deliberately turn 1 only: a self-defeat on any later turn rates as an ordinary loss,
     so a pair willing to spend an extra turn cycle can still trade. Every self-defeat is
     written to games.result_summary regardless, so widening this is a data question.
+
+    That scoping is also why none of this is surfaced to players: the boundary is the
+    exploitable part, and a pair who can watch the rule fire can find its edge by
+    experiment. Nothing here or downstream reaches a channel or a DM.
     """
     if mode != 'standard' or winner_index_or_none is None:
         return False
