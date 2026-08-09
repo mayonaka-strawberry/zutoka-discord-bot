@@ -106,9 +106,12 @@ timeouts forfeit the game.
 Playing a CHAOS bank-or-lose card (`04-006`, `04-027`, `04-028`, `04-088`)
 without the abyss cards to pay for it loses the game on the spot, which makes it
 the cheapest way to hand an opponent a win. When that happens on turn 1 of a
-standard game, the player who did it takes their full Elo loss but the winner
-gains no Elo. Win/loss records, deck stats and opponent stats are unaffected and
-count the game normally for both players.
+standard game, the winner gains no Elo and the player who did it takes a heavy
+Elo penalty - well beyond an ordinary loss, though it can never drive a rating
+below 0. Win/loss records, deck stats and opponent stats are unaffected and count
+the game normally for both players. The penalty is applied silently: nothing is
+posted to the channel or sent by DM, so the exact figures are deliberately not
+documented here.
 
 ## Architecture
 
