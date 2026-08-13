@@ -729,4 +729,5 @@ def _reset_turn_flags(state: GameState) -> None:
             cost_red[instance_id] = 0
         player.swapped_from_songs = 0
         player.flags = _fresh_player_flags()
+        player.attack_mods = array("h")
     state.gflags = array("h", bytes(2 * N_GLOBAL_FLAGS))

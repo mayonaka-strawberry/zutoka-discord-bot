@@ -25,7 +25,8 @@ def snapshot(game: Game) -> tuple:
         (p.index, p.side_is_night, p.hp, tuple(p.deck), tuple(p.hand),
          tuple(p.charger), tuple(p.abyss), p.battle, p.set_a, p.set_b, p.set_c,
          p.cards_played, p.area_blocked, p.hand_bonus, p.pending_hand_bonus,
-         p.prev_battle_def, p.swapped_from_songs, tuple(p.flags))
+         p.prev_battle_def, p.swapped_from_songs, tuple(p.flags),
+         tuple(p.attack_mods))
         for p in state.players
     )
     draft = None

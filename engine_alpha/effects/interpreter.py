@@ -29,10 +29,11 @@ from ..cards import CARD_TYPE_T, NUM_CARDS, SONG_T, TYPE_CHARACTER
 from ..events import EVENT_CARDS_REVEALED, EVENT_EFFECT_STARTED, EVENT_HP_CHANGED
 from ..state import (
     Frame, GameState,
-    PF_ATTACK_BONUS, PF_DAMAGE_REDUCTION, PF_DAY_NIGHT_REVERSED,
-    PF_POWER_BONUS, PF_END_OF_TURN_DAMAGE, PF_ATTACK_OVERRIDE,
+    PF_DAMAGE_REDUCTION, PF_DAY_NIGHT_REVERSED,
+    PF_POWER_BONUS, PF_END_OF_TURN_DAMAGE,
     PF_DAMAGE_NOT_REDUCIBLE, PF_REFLECT_REDUCTION,
     GF_MIDNIGHT_EXTENDED,
+    add_attack_modifier, set_attack_modifier,
 )
 from ..rng import shuffled
 from ..zones import place_in_abyss, place_in_charger, draw_cards
@@ -318,7 +319,8 @@ def _op_name_guess(state, frame, op, request, answer):
 
 
 def _op_atk_bonus(state, frame, op, request, answer):
-    _side_player(state, frame, op[1]).flags[PF_ATTACK_BONUS] += eval_expr(state, frame, op[2])
+    add_attack_modifier(_side_player(state, frame, op[1]),
+                        eval_expr(state, frame, op[2]))
     frame.pc += 1
     return None
 
@@ -330,7 +332,8 @@ def _op_dmg_reduce(state, frame, op, request, answer):
 
 
 def _op_atk_override(state, frame, op, request, answer):
-    _side_player(state, frame, op[1]).flags[PF_ATTACK_OVERRIDE] = eval_expr(state, frame, op[2])
+    set_attack_modifier(_side_player(state, frame, op[1]),
+                        eval_expr(state, frame, op[2]))
     frame.pc += 1
     return None
 
@@ -541,7 +544,7 @@ def _op_name_guess_bonus(state, frame, op, request, answer):
     opponent = state.players[1 - frame.owner]
     revealed = opponent.hand[frame.regs[index_reg] - 1]
     if state.inst_def[revealed] == frame.regs[guess_reg]:
-        state.players[frame.owner].flags[PF_ATTACK_BONUS] += amount
+        add_attack_modifier(state.players[frame.owner], amount)
     frame.pc += 1
     return None
 

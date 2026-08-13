@@ -138,8 +138,8 @@ _buff("04-066", "V", 30, ("enemy_stp_eq", 2))
 # computation that ignores it.
 _buff("04-034", "W", 30, ("enemy_atk_eq0",))
 _buff("04-039", "W", 40, ("enemy_atk_eq0",))
-_buff("04-084", "W", 50, ("enemy_atk_eq0_no_override",))
-_buff("04-101", "W", 20, ("enemy_atk_eq0_no_override",))
+_buff("04-084", "W", 50, ("enemy_atk_eq0",))
+_buff("04-101", "W", 20, ("enemy_atk_eq0",))
 
 # --- Family X: +attack if opponent HP is exactly 100 -------------------------
 _buff("03-006", "X", 100, ("opp_hp_eq", 100))

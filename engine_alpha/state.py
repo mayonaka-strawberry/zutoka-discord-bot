@@ -42,7 +42,7 @@ PHASE_NAMES = (
 # ---------------------------------------------------------------------------
 # Per-player turn-effect flags (PF_*): indices into PlayerState.flags
 # ---------------------------------------------------------------------------
-PF_ATTACK_BONUS = 0            # summed attack bonus for the battle character
+PF_ATTACK_BONUS = 0            # net attack bonus; derived summary, see attack_mods
 PF_DAMAGE_REDUCTION = 1        # summed damage reduction owned by this player
 PF_DAY_NIGHT_REVERSED = 2      # 01-005 applied against this player
 PF_POWER_BONUS = 3             # 02-058 style extra power (chars/enchants only)
@@ -55,7 +55,7 @@ PF_DAMAGE_TAKEN = 9            # total damage taken this turn (battle + effect)
 PF_BATTLE_LOST = 10            # lost the battle this turn (even at 0 damage)
 PF_DAMAGE_NOT_REDUCIBLE = 11   # 04-024: this player's battle damage can't be reduced
 PF_CARD_TO_POWER = 12          # owner placed any card on own charger
-PF_ATTACK_OVERRIDE = 13        # 04-099 override value, -1 = none
+PF_ATTACK_OVERRIDE = 13        # last 04-099 set value, -1 = none; derived summary
 PF_REFLECT_REDUCTION = 14      # 04-100 active for this player
 PF_DAMAGE_REDUCED = 15         # how much battle damage was reduced this turn
 PF_CHRONOS_ADVANCED = 16       # this player's clock contribution this turn
@@ -76,6 +76,33 @@ def _fresh_player_flags() -> array:
     return flags
 
 
+# ---------------------------------------------------------------------------
+# Attack modifiers (PlayerState.attack_mods)
+# ---------------------------------------------------------------------------
+# Official Q&A No.54 and No.68: attack modifiers are neither collapsed into a
+# number when they resolve nor summed into one total. They are kept in
+# resolution order and folded onto the live base at battle time, clamped to >=0
+# after each step. 04-099's "set the opponent's attack to 100" is an
+# ATTACK_MOD_SET entry in the same list (Q&A No.82), so whether it wipes a bonus
+# or is added to depends purely on resolution order.
+ATTACK_MOD_ADD = 0
+ATTACK_MOD_SET = 1
+
+
+def add_attack_modifier(player: "PlayerState", amount: int) -> None:
+    """Record an attack +/-N at this point in the resolution order."""
+    player.attack_mods.append(ATTACK_MOD_ADD)
+    player.attack_mods.append(amount)
+    player.flags[PF_ATTACK_BONUS] += amount
+
+
+def set_attack_modifier(player: "PlayerState", value: int) -> None:
+    """Record an attack set-to-N (04-099) at this point in the resolution order."""
+    player.attack_mods.append(ATTACK_MOD_SET)
+    player.attack_mods.append(value)
+    player.flags[PF_ATTACK_OVERRIDE] = value
+
+
 class PlayerState:
     __slots__ = (
         "index", "side_is_night", "hp",
@@ -86,6 +113,7 @@ class PlayerState:
         "prev_battle_def",
         "swapped_from_songs",   # bitmask over song indices
         "flags",                # array('h', N_PLAYER_FLAGS)
+        "attack_mods",          # array('h') of flat (kind, value) pairs, in order
     )
 
     def __init__(self, index: int, side_is_night: bool, hp: int) -> None:
@@ -107,6 +135,10 @@ class PlayerState:
         self.prev_battle_def = -1
         self.swapped_from_songs = 0
         self.flags = _fresh_player_flags()
+        # This turn's attack modifiers in resolution order. Authoritative for
+        # battle.get_effective_attack; PF_ATTACK_BONUS/PF_ATTACK_OVERRIDE are
+        # derived summaries kept only for the network observation.
+        self.attack_mods = array("h")
 
     def fast_clone(self) -> "PlayerState":
         clone = PlayerState.__new__(PlayerState)
@@ -128,6 +160,7 @@ class PlayerState:
         clone.prev_battle_def = self.prev_battle_def
         clone.swapped_from_songs = self.swapped_from_songs
         clone.flags = array("h", self.flags)
+        clone.attack_mods = array("h", self.attack_mods)
         return clone
 
 

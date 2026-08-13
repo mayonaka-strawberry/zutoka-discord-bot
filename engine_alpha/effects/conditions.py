@@ -58,13 +58,13 @@ def eval_cond(state: GameState, owner_index: int, cond) -> bool:
     if kind == "enemy_stp_eq":
         return enemy.battle != -1 and SEND_TO_POWER_T[_battle_def(state, enemy)] == cond[1]
     if kind == "enemy_atk_eq0":
+        # Q&A No.60: covers a printed 0, no character set, and an unmet power
+        # cost alike -- anything that leaves the enemy unable to attack. All
+        # four cards with this text (04-034/04-039/04-084/04-101) use it; the
+        # old engine's 04-084/04-101 variant that skipped the 04-099 set was an
+        # inlining artifact with no basis in the rulings.
         from ..battle import get_effective_attack
         return get_effective_attack(state, enemy) == 0
-    if kind == "enemy_atk_eq0_no_override":
-        # 04-084/04-101 inline the attack computation WITHOUT the 04-099
-        # attack-override check (unlike 04-034/04-039 which honor it).
-        from ..battle import get_effective_attack_ignoring_override
-        return get_effective_attack_ignoring_override(state, enemy) == 0
     if kind == "time":
         return state.is_night == (cond[1] == "night")
     if kind == "midnight":

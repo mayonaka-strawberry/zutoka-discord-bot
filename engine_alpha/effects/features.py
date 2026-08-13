@@ -56,6 +56,10 @@ SEL_ATTR, SEL_SONG, SEL_TYPE, SEL_STP = 127, 128, 129, 130
 CHOICE_PICK_CARD, CHOICE_OPTIONAL_PICK, CHOICE_NUMBER = 131, 132, 133
 CHOICE_MULTISELECT, CHOICE_NAME_GUESS, CHOICE_CHRONOS, CHOICE_MAX_PICKS = 134, 135, 136, 137
 
+# Positional: _COND_INDEX below maps each name to its feature slot, so entries
+# may be appended but never removed or reordered -- a shift would invalidate the
+# effect embeddings in every trained checkpoint. "enemy_atk_eq0_no_override" is
+# retired (04-084/04-101 now use "enemy_atk_eq0"); its slot stays reserved.
 _COND_KINDS = (
     "enemy_attr", "own_attr", "enemy_cost_ge", "enemy_cost_le",
     "enemy_cost_eq_own", "enemy_stp_eq", "enemy_atk_eq0",
@@ -70,6 +74,9 @@ _COND_KINDS = (
     "hand_attr_count_ge", "hand_distinct_attr_ge",
 )
 _COND_INDEX = {k: i for i, k in enumerate(_COND_KINDS)}
+
+# Slots kept only to hold their position; no live effect uses these.
+_RETIRED_COND_KINDS = frozenset({"enemy_atk_eq0_no_override"})
 
 _OP_VERBS = (
     "end", "jump", "if_not", "if_reg_empty", "if_reg_le",

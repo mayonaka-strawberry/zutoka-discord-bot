@@ -1,11 +1,14 @@
 """Attack computation, battle resolution, win checks, and the engine-inline
-passive effects that modify them (02-005, 02-007, 03-061, 03-026, 01-005 flag,
-04-099 override).
+passive effects that modify them (02-005, 02-007, 03-061, 03-026, 01-005 flag).
 
-get_effective_attack precedence (matching the old engine exactly):
-  04-099 attack override  >  power-cost gate (attack = 0)  >
-  02-007 force-day  >  01-005 day/night reversal  >
-  day/night base + attack bonus (floored at 0).
+get_effective_attack builds a starting value, then folds this turn's attack
+modifiers onto it in resolution order:
+  starting value = 0 if no battle character, else 0 when the power cost is
+    unmet (Q&A No.40/No.73: cannot attack, so bonuses do not apply either),
+    else 02-007 force-day > 01-005 day/night reversal > day/night base;
+  each modifier is an add or a 04-099 set, applied in the order the effects
+    resolved and clamped to >=0 after every step (Q&A No.54, No.68, No.82);
+  a 04-099 set lands through the power gate and re-enables later modifiers.
 """
 
 from __future__ import annotations
@@ -20,10 +23,11 @@ from .events import (
 )
 from .state import (
     GameState, PlayerState,
-    PF_ATTACK_BONUS, PF_DAMAGE_REDUCTION, PF_DAY_NIGHT_REVERSED, PF_POWER_BONUS,
-    PF_ATTACK_OVERRIDE, PF_DAMAGE_NOT_REDUCIBLE, PF_BATTLE_DAMAGE,
+    PF_DAMAGE_REDUCTION, PF_DAY_NIGHT_REVERSED, PF_POWER_BONUS,
+    PF_DAMAGE_NOT_REDUCIBLE, PF_BATTLE_DAMAGE,
     PF_DAMAGE_TAKEN, PF_BATTLE_LOST, PF_DAMAGE_REDUCED,
     GF_MIDNIGHT_EXTENDED, GF_DAY_TO_NIGHT, GF_NIGHT_TO_DAY,
+    ATTACK_MOD_SET,
 )
 
 CHRONOS_SIZE = 18
@@ -106,51 +110,47 @@ def advance_chronos_by(state: GameState, steps: int) -> None:
         state.event_sink.append((EVENT_CHRONOS_ADVANCED, steps, chronos))
 
 
+def base_attack(state: GameState, player: PlayerState) -> int:
+    """The battle character's printed attack for the current half of the clock,
+    after 02-007 force-day and 01-005 day/night reversal. Ignores the power gate
+    and every attack modifier."""
+    def_index = state.inst_def[player.battle]
+    if force_day_active(state, player.index):
+        return ATK_DAY_T[def_index]
+    if player.flags[PF_DAY_NIGHT_REVERSED]:
+        return ATK_DAY_T[def_index] if state.is_night else ATK_NIGHT_T[def_index]
+    return ATK_NIGHT_T[def_index] if state.is_night else ATK_DAY_T[def_index]
+
+
 def get_effective_attack(state: GameState, player: PlayerState) -> int:
+    """Fold this turn's attack modifiers onto the live base, in the order they
+    resolved (Q&A No.54, No.68, No.82).
+
+    Starting value is the printed base, or 0 when the battle character's power
+    cost is unmet -- an unmet cost means the player cannot attack at all, so
+    attack bonuses do not apply either (Q&A No.40, No.73). A 04-099
+    ATTACK_MOD_SET still lands through that gate, matching the engine's
+    long-standing override-beats-the-gate ruling, and re-enables the modifiers
+    that resolve after it. The running value is clamped to >=0 after every step,
+    not once at the end: Q&A No.54 has 30 -40 -> 0, then +80 -> 80, not 70.
+    """
     if player.battle == -1:
         return 0
 
-    override = player.flags[PF_ATTACK_OVERRIDE]
-    if override != -1:
-        return override
+    cost = effective_power_cost(state, player.battle)
+    attack_enabled = total_power(state, player) + player.flags[PF_POWER_BONUS] >= cost
+    attack = base_attack(state, player) if attack_enabled else 0
 
-    battle_instance = player.battle
-    def_index = state.inst_def[battle_instance]
-    cost = effective_power_cost(state, battle_instance)
-    power = total_power(state, player) + player.flags[PF_POWER_BONUS]
-    if power < cost:
-        return 0
-
-    if force_day_active(state, player.index):
-        base = ATK_DAY_T[def_index]
-    elif player.flags[PF_DAY_NIGHT_REVERSED]:
-        base = ATK_DAY_T[def_index] if state.is_night else ATK_NIGHT_T[def_index]
-    else:
-        base = ATK_NIGHT_T[def_index] if state.is_night else ATK_DAY_T[def_index]
-
-    attack = base + player.flags[PF_ATTACK_BONUS]
-    return attack if attack > 0 else 0
-
-
-def get_effective_attack_ignoring_override(state: GameState, player: PlayerState) -> int:
-    """Attack computation as inlined by 04-084/04-101: identical to
-    get_effective_attack except the 04-099 attack override is NOT consulted."""
-    if player.battle == -1:
-        return 0
-    battle_instance = player.battle
-    def_index = state.inst_def[battle_instance]
-    cost = effective_power_cost(state, battle_instance)
-    power = total_power(state, player) + player.flags[PF_POWER_BONUS]
-    if power < cost:
-        return 0
-    if force_day_active(state, player.index):
-        base = ATK_DAY_T[def_index]
-    elif player.flags[PF_DAY_NIGHT_REVERSED]:
-        base = ATK_DAY_T[def_index] if state.is_night else ATK_NIGHT_T[def_index]
-    else:
-        base = ATK_NIGHT_T[def_index] if state.is_night else ATK_DAY_T[def_index]
-    attack = base + player.flags[PF_ATTACK_BONUS]
-    return attack if attack > 0 else 0
+    modifiers = player.attack_mods
+    for index in range(0, len(modifiers), 2):
+        if modifiers[index] == ATTACK_MOD_SET:
+            attack = modifiers[index + 1]
+            attack_enabled = True
+        elif attack_enabled:
+            attack += modifiers[index + 1]
+            if attack < 0:
+                attack = 0
+    return attack
 
 
 def deal_damage(state: GameState, player_index: int, amount: int) -> None:

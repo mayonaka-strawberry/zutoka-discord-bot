@@ -22,7 +22,6 @@ from .catalog_data import ENTRIES
 _COND_NAMES = frozenset({
     "enemy_attr", "own_attr", "enemy_cost_ge", "enemy_cost_le",
     "enemy_cost_eq_own", "enemy_stp_eq", "enemy_atk_eq0",
-    "enemy_atk_eq0_no_override",
     "time", "midnight", "transition", "turn_became",
     "own_hp_le", "hp_lt_opp", "opp_hp_eq",
     "charger_all_attr", "charger_has_attr", "charger_attr_count_ge",

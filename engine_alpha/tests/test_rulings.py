@@ -8,7 +8,8 @@ rules functions, verifying each documented ruling from the plan:
 - placement trigger matrix (agent-based vs location-based)
 - 03-026 widens midnight +/-2 for all midnight conditions
 - 04-095 keys on the battle loss itself, not damage
-- attack precedence: 04-099 override > power gate > 02-007 force-day > 01-005 reversal
+- attack: power gate > 02-007 force-day > 01-005 reversal for the starting
+  value, then this turn's modifiers folded on in resolution order
 """
 
 from __future__ import annotations
@@ -16,20 +17,24 @@ from __future__ import annotations
 import random
 
 from engine_alpha import cards
+from engine_alpha.actions import P_EFFECT_ORDER
 from engine_alpha.battle import (
-    MIDNIGHT, deal_damage, get_effective_attack, is_effectively_midnight,
-    resolve_battle, total_power,
+    MIDNIGHT, base_attack, deal_damage, get_effective_attack,
+    is_effectively_midnight, resolve_battle, total_power,
 )
 from engine_alpha.effects import interpreter
 from engine_alpha.effects.removal import check_area_removal
 from engine_alpha.effects.turn_end import process_end_of_turn_effects
-from engine_alpha.events import EVENT_EFFECT_SKIPPED_COST, EVENT_EFFECT_STARTED
+from engine_alpha.events import (
+    EVENT_BATTLE_RESULT, EVENT_EFFECT_SKIPPED_COST, EVENT_EFFECT_STARTED,
+)
 from engine_alpha.game import Game
 from engine_alpha.state import (
     GF_MIDNIGHT_EXTENDED, PH_PROCESS_EFFECTS,
-    PF_ABYSS_RECEIVED, PF_ATTACK_BONUS, PF_ATTACK_OVERRIDE, PF_BATTLE_LOST,
+    PF_ABYSS_RECEIVED, PF_ATTACK_BONUS, PF_BATTLE_LOST,
     PF_CARD_TO_POWER, PF_CHAR_TO_POWER, PF_DAMAGE_REDUCTION, PF_DAMAGE_TAKEN,
     PF_DAY_NIGHT_REVERSED, PF_OPP_CARD_TO_ABYSS, PF_POWER_BONUS,
+    add_attack_modifier, set_attack_modifier,
 )
 from engine_alpha.zones import place_in_abyss, place_in_charger, to_power_or_abyss
 from .conftest import random_vanilla_deck
@@ -249,7 +254,7 @@ def test_04_095_removes_on_zero_damage_loss():
         if player.battle != -1:
             player.abyss.append(player.battle)
         player.battle = instance
-    state.players[1].flags[PF_ATTACK_BONUS] = 50  # P1 wins
+    add_attack_modifier(state.players[1], 50)  # P1 wins
     resolve_battle(state)
     assert state.players[0].flags[PF_BATTLE_LOST] == 1
     assert state.players[0].hp == 100  # damage fully reduced
@@ -258,7 +263,8 @@ def test_04_095_removes_on_zero_damage_loss():
 
 
 # ---------------------------------------------------------------------------
-# Attack precedence: override > power gate > force-day > reversal > base
+# Attack computation: power gate > force-day > reversal > base, then this
+# turn's modifiers folded on in resolution order
 # ---------------------------------------------------------------------------
 
 def test_attack_precedence_chain():
@@ -288,12 +294,16 @@ def test_attack_precedence_chain():
     assert get_effective_attack(state, player) == d.attack_day
     player.flags[PF_DAY_NIGHT_REVERSED] = 0
     # 4. Attack bonus applies on top of base
-    player.flags[PF_ATTACK_BONUS] = 25
+    add_attack_modifier(player, 25)
     assert get_effective_attack(state, player) == d.attack_night + 25
-    # 5. 04-099 override beats everything, even the power gate
-    player.flags[PF_ATTACK_OVERRIDE] = 100
+    # 5. A 04-099 set resolving after the bonus discards it, and beats the
+    #    power gate (Q&A No.82: the set is point-in-time, not a lock).
+    set_attack_modifier(player, 100)
     player.charger.clear()
     assert get_effective_attack(state, player) == 100
+    # 6. A bonus resolving after the set is added to it, not swallowed.
+    add_attack_modifier(player, 25)
+    assert get_effective_attack(state, player) == 125
 
 
 def test_power_gate_uses_effective_cost():
@@ -1077,6 +1087,8 @@ def test_04_107_resolves_when_borrowed_from_the_abyss_by_01_006():
 # Featurizer completeness: a verb missing from features._OP_VERBS is dropped
 # silently rather than raising, so the network just loses the signal. Assert
 # full coverage instead of trusting the two lists to stay in sync by hand.
+# _COND_KINDS is positional, so a retired condition keeps its slot rather than
+# being deleted; those are declared in features._RETIRED_COND_KINDS.
 # ---------------------------------------------------------------------------
 
 def test_featurizer_covers_every_op_and_condition():
@@ -1084,7 +1096,9 @@ def test_featurizer_covers_every_op_and_condition():
 
     assert set(interpreter.OP_TABLE) == set(features._OP_VERBS)
     condition_leaves = catalog._COND_NAMES - {"and", "or", "not"}
-    assert condition_leaves == set(features._COND_KINDS)
+    featurized = set(features._COND_KINDS)
+    assert condition_leaves <= featurized, "live condition missing from the featurizer"
+    assert featurized - condition_leaves == set(features._RETIRED_COND_KINDS)
 
 
 def test_new_effects_are_featurized():
@@ -1135,13 +1149,14 @@ def give_priority(game: Game, player_index: int) -> None:
     assert state.priority_player == player_index
 
 
-def run_process_effects(game: Game, answers=()) -> list[tuple]:
+def run_process_effects(game: Game, answers=(), order_first: int = -1) -> list[tuple]:
     """Drive the real PROCESS_EFFECTS phase and return the events it emitted.
 
     Covers what run_effect / run_effect_auto skip: both players' batches in
     priority order, the P_EFFECT_ORDER prompt, and the per-effect power gate.
     `answers` is consumed in order; anything past it takes the first legal
-    action.
+    action. `order_first`, when given, answers the P_EFFECT_ORDER prompt that
+    offers that instance by resolving it first.
     """
     state = game.state
     state.event_sink = []
@@ -1154,16 +1169,39 @@ def run_process_effects(game: Game, answers=()) -> list[tuple]:
     game._answered_request = None
     game._advance()
     queue = list(answers)
+    ordered_as_asked = False
     while state.phase == PH_PROCESS_EFFECTS and not game.is_terminal():
         request = game.decision_context()
         if request is None:
             break
-        game.apply(queue.pop(0) if queue else request.legal_actions()[0])
+        if (order_first != -1 and request.purpose == P_EFFECT_ORDER
+                and order_first in request.candidates):
+            action = request.candidates.index(order_first)
+            ordered_as_asked = True
+        elif queue:
+            action = queue.pop(0)
+        else:
+            action = request.legal_actions()[0]
+        game.apply(action)
+    assert order_first == -1 or ordered_as_asked, "no ordering prompt offered it"
     return list(state.event_sink)
 
 
 def started_definitions(events) -> set[int]:
     return {event[2] for event in events if event[0] == EVENT_EFFECT_STARTED}
+
+
+def battle_attacks(events) -> tuple[int, int]:
+    """The (player 0, player 1) attack values of the battle these effects fed.
+
+    run_process_effects runs out of decisions inside the effects phase, so the
+    driver carries on through BATTLE and END_TURN -- which clears attack_mods.
+    Read the outcome off the event instead of the post-turn state.
+    """
+    for event in events:
+        if event[0] == EVENT_BATTLE_RESULT:
+            return event[1], event[2]
+    raise AssertionError("no battle was resolved")
 
 
 def cost_skipped_definitions(events) -> set[int]:
@@ -1331,6 +1369,222 @@ def test_04_105_wipe_switches_off_a_power_gated_area_passive():
     run_effect(game, 0, spawn(game, card_with_effect("04-105")), answers=(0,) * 8)
 
     assert force_day_active(state, 1) is False
+
+
+# ---------------------------------------------------------------------------
+# Attack modifiers fold in resolution order (official Q&A No.40, No.54, No.60,
+# No.68, No.82).
+#
+# Modifiers are neither summed into one total nor collapsed into a number when
+# they resolve: they are kept in order and folded onto the live base at battle
+# time, clamped to >=0 after every step. 04-099's "set the opponent's attack to
+# 100" is one of those entries, so whether it wipes a bonus or is added to
+# depends entirely on which side had priority.
+# ---------------------------------------------------------------------------
+
+SONG_NEKO_RESET = cards.SONG_NAMES.index("NEKO_RESET")
+SONG_SHADE = cards.SONG_NAMES.index("SHADE")
+
+
+def character_with_song(song_index: int, max_power_cost: int = 8) -> int:
+    for d in cards.CARD_DB:
+        if (d.card_type == cards.TYPE_CHARACTER and d.song == song_index
+                and d.power_cost <= max_power_cost):
+            return d.index
+    raise AssertionError(f"no character of song {cards.SONG_NAMES[song_index]}")
+
+
+def character_with_attack(state, attack: int, max_power_cost: int = 0) -> int:
+    """A character printing exactly `attack` for the current half of the clock."""
+    for d in cards.CARD_DB:
+        if d.card_type != cards.TYPE_CHARACTER or d.power_cost > max_power_cost:
+            continue
+        if (d.attack_night if state.is_night else d.attack_day) == attack:
+            return d.index
+    raise AssertionError(f"no character attacking for {attack}")
+
+
+def put_in_battle(game: Game, owner: int, def_index: int) -> int:
+    player = game.state.players[owner]
+    if player.battle != -1:
+        player.abyss.append(player.battle)
+    player.battle = spawn(game, def_index)
+    return player.battle
+
+
+def fill_charger_with_attribute(game: Game, owner: int, attribute: int,
+                                count: int) -> None:
+    """Replace `owner`'s charger with `count` SEND TO POWER 2 cards of one
+    attribute, so the zone supplies both the attribute count and 2*count power."""
+    player = game.state.players[owner]
+    player.charger.clear()
+    matching = [d.index for d in cards.CARD_DB
+                if d.attribute == attribute and d.send_to_power == 2]
+    assert len(matching) >= count, f"not enough attribute-{attribute} power cards"
+    for def_index in matching[:count]:
+        player.charger.append(spawn(game, def_index))
+
+
+def _arm_enchant(game: Game, owner: int, effect_id: str, slot: str = "set_a") -> int:
+    """Put a played-this-turn enchant carrying `effect_id` into `owner`'s slot."""
+    state = game.state
+    enchant = spawn(game, card_with_effect(effect_id))
+    setattr(state.players[owner], slot, enchant)
+    state.inst_played[enchant] = 1
+    return enchant
+
+
+def _arm_job_change_against_unigiri_kororin(game: Game, caster_index: int) -> None:
+    """The Q&A No.82 board: `caster_index` sets 04-099 behind a (Neko Reset)
+    character, and the opponent runs 02-064 over 3 electric cards (+60)."""
+    state = game.state
+    opponent_index = 1 - caster_index
+    caster, opponent = state.players[caster_index], state.players[opponent_index]
+
+    put_in_battle(game, caster_index, character_with_song(SONG_NEKO_RESET, 0))
+    _arm_enchant(game, caster_index, "04-099")
+    caster.set_b = caster.set_c = -1
+    fill_charger_to(game, caster_index, 2)   # 4 power covers 04-099's cost 4
+
+    put_in_battle(game, opponent_index, find_character(max_power_cost=0))
+    opponent.set_a = opponent.set_b = -1
+    opponent.set_c = spawn(game, card_with_effect("02-064"))
+    fill_charger_with_attribute(game, opponent_index, cards.ATTR_ELECTRICITY, 3)
+
+
+def test_qa_82_job_change_on_priority_is_buffed_on_top_of_the_100():
+    """Q&A No.82, first half: the Job Change player has priority, so the 100
+    lands first and the opponent's 02-064 is then added to it -> 160."""
+    game = make_game()
+    state = game.state
+    give_priority(game, 0)
+    _arm_job_change_against_unigiri_kororin(game, caster_index=0)
+
+    events = run_process_effects(game)
+
+    assert battle_attacks(events)[1] == 160
+
+
+def test_qa_82_job_change_without_priority_overwrites_the_buff():
+    """Q&A No.82, second half: same board, priority flipped. 02-064 resolves
+    first and the 100 then overwrites it, however large the buff was."""
+    game = make_game()
+    state = game.state
+    give_priority(game, 1)
+    _arm_job_change_against_unigiri_kororin(game, caster_index=0)
+
+    events = run_process_effects(game)
+
+    assert battle_attacks(events)[1] == 100
+
+
+def test_qa_54_minus_then_plus_clamps_after_each_step():
+    """Q&A No.54 verbatim: the opponent's 30-attack character takes -40 from
+    04-092 (clamped to 0, never below), and their own 03-028 then adds 80 on
+    top of the 0 -> 80. Summing the modifiers first would give 70."""
+    game = make_game()
+    state = game.state
+    give_priority(game, 0)
+
+    put_in_battle(game, 0, character_with_song(SONG_SHADE, 1))
+    _arm_enchant(game, 0, "04-092")
+    state.players[0].set_b = state.players[0].set_c = -1
+    fill_charger_to(game, 0, 1)              # 2 power covers 04-092's cost 2
+
+    put_in_battle(game, 1, character_with_attack(state, 30))
+    _arm_enchant(game, 1, "03-028")
+    state.players[1].set_b = state.players[1].set_c = -1
+    fill_charger_with_attribute(game, 1, cards.ATTR_FLAME, 3)  # all-flame, 6 power
+    assert get_effective_attack(state, state.players[1]) == 30
+
+    events = run_process_effects(game)
+
+    assert battle_attacks(events)[1] == 80
+
+
+def test_qa_40_unmet_power_cost_suppresses_attack_bonuses():
+    """Q&A No.40: a battle character whose power cost is unmet cannot attack,
+    so an attack+ effect does not apply to it either -- the answer is 0, not
+    0 + the bonus."""
+    game = make_game()
+    state = game.state
+    player = state.players[0]
+    put_in_battle(game, 0, find_character(min_power_cost=1))
+    player.charger.clear()
+
+    add_attack_modifier(player, 20)
+
+    assert get_effective_attack(state, player) == 0
+
+
+def test_04_099_set_lands_through_the_power_gate():
+    """The engine's standing ruling: a 04-099 set beats the power-cost gate.
+    It also re-enables the character, so modifiers after it fold on normally
+    while the bonus that preceded it stays suppressed."""
+    game = make_game()
+    state = game.state
+    player = state.players[0]
+    put_in_battle(game, 0, find_character(min_power_cost=1))
+    player.charger.clear()
+
+    add_attack_modifier(player, 20)     # dead: the character cannot attack yet
+    set_attack_modifier(player, 100)
+    assert get_effective_attack(state, player) == 100
+    add_attack_modifier(player, 20)     # applies on top of the 100
+
+    assert get_effective_attack(state, player) == 120
+
+
+def test_qa_60_enemy_atk_eq0_covers_every_way_of_not_attacking():
+    """Q&A No.60: 'the opponent's character's attack is 0' covers no character
+    set and an unmet power cost, not just a printed 0. All four cards with that
+    text share the condition, and a 04-099 set takes the enemy out of it."""
+    from engine_alpha.effects.conditions import eval_cond
+
+    game = make_game()
+    state = game.state
+    enemy = state.players[1]
+
+    enemy.battle = -1
+    assert eval_cond(state, 0, ("enemy_atk_eq0",)) is True
+
+    put_in_battle(game, 1, find_character(min_power_cost=1))
+    enemy.charger.clear()
+    assert eval_cond(state, 0, ("enemy_atk_eq0",)) is True, "unmet cost counts"
+
+    set_attack_modifier(enemy, 100)
+    assert eval_cond(state, 0, ("enemy_atk_eq0",)) is False, "the set lands first"
+
+
+def test_04_099_and_04_101_ordering_within_one_batch():
+    """Both cards belong to the same player, so the P_EFFECT_ORDER prompt --
+    not priority -- decides. 04-101 reads the enemy's attack live: ahead of the
+    set it sees the unpayable character's 0 and buffs; behind it, it sees 100.
+    """
+    for job_change_first, expected_bonus in ((True, 0), (False, 20)):
+        game = make_game()
+        state = game.state
+        give_priority(game, 0)
+
+        put_in_battle(game, 0, character_with_song(SONG_NEKO_RESET, 0))
+        job_change = _arm_enchant(game, 0, "04-099", "set_a")
+        ice_cream = _arm_enchant(game, 0, "04-101", "set_b")
+        state.players[0].set_c = -1
+        fill_charger_to(game, 0, 2)   # 4 power for 04-099; 04-101 is free
+
+        # The enemy cannot pay for their character, so their attack is 0 until
+        # the set lands -- which is what makes the two orderings differ.
+        put_in_battle(game, 1, find_character(min_power_cost=1))
+        state.players[1].charger.clear()
+        state.players[1].set_a = state.players[1].set_b = state.players[1].set_c = -1
+        caster_base = base_attack(state, state.players[0])
+
+        events = run_process_effects(
+            game, order_first=job_change if job_change_first else ice_cream)
+
+        caster_attack, enemy_attack = battle_attacks(events)
+        assert enemy_attack == 100
+        assert caster_attack == caster_base + expected_bonus
 
 
 def test_power_bonus_survives_the_wipe_for_enchants_but_not_for_areas():

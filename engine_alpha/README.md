@@ -54,6 +54,15 @@ continuation frames (program counter + registers), cloned in ~2 µs.
   no longer in the tree; ongoing behavior guarantees come from the ruling
   tests, the invariant fuzzer, and the 24-game match regression suite
   (`tests/run_match_regression.py`).
+- **Deliberate divergences from the old engine.** Equivalence was the bar
+  during the port, not afterwards: where the old behavior contradicts an
+  official ruling, the ruling wins. So far that is the attack model
+  (`battle.get_effective_attack`), which now folds modifiers in resolution
+  order with a per-step clamp instead of summing them, and treats 04-099 as a
+  point-in-time set rather than a lock (official Q&A No.40/54/60/68/82). The
+  same change retired the old engine's `enemy_atk_eq0_no_override` quirk, so
+  04-034/04-039/04-084/04-101 -- four cards with identical text -- finally
+  behave identically.
 
 ## Layout
 
@@ -65,7 +74,7 @@ state.py               GameState/PlayerState/Frame: __slots__, ints, fast_clone
 actions.py             the 4 DecisionRequest kinds + purpose tags
 events.py              observation-only engine event constants and tuple layouts
 zones.py               placement triggers (agent-based vs location-based semantics)
-battle.py              attack precedence chain, battle resolution, win checks
+battle.py              attack modifier fold, battle resolution, win checks
 game.py                the resumable phase driver (Game facade)
 draft.py               draft legality
 baselines.py           RandomAgent / GreedyHeuristicAgent (pure-engine agents)

@@ -17,7 +17,7 @@ from ..cards import (
     CARD_TYPE_T, EFFECT_T, NO_EFFECT, POWER_COST_T, SEND_TO_POWER_T, SONG_T,
     SONG_NAMES, TYPE_CHARACTER, TYPE_ENCHANT,
 )
-from ..state import PF_ATTACK_BONUS, PF_POWER_BONUS
+from ..state import PF_POWER_BONUS, add_attack_modifier
 from ..zones import place_in_abyss, place_in_charger
 from .interpreter import (
     CUSTOM_HANDLERS, EFFECT_PROGRAMS, apply_self_defeat,
@@ -92,7 +92,7 @@ def reveal_top_03_103(state, frame, request, answer):
     top = opponent.deck[0]
     owner = state.players[frame.owner]
     if SEND_TO_POWER_T[state.inst_def[top]] == 0:
-        owner.flags[PF_ATTACK_BONUS] += 30
+        add_attack_modifier(owner, 30)
     else:
         owner.set_c = -1
         place_in_charger(state, frame.source, owner.index, frame.owner)
