@@ -132,3 +132,37 @@ def test_prompts_are_not_sent_to_a_seat_that_takes_no_dms():
     _present(session, adapter, game)
 
     assert session.transport.player_messages == {0: [], 1: []}
+
+
+def test_set_slot_a_offers_no_pass_and_cannot_submit_an_empty_selection():
+    """Ground Rules 5.2.1.5 / Q&A No.4: a player holding cards must set at least one.
+
+    The single-slot view used to hardcode a 'Set nothing' button regardless of
+    `engine_request.allow_pass`. Pressing it was dropped by the broker as an
+    illegal action, the prompt then stalled for the full timeout, and the
+    fallback set the player's first hand card anyway -- three of those in a row
+    forfeited the match. There was never an exception; the symptom was a dead
+    button and a stall, which is what this pins.
+    """
+    game = _play_until(7, PH_SET_CARDS)
+    acting = game.state.acting
+    engine_request = game.decision_context()
+    assert engine_request.purpose == P_SET_SLOT_A
+    assert game.state.players[acting].hand, 'precondition: the player holds cards'
+    assert engine_request.allow_pass is False, 'the engine forbids setting zero'
+
+    session, adapter = _runtime(game)
+    request = _present(session, adapter, game, sequence_number=11)
+
+    view = session.transport.player_messages[acting][-1]['view']
+    assert getattr(view, 'allow_pass', False) is False, 'no "set nothing" button'
+
+    # An empty pick can no longer be translated into a PASS the engine rejects.
+    selection = adapter.pending_selections[(acting, FAMILY_SET_CARDS)]
+    selection.chosen = []
+    assert adapter._compound_action(selection, request) is None
+
+    # And a real pick still maps to the right engine action.
+    candidates = list(engine_request.candidates)
+    selection.chosen = [candidates[1]]
+    assert adapter._compound_action(selection, request) == 1

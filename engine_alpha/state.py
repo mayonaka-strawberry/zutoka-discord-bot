@@ -87,6 +87,12 @@ def _fresh_player_flags() -> array:
 # or is added to depends purely on resolution order.
 ATTACK_MOD_ADD = 0
 ATTACK_MOD_SET = 1
+# 03-064 adds each side's REMAINING HP, read at attack determination rather than
+# when the area enchant resolves (Q&A No.33: 攻撃力の決定時). Stored as a deferred
+# entry so it keeps its place in the fold order; the amount is resolved in
+# battle.get_effective_attack. This list is runtime state only -- it is not
+# featurized, so the extra kind does not change the observation layout.
+ATTACK_MOD_ADD_OWN_HP = 2
 
 
 def add_attack_modifier(player: "PlayerState", amount: int) -> None:
@@ -94,6 +100,19 @@ def add_attack_modifier(player: "PlayerState", amount: int) -> None:
     player.attack_mods.append(ATTACK_MOD_ADD)
     player.attack_mods.append(amount)
     player.flags[PF_ATTACK_BONUS] += amount
+
+
+def add_own_hp_attack_modifier(player: "PlayerState") -> None:
+    """Record 03-064's "+= your remaining HP", resolved at battle time.
+
+    Deliberately does NOT touch PF_ATTACK_BONUS: the amount is only known at attack
+    determination (Q&A No.33), so anything written here goes stale the moment HP
+    changes. That flag is a live neural-network input (observation.py encodes every
+    player flag), and battle.get_effective_attack — which is also encoded — already
+    reports the true total, so a stale snapshot would be both wrong and redundant.
+    """
+    player.attack_mods.append(ATTACK_MOD_ADD_OWN_HP)
+    player.attack_mods.append(0)
 
 
 def set_attack_modifier(player: "PlayerState", value: int) -> None:

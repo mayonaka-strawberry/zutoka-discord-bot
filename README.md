@@ -147,6 +147,15 @@ is_terminal() / returns()`:
   `fast_clone` detaches it so search clones are silent.
 - `encoding/observation.py` encodes a state into the 172-token observation
   the model stacks consume.
+- The rules were audited end to end on 2026-08-13 against the official Q&A
+  (all 104 entries), Ground Rules ver 1.0.1, and the Japanese card text, and
+  eleven divergences were fixed. An independent review on 2026-08-14 then found
+  that the rework had introduced defects of its own -- including a regression and
+  two crashes -- which are also fixed. `engine_alpha/README.md` lists every item
+  with its source; the ruling tests in `engine_alpha/tests/test_rulings.py` cite
+  the Q&A number or Ground Rule section they enforce, and
+  `engine_alpha/tests/test_defect_sweep.py` is the deck-forced gate that catches
+  the classes the ordinary suite cannot see.
 
 ### zutomayo/match - the match runtime
 

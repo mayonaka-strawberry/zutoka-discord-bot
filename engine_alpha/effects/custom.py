@@ -20,7 +20,7 @@ from ..cards import (
 from ..state import PF_POWER_BONUS, add_attack_modifier
 from ..zones import place_in_abyss, place_in_charger
 from .interpreter import (
-    CUSTOM_HANDLERS, EFFECT_PROGRAMS, apply_self_defeat,
+    CUSTOM_HANDLERS, EFFECT_PROGRAMS, apply_self_defeat, _emit_reveal,
     remove_from_current_zone, start_effect,
 )
 
@@ -63,17 +63,28 @@ def use_abyss_enchant(state, frame, request, answer):
 
 @_register("reveal_top_03_097")
 def reveal_top_03_097(state, frame, request, answer):
-    """03-097 (area): reveal opponent's deck top. If its power cost >= 6,
-    move it onto THEIR charger (actor = effect owner, so no owner-placement
-    flags), and send this area enchant to the OWNER's charger (actor = owner,
-    so the owner's placement flags DO fire — old code)."""
+    """03-097 (area): the opponent reveals their deck top. If its power cost is 6
+    or more, THIS card goes to the owner's charger.
+
+    Q&A No.45 is explicit about both halves: 「公開した相手のデッキの一番上のカードは、
+    再び相手のデッキの一番上に戻します。公開したカードのパワーコストが★6以上の場合、
+    すぐに「厳戒態勢」をパワーチャージャーに置きます」 — the revealed card stays on top of
+    the deck (it is only looked at), and it is 03-097 itself that is placed. The engine
+    used to move the revealed card onto the opponent's charger instead, which both
+    stole a card and put the wrong one in play.
+
+    Q&A No.46: once in the charger this card contributes no power (SEND TO POWER 0)
+    but still counts for effects that count cards or attributes there — which falls out
+    of placing the real instance.
+    """
     opponent = state.players[1 - frame.owner]
     if not opponent.deck:
         return None
     top = opponent.deck[0]
+    # 「公開する」: both players see it (GR 10.2.1/10.4.1), so announce it. The card
+    # itself does not move -- Q&A No.45 puts it straight back on top of the deck.
+    _emit_reveal(state, frame, opponent.index, (top,))
     if POWER_COST_T[state.inst_def[top]] >= 6:
-        opponent.deck.pop(0)
-        place_in_charger(state, top, opponent.index, frame.owner)
         owner = state.players[frame.owner]
         if owner.set_c == frame.source:
             owner.set_c = -1
@@ -91,9 +102,15 @@ def reveal_top_03_103(state, frame, request, answer):
         return None
     top = opponent.deck[0]
     owner = state.players[frame.owner]
+    # 「デッキの一番上を公開する」: both players see it (GR 10.2.1/10.4.1).
+    _emit_reveal(state, frame, opponent.index, (top,))
     if SEND_TO_POWER_T[state.inst_def[top]] == 0:
         add_attack_modifier(owner, 30)
-    else:
+    elif owner.set_c == frame.source:
+        # Same guard as reveal_top_03_097: only move this card if it is still the
+        # area enchant in play. Without it, a card removed earlier in the turn would
+        # be placed a second time while clearing whatever now occupies set_c --
+        # putting one instance in two zones.
         owner.set_c = -1
         place_in_charger(state, frame.source, owner.index, frame.owner)
     return None
@@ -131,6 +148,17 @@ def additional_enchant_02_015(state, frame, request, answer):
         frame.step = 2
         effect_index = EFFECT_T[state.inst_def[chosen]]
         available_power = total_power(state, owner) + owner.flags[PF_POWER_BONUS]
+        # Move the used enchant out of hand BEFORE resolving it. The card is used at
+        # this moment, and the nested effect can end the game (04-027/04-028/04-105
+        # can self-defeat, and mill/draw can deck a player out); once a winner is set
+        # the interpreter drops every pending frame, so anything deferred to step 2
+        # would silently never happen and the enchant would still show in hand.
+        if chosen in owner.hand:
+            owner.hand.remove(chosen)
+        if SEND_TO_POWER_T[state.inst_def[chosen]] > 0:
+            place_in_charger(state, chosen, owner.index, frame.owner)
+        else:
+            place_in_abyss(state, chosen, owner.index, frame.owner)
         # The enchant is played regardless of power; its effect only triggers
         # when the owner can pay the enchant's power cost. Otherwise it is
         # placed with no effect (and the top-level draw still happens).
@@ -141,25 +169,28 @@ def additional_enchant_02_015(state, frame, request, answer):
             if len(state.frame_stack) > depth_before:
                 return None  # nested frame runs first; we resume at step 2
         # Effect did not trigger (unaffordable, or the gate pushed no frame):
-        # fall through to step 2 (move the used enchant, draw) in this call.
+        # fall through to step 2 (the draw) in this call.
     if frame.step == 2:
-        chosen = frame.data[0]
-        if chosen in owner.hand:
-            owner.hand.remove(chosen)
-        if SEND_TO_POWER_T[state.inst_def[chosen]] > 0:
-            place_in_charger(state, chosen, owner.index, frame.owner)
-        else:
-            place_in_abyss(state, chosen, owner.index, frame.owner)
         frame.step = 3
         return _draw_one_02_015(state, frame)
     return None
 
 
 def _draw_one_02_015(state, frame):
+    """02-015's trailing 「その後、カードを1枚引く」.
+
+    An empty deck is a loss, not a no-op: Ground Rules 8.2.1 says a player who cannot
+    draw the number an effect names loses at that moment. This used to be guarded by
+    `if owner.deck`, which made it the one draw in the engine that could fail
+    silently.
+    """
     from ..zones import draw_cards
+    from .interpreter import _record_deck_shortfall
     owner = state.players[frame.owner]
     if owner.deck:
         draw_cards(state, owner.index, 1)
+    else:
+        _record_deck_shortfall(state, owner.index)
     return None
 
 
@@ -248,9 +279,26 @@ def chaos_04_088(state, frame, request, answer):
 
 
 def _shade_charger_candidates(state, owner) -> list[int]:
+    """SHADE characters with an effect in `owner`'s charger, excluding any card
+    already resolving further up this chain.
+
+    Q&A No.83 allows a 04-002 to designate another 04-002 and keep going
+    (「さらに２枚を指定することが可能です」), and its worked example totals three cards, so
+    the nesting is meant to terminate. Nothing in the rules says how, and without a
+    bound it does not: 04-002 is itself a SHADE character with an effect, so it
+    re-selects itself (or an A -> B -> A pair) forever -- and since Q&A No.79 forbids
+    choosing zero, the player has no escape. Excluding the frames already on the stack
+    is the narrowest rule that terminates: a card may not re-enter its own resolution,
+    while distinct cards can still be chained as No.83 intends.
+
+    (`Frame.source` is the resolving card's instance and is preserved by fast_clone,
+    so this needs no extra frame state and stays correct across search clones.)
+    """
+    resolving = {f.source for f in state.frame_stack}
     return [
         i for i in owner.charger
-        if SONG_T[state.inst_def[i]] == SONG_SHADE
+        if i not in resolving
+        and SONG_T[state.inst_def[i]] == SONG_SHADE
         and CARD_TYPE_T[state.inst_def[i]] == TYPE_CHARACTER
         and EFFECT_T[state.inst_def[i]] != NO_EFFECT
     ]
@@ -290,7 +338,10 @@ def shade_use_two(state, frame, request, answer):
             return None
         frame.data = [0, list(candidates), []]  # [want, remaining, picked]
         frame.step = 1
-        return select_number(P_EFFECT_NUMBER, 0, min(2, len(candidates)))
+        # Q&A No.79 (which names this card) and Ground Rules 1.3.5.1: the power
+        # charger is public, so when valid targets are visible the player must
+        # pick at least one -- "up to 2" means 1 to 2, not 0 to 2.
+        return select_number(P_EFFECT_NUMBER, 1, min(2, len(candidates)))
     if frame.step == 1:
         frame.data[0] = answer
         if answer <= 0:

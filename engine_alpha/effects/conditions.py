@@ -74,12 +74,15 @@ def eval_cond(state: GameState, owner_index: int, cond) -> bool:
         flag = GF_DAY_TO_NIGHT if cond[1] == "d2n" else GF_NIGHT_TO_DAY
         return bool(state.gflags[flag])
     if kind == "turn_became":
-        # Family D compares the period at turn start against now (old code
-        # reads chronos_at_turn_start), NOT the step-by-step transition flags.
-        start_is_night = state.chronos_at_turn_start <= 8
-        if cond[1] == "night":
-            return (not start_is_night) and state.is_night
-        return start_is_night and not state.is_night
+        # Official Q&A No.17/No.18: the effect fires when the named crossing
+        # happened AT LEAST ONCE this turn, even if the clock ends the turn in
+        # the period it started in. Q&A No.18's example runs night -> day ->
+        # night in one turn and still activates a "day changes to night" card,
+        # so comparing chronos_at_turn_start against the current period (what
+        # the old code did) is wrong. advance_chronos_by records each crossing
+        # in the shared flags, which is exactly what this needs.
+        flag = GF_NIGHT_TO_DAY if cond[1] == "day" else GF_DAY_TO_NIGHT
+        return bool(state.gflags[flag])
     if kind == "own_hp_le":
         return own.hp <= cond[1]
     if kind == "hp_lt_opp":

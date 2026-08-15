@@ -27,8 +27,8 @@ from .actions import (
     select_card, select_identity, binary,
 )
 from .battle import (
-    MIDNIGHT, all_clocks_one, advance_chronos_by, check_win,
-    effective_power_cost, get_effective_attack, opponent_clock_disabled,
+    MIDNIGHT, all_clocks_one, advance_chronos_by, check_damage_triggered_removal,
+    check_win, effective_power_cost, get_effective_attack, opponent_clock_disabled,
     resolve_battle, total_power,
 )
 from .cards import (
@@ -43,7 +43,7 @@ from .events import (
     EVENT_GAME_OVER, EVENT_MULLIGAN_DONE, EVENT_PHASE_CHANGED,
 )
 from .effects.removal import check_area_removal, on_area_enchant_leaves_play
-from .effects.turn_end import process_end_of_turn_effects
+from .effects.turn_end import collect_turn_end_items, execute_turn_end_item
 from .rng import random_below, shuffled
 from .state import (
     GameState, PlayerState, DraftState, _fresh_player_flags,
@@ -312,7 +312,10 @@ class Game:
                     ctx[1] += 1
                     continue
                 state.acting = player.index
-                return select_card(P_SET_SLOT_A, list(player.hand), allow_pass=True)
+                # Ground Rules 5.2.1.5 / Q&A No.4: a player holding cards must
+                # set at least one, so slot A cannot be passed. Slot B stays
+                # optional -- a player allowed two cards may choose to set one.
+                return select_card(P_SET_SLOT_A, list(player.hand))
             state.acting = player.index
             return select_card(P_SET_SLOT_B, list(player.hand), allow_pass=True)
         state.phase = PH_REVEAL
@@ -477,6 +480,10 @@ class Game:
 
     def _ph_battle(self, state: GameState, request, answer):
         resolve_battle(state)
+        # resolve_battle writes the loser's HP directly rather than through
+        # deal_damage, and it returns early on a draw -- so the damage-triggered
+        # removal check belongs here, after it returns, not inside it.
+        check_damage_triggered_removal(state)
         check_win(state)
         if state.winner != -1:
             return None
@@ -485,7 +492,73 @@ class Game:
         return None
 
     def _ph_turn_end_effects(self, state: GameState, request, answer):
-        process_end_of_turn_effects(state)
+        # stage 0 = collect, 1 = ordering pick, 2 = execute loop, 3 = post-batch.
+        # Ground Rules 5.2.10.2 / Q&A No.102: this is a separate timing window,
+        # so the priority player is read from the medal again here rather than
+        # inherited from the main effect window. Q&A No.96: a player with more
+        # than one turn-end effect picks the order among their own.
+        # ctx: [round, priority, stage, remaining, ordered, pos]
+        ctx = state.phase_ctx
+        if not ctx:
+            ctx = state.phase_ctx = [0, state.priority_player, 0, [], [], 0]
+
+        if answer is not None and request is not None and request.purpose == P_EFFECT_ORDER:
+            # Index into the pending list rather than matching on instance id, so
+            # repeated ids could never resolve to the wrong item.
+            ctx[4].append(ctx[3].pop(answer))
+
+        while True:
+            round_index, priority, stage = ctx[0], ctx[1], ctx[2]
+            if round_index >= 2:
+                break
+            player = state.players[priority if round_index == 0 else 1 - priority]
+
+            if stage == 0:
+                items = collect_turn_end_items(state, player)
+                # An item whose source card has left the set zone has no instance to
+                # show. It must never reach a prompt: -1 crashes the observation
+                # encoder and renders as an unrelated card in Discord. Such items keep
+                # their default position instead of being offered for ordering.
+                orderable = [item for item in items if item[1] != -1]
+                unorderable = [item for item in items if item[1] == -1]
+                if len(orderable) > 1:
+                    ctx[3], ctx[4], ctx[5] = orderable, unorderable, 0
+                    ctx[2] = 1
+                else:
+                    ctx[3], ctx[4], ctx[5] = [], unorderable + orderable, 0
+                    ctx[2] = 2
+                continue
+
+            if stage == 1:
+                if len(ctx[3]) > 1:
+                    state.acting = player.index
+                    candidates = [instance_id for _, instance_id in ctx[3]]
+                    assert -1 not in candidates, 'ordering prompt must not expose -1'
+                    return select_card(P_EFFECT_ORDER, candidates)
+                ctx[4].extend(ctx[3])
+                ctx[3] = []
+                ctx[2] = 2
+                continue
+
+            if stage == 2:
+                ordered = ctx[4]
+                while ctx[5] < len(ordered):
+                    if state.winner != -1:
+                        return None
+                    kind, _ = ordered[ctx[5]]
+                    ctx[5] += 1
+                    execute_turn_end_item(state, player, kind)
+                ctx[2] = 3
+                continue
+
+            # stage 3: this player's batch is done
+            check_win(state)
+            if state.winner != -1:
+                return None
+            ctx[0] += 1
+            ctx[2] = 0
+            ctx[3], ctx[4], ctx[5] = [], [], 0
+
         check_win(state)
         if state.winner != -1:
             return None
@@ -494,8 +567,13 @@ class Game:
         return None
 
     def _ph_end_turn(self, state: GameState, request, answer):
-        for player in state.players:
-            _end_turn_for(state, player)
+        decked_out = [_end_turn_for(state, player) for player in state.players]
+        if any(decked_out):
+            # Ground Rules 5.4.3 / 5.4.3.1: the player who cannot draw loses,
+            # and it is a draw when neither player can.
+            if state.winner == -1:
+                state.winner = 2 if all(decked_out) else 1 - decked_out.index(True)
+            return None
         for player in state.players:
             player.hand_bonus += player.pending_hand_bonus
             player.pending_hand_bonus = 0
@@ -684,7 +762,7 @@ def _dispatch_with_cost_check(state: GameState, player: PlayerState, instance_id
     return True
 
 
-def _end_turn_for(state: GameState, player: PlayerState) -> None:
+def _end_turn_for(state: GameState, player: PlayerState) -> bool:
     for slot_is_b in (False, True):
         instance_id = player.set_b if slot_is_b else player.set_a
         if instance_id != -1 and state.inst_played[instance_id]:
@@ -697,11 +775,13 @@ def _end_turn_for(state: GameState, player: PlayerState) -> None:
     draw_count = player.cards_played
     if len(player.deck) >= draw_count:
         _draw(state, player.index, draw_count)
-        return
-    # Deck cannot supply the mandatory draw: this player loses. If both
-    # players deck out, the later call overwrites (old-engine behavior).
+        return False
+    # Ground Rules 5.4.3: a player who cannot make the mandatory end-of-turn
+    # draw loses. The caller decides the outcome, because 5.4.3.1 makes it a
+    # draw when BOTH players fail -- so this reports the failure instead of
+    # writing a winner that the other player's call would overwrite.
     _draw(state, player.index, len(player.deck))
-    state.winner = 1 - player.index
+    return True
 
 
 def _reset_turn_flags(state: GameState) -> None:

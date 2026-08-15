@@ -33,7 +33,8 @@ from engine_alpha.state import (
     GF_MIDNIGHT_EXTENDED, PH_PROCESS_EFFECTS,
     PF_ABYSS_RECEIVED, PF_ATTACK_BONUS, PF_BATTLE_LOST,
     PF_CARD_TO_POWER, PF_CHAR_TO_POWER, PF_DAMAGE_REDUCTION, PF_DAMAGE_TAKEN,
-    PF_DAY_NIGHT_REVERSED, PF_OPP_CARD_TO_ABYSS, PF_POWER_BONUS,
+    PF_DAY_NIGHT_REVERSED, PF_END_OF_TURN_DAMAGE, PF_OPP_CARD_TO_ABYSS,
+    PF_POWER_BONUS,
     add_attack_modifier, set_attack_modifier,
 )
 from engine_alpha.zones import place_in_abyss, place_in_charger, to_power_or_abyss
@@ -138,26 +139,48 @@ def test_03_058_counts_battle_plus_effect_damage():
     game = make_game()
     state = game.state
     area = _setup_area(game, 0, "03-058")
-    # 20 effect damage + 15 "battle" damage accumulated = 35 >= 30 -> removed
+    # 20 effect damage + 15 "battle" damage accumulated = 35 >= 30 -> removed.
+    # The card text says すぐに, so the removal happens at the immediate
+    # check_area_removal checkpoint rather than at turn end (Q&A No.16).
     deal_damage(state, 0, 20)
     state.players[0].flags[PF_DAMAGE_TAKEN] += 15  # as the battle resolver does
-    process_end_of_turn_effects(state)
+    check_area_removal(state)
     assert state.players[0].set_c == -1
     assert area in state.players[0].abyss
 
 
-def test_03_058_heals_once_below_threshold():
+def test_03_058_heals_below_threshold():
     game = make_game()
     state = game.state
     _setup_area(game, 0, "03-058")
     state.players[0].hp = 50
     state.players[1].hp = 60
-    deal_damage(state, 0, 20)  # below 30: stays, heals both once
+    deal_damage(state, 0, 20)  # below 30: stays and heals both players
     hp_0_before_heal = state.players[0].hp
     process_end_of_turn_effects(state)
     assert state.players[0].set_c != -1
     assert state.players[0].hp == hp_0_before_heal + 10
     assert state.players[1].hp == 70
+
+
+def test_qa_26_each_03_058_copy_heals_independently():
+    """Q&A No.26 is the duplicate-copies ruling: 「はい、２枚のカードの効果は重なります」.
+
+    With both players holding a 03-058 there are two distinct area enchants, so the
+    heal happens twice and each player gains 20 rather than 10. 「お互いの」 in the card
+    text says who is healed, not how often. User-confirmed 2026-08-14, replacing an
+    engine-only cap of once per window that had no source behind it.
+    """
+    game = make_game()
+    state = game.state
+    _setup_area(game, 0, "03-058")
+    _setup_area(game, 1, "03-058")
+    state.players[0].hp = 50
+    state.players[1].hp = 50
+
+    process_end_of_turn_effects(state)
+    assert state.players[0].hp == 70, 'both copies heal player 0'
+    assert state.players[1].hp == 70, 'both copies heal player 1'
 
 
 def test_03_085_power_gated():
@@ -296,14 +319,19 @@ def test_attack_precedence_chain():
     # 4. Attack bonus applies on top of base
     add_attack_modifier(player, 25)
     assert get_effective_attack(state, player) == d.attack_night + 25
-    # 5. A 04-099 set resolving after the bonus discards it, and beats the
-    #    power gate (Q&A No.82: the set is point-in-time, not a lock).
+    # 5. A 04-099 set resolving after the bonus discards it (Q&A No.82: the set
+    #    is point-in-time, not a lock).
     set_attack_modifier(player, 100)
-    player.charger.clear()
     assert get_effective_attack(state, player) == 100
     # 6. A bonus resolving after the set is added to it, not swallowed.
     add_attack_modifier(player, 25)
     assert get_effective_attack(state, player) == 125
+    # 7. Losing the power cost zeroes the whole fold, set included: Ground Rules
+    #    2.3.6/7.1.2 and Q&A No.40/73 make an unpayable character unable to
+    #    attack at all, and Q&A No.82 puts the set in the same modifier
+    #    sequence as the bonuses.
+    player.charger.clear()
+    assert get_effective_attack(state, player) == 0
 
 
 def test_power_gate_uses_effective_cost():
@@ -1517,21 +1545,34 @@ def test_qa_40_unmet_power_cost_suppresses_attack_bonuses():
     assert get_effective_attack(state, player) == 0
 
 
-def test_04_099_set_lands_through_the_power_gate():
-    """The engine's standing ruling: a 04-099 set beats the power-cost gate.
-    It also re-enables the character, so modifiers after it fold on normally
-    while the bonus that preceded it stays suppressed."""
+def test_qa_73_unmet_power_cost_zeroes_the_attack_including_a_set():
+    """An unmet power cost zeroes the final attack even when 04-099 set it.
+
+    The authority is Ground Rules 2.3.6 ("パワーコストが足りないキャラクターの攻撃力は
+    ０になり") and 5.1.3.2 ("攻撃力は０として扱われます"), with Q&A No.73 as the worked
+    example -- the cost is lost after effects resolved and the attack is still 0 --
+    and No.40/No.55 restating it.
+
+    Deliberately NOT cited: GR 7.1.2, which is scoped to attack that was *added*
+    ("攻撃力＋〇〇" effects) while 04-099 sets; and Q&A No.82, which settles
+    resolution order and never mentions power cost. The counter-argument, GR 1.3.1
+    (card text outranks the rules), was considered and rejected when the user
+    confirmed this ruling on 2026-08-13.
+    """
     game = make_game()
     state = game.state
     player = state.players[0]
     put_in_battle(game, 0, find_character(min_power_cost=1))
     player.charger.clear()
 
-    add_attack_modifier(player, 20)     # dead: the character cannot attack yet
+    add_attack_modifier(player, 20)
     set_attack_modifier(player, 100)
-    assert get_effective_attack(state, player) == 100
-    add_attack_modifier(player, 20)     # applies on top of the 100
+    add_attack_modifier(player, 20)
+    assert get_effective_attack(state, player) == 0, "cost unmet: nothing folds"
 
+    # Pay the cost and the very same modifier list folds normally: the set
+    # discards the bonus before it, the bonus after it lands on top.
+    fill_charger_to(game, 0, 4)
     assert get_effective_attack(state, player) == 120
 
 
@@ -1552,8 +1593,13 @@ def test_qa_60_enemy_atk_eq0_covers_every_way_of_not_attacking():
     enemy.charger.clear()
     assert eval_cond(state, 0, ("enemy_atk_eq0",)) is True, "unmet cost counts"
 
+    # A 04-099 set does NOT rescue an unpayable character (Ground Rules 2.3.6 /
+    # 7.1.2, Q&A No.40/73): the enemy still cannot attack, so the condition
+    # still holds. Once the cost is paid the set applies and it no longer does.
     set_attack_modifier(enemy, 100)
-    assert eval_cond(state, 0, ("enemy_atk_eq0",)) is False, "the set lands first"
+    assert eval_cond(state, 0, ("enemy_atk_eq0",)) is True, "gate outranks the set"
+    fill_charger_to(game, 1, 4)
+    assert eval_cond(state, 0, ("enemy_atk_eq0",)) is False, "paid: the set lands"
 
 
 def test_04_099_and_04_101_ordering_within_one_batch():
@@ -1572,10 +1618,14 @@ def test_04_099_and_04_101_ordering_within_one_batch():
         state.players[0].set_c = -1
         fill_charger_to(game, 0, 2)   # 4 power for 04-099; 04-101 is free
 
-        # The enemy cannot pay for their character, so their attack is 0 until
-        # the set lands -- which is what makes the two orderings differ.
-        put_in_battle(game, 1, find_character(min_power_cost=1))
-        state.players[1].charger.clear()
+        # The enemy's character has a printed night attack of 0 and its cost is
+        # paid, so their attack reads 0 until the set lands -- which is what
+        # makes the two orderings differ. (It has to be a printed 0 rather than
+        # an unpayable character: an unmet cost now zeroes the set as well,
+        # Ground Rules 2.3.6/7.1.2.)
+        put_in_battle(game, 1, find_character(attack_night=0))
+        state.chronos = MIDNIGHT
+        fill_charger_to(game, 1, 4)
         state.players[1].set_a = state.players[1].set_b = state.players[1].set_c = -1
         caster_base = base_attack(state, state.players[0])
 
@@ -1645,3 +1695,576 @@ def test_no_zero_cost_effect_can_refill_a_wiped_charger():
     assert offenders == [], (
         f"{offenders} add power at zero cost, so a wiped charger could refill "
         "mid-phase; the 04-105 starvation ruling needs revisiting")
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-13 rules-compliance audit against the official Q&A (104 entries) and
+# Ground Rules ver 1.0.1 (2026-08-08). One test per confirmed divergence.
+# ---------------------------------------------------------------------------
+
+def test_qa_18_family_d_fires_when_the_clock_wraps_within_one_turn():
+    """Q&A No.18: the clock ran night -> day -> night inside one turn, and a
+    "when day changes to night" card still activates, because the crossing did
+    happen. Q&A No.17 makes the same point for a change that is later reverted.
+    The old engine compared the turn-start period against the current one, so a
+    full wrap (which ends where it started) fired nothing.
+    """
+    from engine_alpha.battle import advance_chronos_by
+    from engine_alpha.state import GF_DAY_TO_NIGHT, GF_NIGHT_TO_DAY
+
+    game = make_game()
+    state = game.state
+    state.chronos = 0
+    state.chronos_at_turn_start = 0
+    state.gflags[GF_DAY_TO_NIGHT] = 0
+    state.gflags[GF_NIGHT_TO_DAY] = 0
+    advance_chronos_by(state, 18)          # one full lap: both crossings occur
+    assert state.chronos == 0 and state.is_night, "ends in the period it started"
+
+    player = state.players[0]
+    for effect_id, amount in (("01-061", 30), ("01-090", 20), ("01-096", 10),
+                              ("01-084", 30), ("01-097", 20)):
+        before = player.flags[PF_ATTACK_BONUS]
+        run_effect(game, 0, spawn(game, card_with_effect(effect_id)))
+        assert player.flags[PF_ATTACK_BONUS] - before == amount, effect_id
+
+
+def test_qa_4_a_player_holding_cards_cannot_set_zero():
+    """Ground Rules 5.2.1.5 and Q&A No.4: passing slot A is not a legal choice
+    while the hand has cards. Slot B stays passable, because a player allowed
+    two cards may choose to set only one."""
+    from engine_alpha.actions import P_SET_SLOT_A
+    from engine_alpha.state import PH_SET_CARDS
+
+    game = make_game()
+    while game.state.phase != PH_SET_CARDS and game.state.winner == -1:
+        game.apply(game.legal_actions()[0])
+    request = game.decision_context()
+    assert request is not None and request.purpose == P_SET_SLOT_A
+    assert game.state.players[game.state.acting].hand, "precondition: cards in hand"
+    assert request.allow_pass is False
+    assert len(game.legal_actions()) == len(request.candidates)
+
+
+def test_qa_41_game_ends_the_instant_hp_reaches_zero():
+    """Q&A No.41: a player on 03-058 takes lethal damage, and the turn-end heal
+    does NOT bring them back. Ground Rules 1.2.3/5.4.1 end the game at that
+    instant, and no later card effect is processed."""
+    game = make_game()
+    state = game.state
+    _setup_area(game, 0, "03-058")
+    state.players[0].hp = 20
+
+    deal_damage(state, 0, 20)
+    assert state.players[0].hp == 0
+    assert state.winner == 1, "the winner is decided the moment HP hits 0"
+
+    process_end_of_turn_effects(state)
+    assert state.players[0].hp == 0, "no post-mortem heal"
+
+
+def test_first_player_to_reach_zero_hp_loses():
+    """Both players ending on 0 HP is not a draw: whoever got there first lost
+    (user ruling 2026-08-13). record_hp_zero fixes the winner on the first
+    crossing, so later damage cannot flip it."""
+    game = make_game()
+    state = game.state
+    state.players[0].hp = 10
+    state.players[1].hp = 10
+
+    deal_damage(state, 1, 10)        # player 1 dies first
+    assert state.winner == 0
+    deal_damage(state, 0, 10)        # player 0 dies afterwards
+    assert state.players[0].hp == 0 and state.players[1].hp == 0
+    assert state.winner == 0, "the first to reach 0 is still the loser"
+
+
+def test_qa_70_deck_shortfall_from_an_effect_loses_the_game():
+    """Q&A No.70 and Ground Rules 8.2.2: when a mill cannot process the number
+    of cards it names because the deck is short, the player who could not
+    complete the processing loses. 04-057 mills 2 into a 1-card deck."""
+    game = make_game()
+    state = game.state
+    owner, victim = state.players[0], state.players[1]
+    while len(owner.abyss) < 3:                       # 04-057's own condition
+        owner.abyss.append(spawn(game, cards.CARD_DB[0].index))
+    victim.deck.clear()
+    victim.deck.append(spawn(game, cards.CARD_DB[1].index))
+
+    run_effect(game, 0, spawn(game, card_with_effect("04-057")))
+    assert len(victim.deck) == 0
+    assert state.winner == 0, "the milled player loses"
+
+
+def test_grand_rule_5_4_3_1_double_deck_out_is_a_draw():
+    """Ground Rules 5.4.3: a player who cannot make the mandatory end-of-turn
+    draw loses -- and 5.4.3.1 makes it a draw when neither player can. The old
+    code wrote a winner per player, so the second write silently won."""
+    from engine_alpha.game import _end_turn_for
+
+    game = make_game()
+    state = game.state
+    for player in state.players:
+        player.deck.clear()
+        player.cards_played = 1
+    assert [_end_turn_for(state, p) for p in state.players] == [True, True]
+
+    other = make_game()
+    other_state = other.state
+    other_state.players[0].deck.clear()
+    other_state.players[0].cards_played = 1
+    other_state.players[1].cards_played = 0
+    assert _end_turn_for(other_state, other_state.players[0]) is True
+    assert _end_turn_for(other_state, other_state.players[1]) is False
+
+
+def test_qa_79_public_zone_selection_requires_at_least_one_card():
+    """Q&A No.79 names 04-002 directly: with valid targets visible in the power
+    charger (a public zone, Ground Rules 1.3.5.1) the player must pick 1 to 2,
+    not 0 to 2. Hidden-zone picks keep their 0 minimum -- see Q&A No.90."""
+    game = make_game()
+    state = game.state
+    owner = state.players[0]
+    shade = next(d.index for d in cards.CARD_DB
+                 if d.card_type == cards.TYPE_CHARACTER and d.song == SONG_SHADE
+                 and cards.EFFECT_T[d.index] != cards.NO_EFFECT)
+    owner.charger.append(spawn(game, shade))
+    owner.charger.append(spawn(game, shade))
+
+    source = spawn(game, card_with_effect("04-002"))
+    interpreter.start_effect(state, 0, source, cards.EFFECT_T[state.inst_def[source]])
+    request = interpreter.resume(state, None, None)
+    assert (request.lo, request.hi) == (1, 2)
+
+
+def test_qa_90_hidden_zone_selection_may_still_choose_zero():
+    """The other half of the choice-bound rule: 04-001 reveals from HAND, which
+    is hidden information, so Ground Rules 1.3.5.2 and Q&A No.90 allow 0."""
+    game = make_game()
+    state = game.state
+    owner = state.players[0]
+    owner.hand.clear()
+    taidada = next(d.index for d in cards.CARD_DB
+                   if d.card_type == cards.TYPE_CHARACTER
+                   and cards.SONG_NAMES[d.song] == "TAIDADA")
+    owner.hand.append(spawn(game, taidada))
+
+    source = spawn(game, card_with_effect("04-001"))
+    interpreter.start_effect(state, 0, source, cards.EFFECT_T[state.inst_def[source]])
+    request = interpreter.resume(state, None, None)
+    assert request.lo == 0
+
+
+def test_qa_89_hand_reveal_is_mandatory_even_when_the_bonus_misses():
+    """Q&A No.89: the reveal cannot be declined. The JP text of 04-032/04-008/
+    04-097 makes only the attack bonus conditional -- the reveal itself is not,
+    so with the power cost met the hand is shown even when it holds fewer than
+    the required number of attributes."""
+    from engine_alpha.events import EVENT_CARDS_REVEALED
+
+    for effect_id in ("04-032", "04-008", "04-097"):
+        game = make_game()
+        state = game.state
+        owner = state.players[0]
+        events = []
+        state.event_sink = events
+        owner.hand.clear()
+        mono = next(d.index for d in cards.CARD_DB if d.attribute == 0)
+        owner.hand.extend(spawn(game, mono) for _ in range(3))   # one attribute
+
+        instance = spawn(game, card_with_effect(effect_id))
+        before = owner.flags[PF_ATTACK_BONUS]
+        run_effect(game, 0, instance)
+
+        assert any(e[0] == EVENT_CARDS_REVEALED for e in events), effect_id
+        assert owner.flags[PF_ATTACK_BONUS] == before, f"{effect_id}: bonus must miss"
+
+
+def test_qa_16_03_058_and_03_085_self_remove_immediately():
+    """Q&A No.16: the text says 「すぐに」, so the card reaches the abyss between
+    taking the damage and the turn-end processing, and its turn-end block never
+    runs.
+
+    This drives the damage through `deal_damage` and then runs the REAL turn-end
+    phase, rather than hand-calling check_area_removal. That distinction matters:
+    an earlier version of this fix only removed the card at a phase boundary after
+    the turn-end window, so the heal and the clock advance still fired and a
+    hand-called checkpoint hid it.
+    """
+    from engine_alpha.state import PH_TURN_END_EFFECTS
+
+    for effect_id in ("03-058", "03-085"):
+        game = make_game()
+        state = game.state
+        area = _setup_area(game, 0, effect_id)
+        state.players[0].hp = 100
+        state.chronos = 13                  # daytime: 03-085 would advance the clock
+        chronos_before = state.chronos
+
+        deal_damage(state, 0, 30)
+        assert state.players[0].set_c == -1, f"{effect_id}: not removed at damage time"
+        assert area in state.players[0].abyss, effect_id
+
+        state.phase = PH_TURN_END_EFFECTS
+        state.phase_ctx = []
+        game._ph_turn_end_effects(state, None, None)
+        assert state.players[0].hp == 70, f"{effect_id}: 03-058 must not heal"
+        assert state.chronos == chronos_before, f"{effect_id}: 03-085 must not advance"
+
+
+def test_qa_80_04_091_leaves_play_as_soon_as_hp_drops_to_50():
+    """Q&A No.80: 「バトルのダメージによってHP50以下になった場合は、HPの処理を終えたら
+    すぐにパワーチャージャーに置きます」 -- immediately, not at the next phase."""
+    game = make_game()
+    state = game.state
+    _setup_area(game, 0, "04-091")
+    state.players[0].hp = 60
+
+    deal_damage(state, 0, 20)
+    assert state.players[0].hp == 40
+    assert state.players[0].set_c == -1, "04-091 must leave play at once"
+
+
+def test_damage_triggered_removal_does_not_run_once_the_game_is_over():
+    """Q&A No.41: no further processing happens after a player's HP reaches 0,
+    so the immediate-removal hook must not fire in a finished game."""
+    game = make_game()
+    state = game.state
+    area = _setup_area(game, 0, "03-058")
+    state.players[0].hp = 20
+
+    deal_damage(state, 0, 20)
+    assert state.winner == 1
+    assert state.players[0].set_c == area, "board untouched after the game ended"
+
+
+def test_qa_96_priority_player_resolves_their_turn_end_batch_first():
+    """Q&A No.96 and Ground Rules 5.2.10.2: turn-end effects resolve from the
+    priority player.
+
+    Player 1 OWNS 03-027, so the pending damage flag sits on player 1 and the
+    damage lands on player 0 (Q&A No.25 attributes the damage to the card, so it
+    is its caster's turn-end effect and resolves in the caster's batch). With
+    priority, player 1's damage lands before player 0's 03-058 heal.
+
+    The HP cap is what makes the order observable: starting player 0 at 95, taking
+    the damage first leaves room for the whole heal (95 - 20 = 75, then +10 = 85),
+    whereas healing first wastes most of it against the cap (95 -> 100, then
+    -20 = 80). The damage stays under 30 so it does not trip 03-058's own
+    self-removal, which Q&A No.16 covers separately.
+    """
+    game = make_game()
+    state = game.state
+    give_priority(game, 1)
+    _setup_area(game, 0, "03-058")
+    state.players[1].flags[PF_END_OF_TURN_DAMAGE] = 20   # player 1 owns 03-027
+    state.players[0].hp = 95
+    state.players[1].hp = 100
+
+    process_end_of_turn_effects(state)
+    assert state.players[0].hp == 85, "damage resolved before the heal"
+    assert state.players[1].hp == 100
+
+
+def test_qa_25_03_027_damage_belongs_to_its_caster():
+    """Q&A No.25 treats the turn-end 50 as 03-027's own effect, so it is the
+    CASTER's turn-end item: it resolves in the caster's priority batch and the
+    caster orders it among their own. Recording it on the victim also left the
+    ordering prompt with an unshowable instance, since the card sits in the
+    caster's set zone."""
+    from engine_alpha.effects.turn_end import collect_turn_end_items
+
+    game = make_game()
+    state = game.state
+    caster, victim = state.players[0], state.players[1]
+    instance = spawn(game, card_with_effect("03-027"))
+    caster.set_a = instance
+    state.inst_played[instance] = 1
+    run_effect(game, 0, instance)
+
+    assert caster.flags[PF_END_OF_TURN_DAMAGE] == 50
+    assert victim.flags[PF_END_OF_TURN_DAMAGE] == 0
+    caster_items = collect_turn_end_items(state, caster)
+    assert collect_turn_end_items(state, victim) == []
+    assert [i for _, i in caster_items] == [instance], "resolves to the caster's card"
+
+    victim.hp = 100
+    process_end_of_turn_effects(state)
+    assert victim.hp == 50, "the damage still lands on the opponent"
+
+
+def test_qa_96_player_orders_their_own_turn_end_effects():
+    """Q&A No.96 also lets a player choose the order among their own turn-end
+    effects, so the window collects them as separate items and prompts with
+    P_EFFECT_ORDER when a player holds more than one."""
+    from engine_alpha.effects.turn_end import collect_turn_end_items
+
+    game = make_game()
+    state = game.state
+    _setup_area(game, 0, "03-058")
+    state.players[0].flags[PF_END_OF_TURN_DAMAGE] = 10
+    items = collect_turn_end_items(state, state.players[0])
+    assert len(items) == 2, "two turn-end effects -> the player picks the order"
+
+
+def test_qa_33_03_064_reads_hp_at_attack_determination():
+    """Q&A No.33: 03-064 adds each side's remaining HP at attack determination,
+    not when the area enchant resolved, so damage taken afterwards shrinks the
+    bonus."""
+    game = make_game()
+    state = game.state
+    owner = state.players[0]
+    put_in_battle(game, 0, find_character(min_power_cost=0, max_power_cost=0))
+    area = _setup_area(game, 0, "03-064")
+    owner.hp = 100
+    base = base_attack(state, owner)
+
+    run_effect(game, 0, area)
+    assert get_effective_attack(state, owner) == base + 100
+
+    deal_damage(state, 0, 30)          # HP 100 -> 70 after the effect resolved
+    assert get_effective_attack(state, owner) == base + 70, "live HP, not a snapshot"
+
+
+def test_qa_79_83_shade_chain_terminates_without_blocking_legal_nesting():
+    """04-002 must not be able to re-enter its own resolution.
+
+    Q&A No.79 forbids choosing zero when valid targets are visible, which removed
+    the escape hatch: 04-002 is itself a SHADE character with an effect, so it
+    re-selected itself out of the charger and the only legal action re-entered the
+    effect forever -- a hung Discord match and an unbounded frame stack in search.
+    Q&A No.83 still permits chaining to OTHER cards (「さらに２枚を指定することが可能です」),
+    and its worked example totals three, so the nesting is meant to terminate.
+    """
+    ball = card_with_effect("04-002")
+
+    for copies in (1, 2, 3):
+        game = make_game()
+        state = game.state
+        owner = state.players[0]
+        for _ in range(copies):
+            owner.charger.append(spawn(game, ball))
+        source = spawn(game, ball)
+        interpreter.start_effect(state, 0, source,
+                                 cards.EFFECT_T[state.inst_def[source]])
+        request = interpreter.resume(state, None, None)
+        steps = 0
+        while request is not None and steps < 200:
+            request = interpreter.resume(
+                state, request, request.lo if request.kind == 2 else 0)
+            steps += 1
+        assert request is None, f"{copies} copies: chain never terminated"
+        assert state.frame_stack == [], f"{copies} copies: frames left behind"
+        assert len(state.frame_stack) <= 24
+
+    # A 04-002 may still designate a DIFFERENT 04-002 and further distinct SHADE
+    # characters -- Q&A No.83's case must keep working.
+    game = make_game()
+    state = game.state
+    owner = state.players[0]
+    others = [d.index for d in cards.CARD_DB
+              if d.card_type == cards.TYPE_CHARACTER
+              and cards.SONG_NAMES[d.song] == "SHADE"
+              and cards.EFFECT_T[d.index] != cards.NO_EFFECT and d.index != ball]
+    owner.charger.append(spawn(game, ball))
+    for def_index in others[:3]:
+        owner.charger.append(spawn(game, def_index))
+    source = spawn(game, ball)
+    interpreter.start_effect(state, 0, source, cards.EFFECT_T[state.inst_def[source]])
+    request = interpreter.resume(state, None, None)
+    card_picks, steps = 0, 0
+    while request is not None and steps < 200:
+        if request.kind != 2:
+            card_picks += 1
+        request = interpreter.resume(
+            state, request, request.hi if request.kind == 2 else 0)
+        steps += 1
+    assert request is None
+    assert card_picks >= 2, "nesting to distinct cards must still be possible"
+
+
+def test_qa_45_03_097_returns_the_revealed_card_and_moves_itself():
+    """Q&A No.45: 「公開した相手のデッキの一番上のカードは、再び相手のデッキの一番上に
+    戻します。公開したカードのパワーコストが★6以上の場合、すぐに「厳戒態勢」を
+    パワーチャージャーに置きます」.
+
+    The revealed card is only looked at -- it stays on top of the opponent's deck --
+    and it is 03-097 ITSELF that goes to the owner's charger. The engine used to move
+    the revealed card onto the opponent's charger instead, which both took a card off
+    their deck and put the wrong one in play.
+    """
+    game = make_game()
+    state = game.state
+    owner, opponent = state.players[0], state.players[1]
+    area = _setup_area(game, 0, "03-097")
+
+    expensive = next(d.index for d in cards.CARD_DB if d.power_cost >= 6)
+    top = spawn(game, expensive)
+    opponent.deck.insert(0, top)
+    deck_length = len(opponent.deck)
+    charger_before = list(opponent.charger)
+
+    run_effect(game, 0, area)
+
+    assert opponent.deck[0] == top, "the revealed card stays on top of the deck"
+    assert len(opponent.deck) == deck_length, "no card is taken from the deck"
+    assert opponent.charger == charger_before, "nothing is added to their charger"
+    assert owner.set_c == -1 and area in owner.charger, "03-097 itself moves"
+    # Q&A No.46: it sits there with SEND TO POWER 0, so it adds no power.
+    assert cards.SEND_TO_POWER_T[state.inst_def[area]] == 0
+
+
+def test_qa_45_03_097_stays_when_the_revealed_card_is_cheap():
+    game = make_game()
+    state = game.state
+    owner, opponent = state.players[0], state.players[1]
+    area = _setup_area(game, 0, "03-097")
+    cheap = next(d.index for d in cards.CARD_DB if d.power_cost < 6)
+    top = spawn(game, cheap)
+    opponent.deck.insert(0, top)
+
+    run_effect(game, 0, area)
+    assert opponent.deck[0] == top
+    assert owner.set_c == area, "below the threshold nothing moves"
+
+
+def test_qa_28_all_three_03_055_block_terminations_hold():
+    """Q&A No.28 lists three ways the area block ends: the owner sets another area
+    enchant, the end of a turn in which the opponent put a card in the abyss, and the
+    opponent activating an effect that interferes with area enchants.
+
+    The third is satisfied structurally rather than by a dedicated branch: every
+    interfering effect removes 03-055, and each of those paths fires
+    on_area_enchant_leaves_play, which clears the block.
+    """
+    from engine_alpha.effects.removal import on_area_enchant_leaves_play
+
+    def blocked_game():
+        game = make_game()
+        area = _setup_area(game, 0, "03-055")
+        game.state.players[1].area_blocked = True
+        return game, game.state, area
+
+    game, state, area = blocked_game()
+    state.players[0].set_c = -1
+    on_area_enchant_leaves_play(state, area, 0)
+    assert state.players[1].area_blocked is False, "condition 1"
+
+    game, state, area = blocked_game()
+    state.players[0].flags[PF_OPP_CARD_TO_ABYSS] = 1
+    check_area_removal(state, end_of_turn=True)
+    assert state.players[1].area_blocked is False, "condition 2"
+
+    for interferer in ("03-014", "03-021", "04-107"):
+        game, state, area = blocked_game()
+        instance = spawn(game, card_with_effect(interferer))
+        state.players[1].set_a = instance
+        state.inst_played[instance] = 1
+        run_effect(game, 1, instance)
+        assert state.players[0].set_c != area, f"{interferer} should remove 03-055"
+        assert state.players[1].area_blocked is False, f"condition 3 via {interferer}"
+
+
+def test_02_015_places_the_used_enchant_even_if_it_ends_the_game():
+    """The enchant 02-015 plays is used the moment it is chosen, so it must leave
+    hand before its effect resolves.
+
+    Deferring the placement until after resolution loses it whenever the nested
+    effect ends the game: the interpreter drops every pending frame once a winner is
+    set (Q&A No.41), so the card would still show in hand on the final board. Here
+    01-104 mills an empty deck, which ends the game inside 02-015's own resolution.
+    """
+    game = make_game()
+    state = game.state
+    owner, opponent = state.players[0], state.players[1]
+    dark = next(d.index for d in cards.CARD_DB
+                if d.card_type == cards.TYPE_CHARACTER and d.attribute == 0)
+    owner.prev_battle_def = dark        # 02-015's gate: prev character dark, and day
+    state.chronos = 13
+    owner.hand.clear()
+    used = spawn(game, card_with_effect("01-104"))
+    owner.hand.append(used)
+    opponent.deck.clear()
+
+    instance = spawn(game, card_with_effect("02-015"))
+    owner.set_a = instance
+    state.inst_played[instance] = 1
+    interpreter.start_effect(state, 0, instance,
+                             cards.EFFECT_T[state.inst_def[instance]])
+    request = interpreter.resume(state, None, None)
+    steps = 0
+    while request is not None and steps < 20:
+        request = interpreter.resume(state, request, 0)
+        steps += 1
+
+    assert state.winner == 0, 'the mill shortfall should end the game'
+    assert used not in owner.hand, 'the used enchant must not linger in hand'
+    assert used in owner.abyss or used in owner.charger, 'it must be placed'
+
+
+def test_gr_8_2_1_a_draw_that_cannot_be_made_loses_for_every_card():
+    """Ground Rules 8.2.1: a player who cannot draw the number an effect names loses
+    at that moment.
+
+    01-092, 04-089 and 02-015's trailing draw each used to opt out -- the first two
+    behind a `deck_ge` gate with no basis in the card text, the third behind an
+    `if owner.deck` in its handler -- so an impossible draw was a silent no-op while
+    the identically-worded 03-031 lost the game.
+    """
+    for effect_id in ("01-092", "03-031"):
+        game = make_game()
+        state = game.state
+        owner = state.players[0]
+        owner.deck.clear()
+        owner.hand.clear()
+        owner.hand.append(spawn(game, cards.CARD_DB[0].index))  # 03-031 needs a pick
+        instance = spawn(game, card_with_effect(effect_id))
+        owner.set_a = instance
+        state.inst_played[instance] = 1
+        run_effect(game, 0, instance, answers=(0,))
+        assert state.winner == 1, f"{effect_id}: an impossible draw must lose"
+
+
+def test_qa_92_a_deck_reaching_zero_without_a_shortfall_is_not_a_loss():
+    """Q&A No.92 marks the boundary: emptying a deck is not itself a defeat --
+    that waits for the end-of-turn draw. Only a shortfall is immediate."""
+    game = make_game()
+    state = game.state
+    owner = state.players[0]
+    owner.deck.clear()
+    owner.deck.append(spawn(game, cards.CARD_DB[0].index))   # exactly enough
+    instance = spawn(game, card_with_effect("01-092"))
+    owner.set_a = instance
+    state.inst_played[instance] = 1
+
+    run_effect(game, 0, instance)
+    assert len(owner.deck) == 0
+    assert state.winner == -1, "the deck hit 0 but nothing was short"
+
+
+def test_qa_17_a_rewind_does_not_manufacture_a_day_night_crossing():
+    """Q&A No.17 treats a rewind as undoing a change, not making one. 01-008 (raw
+    revert) and 01-026 (rewind by the opponent's clock) must therefore agree: neither
+    records a crossing, so neither hands family D a bonus that never happened."""
+    from engine_alpha.battle import advance_chronos_by
+    from engine_alpha.state import (
+        GF_DAY_TO_NIGHT, GF_NIGHT_TO_DAY, PF_CHRONOS_ADVANCED)
+
+    game = make_game()
+    state = game.state
+    state.chronos = 17                      # day
+    state.chronos_at_turn_start = 17
+    state.gflags[GF_DAY_TO_NIGHT] = 0
+    state.gflags[GF_NIGHT_TO_DAY] = 0
+    advance_chronos_by(state, 2)            # 17 -> 1: a real day->night crossing
+    assert state.gflags[GF_DAY_TO_NIGHT] == 1
+    assert state.gflags[GF_NIGHT_TO_DAY] == 0
+
+    state.players[1].flags[PF_CHRONOS_ADVANCED] = 2
+    instance = spawn(game, card_with_effect("01-026"))
+    state.players[0].set_a = instance
+    state.inst_played[instance] = 1
+    run_effect(game, 0, instance)
+
+    assert state.gflags[GF_NIGHT_TO_DAY] == 0, "rewinding must not invent a crossing"
+    assert state.gflags[GF_DAY_TO_NIGHT] == 1, "the crossing that did happen stands"

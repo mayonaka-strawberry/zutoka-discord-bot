@@ -129,10 +129,23 @@ class DiscordMatchDecisionAdapter:
         selection = PendingSelection()
         self.pending_selections[key] = selection
         await self._present_compound_view(session, request.player_index, family)
-        selection.on_answer = lambda: session.broker.submit(
-            request.sequence_number, PAYLOAD_ACTION,
-            self._compound_action(selection, request) or 0,
-        )
+
+        def submit_answer() -> None:
+            action = self._compound_action(selection, request)
+            if action is None:
+                # The re-presented picks still do not fit the live candidates. Falling
+                # back to the first legal action keeps the match moving, but it is a
+                # choice made FOR the player, so say so rather than hiding it behind
+                # `or 0` (which also silently conflated "no answer" with action 0).
+                action = request.engine_request.legal_actions()[0]
+                log.warning(
+                    'Re-presented selection still did not fit for sequence %d (%s); '
+                    'falling back to the first legal action %r',
+                    request.sequence_number, request.kind, action,
+                )
+            session.broker.submit(request.sequence_number, PAYLOAD_ACTION, action)
+
+        selection.on_answer = submit_answer
 
     def _compound_action(self, selection: PendingSelection, request: MatchDecisionRequest) -> Optional[int]:
         """Translate the cached pick list into the action for one engine
@@ -159,7 +172,10 @@ class DiscordMatchDecisionAdapter:
 
         if request.purpose == P_SET_SLOT_A:
             if not chosen:
-                return len(candidates)  # PASS: set nothing
+                # Setting zero cards is illegal (GR 5.2.1.5), and the view no longer
+                # offers it. Returning None re-presents rather than submitting a PASS
+                # the engine would reject.
+                return None
             if chosen[0] in candidates:
                 selection.consumed_count = 1
                 return candidates.index(chosen[0])
@@ -247,8 +263,12 @@ class DiscordMatchDecisionAdapter:
             view = ActionSelectView(
                 session, player_index, hand_views,
                 placeholder='Select a card to set...',
-                allow_pass=True,
-                pass_label='Set nothing',
+                # Ground Rules 5.2.1.5 / Q&A No.4: a player holding cards must set at
+                # least one, so there is no "set nothing" option. Offering one produced
+                # a dead button: the broker dropped the illegal action, the prompt then
+                # stalled for the full timeout, and the fallback set the first hand card
+                # anyway -- three of those in a row forfeited the match.
+                allow_pass=False,
                 confirm=True,
                 opponent_name=self._opponent_name(session, player_index),
                 submit_callback=single_callback,

@@ -33,7 +33,7 @@ from ..state import (
     PF_POWER_BONUS, PF_END_OF_TURN_DAMAGE,
     PF_DAMAGE_NOT_REDUCIBLE, PF_REFLECT_REDUCTION,
     GF_MIDNIGHT_EXTENDED,
-    add_attack_modifier, set_attack_modifier,
+    add_attack_modifier, add_own_hp_attack_modifier, set_attack_modifier,
 )
 from ..rng import shuffled
 from ..zones import place_in_abyss, place_in_charger, draw_cards
@@ -131,6 +131,13 @@ def resume(state: GameState, request: DecisionRequest | None, answer: int | None
     execution (returns the DecisionRequest; state.acting is set)."""
     while state.frame_stack:
         frame = state.frame_stack[-1]
+        if state.winner != -1:
+            # The game ended mid-resolution (Q&A No.41): drop every pending
+            # frame instead of continuing to resolve effects into a finished
+            # game. Custom handlers are dropped here too, since their step
+            # machines would otherwise keep prompting for choices.
+            state.frame_stack.clear()
+            return None
         cond, ops, custom = EFFECT_PROGRAMS[frame.effect_index]
         if custom is not None:
             result = CUSTOM_HANDLERS[custom](state, frame, request, answer)
@@ -148,6 +155,12 @@ def resume(state: GameState, request: DecisionRequest | None, answer: int | None
 
 def _exec_ops(state: GameState, frame: Frame, ops: tuple, request, answer):
     while frame.pc < len(ops):
+        if state.winner != -1:
+            # Q&A No.41 / Ground Rules 1.2.3: once a player's HP reaches 0 the
+            # game is over and no further card effect is processed. Abandon the
+            # rest of this program rather than resolving into a finished game.
+            frame.pc = len(ops)
+            return None
         op = ops[frame.pc]
         result = OP_TABLE[op[0]](state, frame, op, request, answer)
         request = None
@@ -319,8 +332,16 @@ def _op_name_guess(state, frame, op, request, answer):
 
 
 def _op_atk_bonus(state, frame, op, request, answer):
-    add_attack_modifier(_side_player(state, frame, op[1]),
-                        eval_expr(state, frame, op[2]))
+    player = _side_player(state, frame, op[1])
+    amount_expr = op[2]
+    # 03-064 grants each side "+= your own remaining HP". Q&A No.33 fixes that
+    # reading at 攻撃力の決定時 -- attack determination -- not at the moment the
+    # area enchant resolves, so record it deferred instead of snapshotting.
+    if (isinstance(amount_expr, tuple) and amount_expr[0] == "hp"
+            and _side_player(state, frame, amount_expr[1]) is player):
+        add_own_hp_attack_modifier(player)
+    else:
+        add_attack_modifier(player, eval_expr(state, frame, amount_expr))
     frame.pc += 1
     return None
 
@@ -411,11 +432,24 @@ def _op_midnight_extend(state, frame, op, request, answer):
     return None
 
 
+def _record_deck_shortfall(state, player_index: int) -> None:
+    """Ground Rules 8.2.1/8.2.2: when an effect cannot process the number of
+    cards it names because the deck runs out, the player who could not complete
+    the processing loses at that moment. Q&A No.70 confirms this for "put N
+    cards from the opponent's deck into their abyss" -- the milled player loses.
+    """
+    if state.winner == -1:
+        state.winner = 1 - player_index
+
+
 def _op_draw(state, frame, op, request, answer):
     player = _side_player(state, frame, op[1])
-    count = min(eval_expr(state, frame, op[2]), len(player.deck))
+    wanted = eval_expr(state, frame, op[2])
+    count = min(wanted, len(player.deck))
     if count > 0:
         draw_cards(state, player.index, count)
+    if wanted > count:
+        _record_deck_shortfall(state, player.index)
     frame.pc += 1
     return None
 
@@ -453,11 +487,15 @@ def _op_move_reg(state, frame, op, request, answer):
 
 
 def _op_draw_exact(state, frame, op, request, answer):
-    """Old can_draw-gated draw: all-or-nothing (draw n only if deck >= n)."""
+    """All-or-nothing draw (draw n only if deck >= n). A short deck means the
+    player cannot carry out the instruction, which is a loss (GR 8.2.1)."""
     player = _side_player(state, frame, op[1])
     count = eval_expr(state, frame, op[2])
-    if count > 0 and len(player.deck) >= count:
-        draw_cards(state, player.index, count)
+    if count > 0:
+        if len(player.deck) >= count:
+            draw_cards(state, player.index, count)
+        else:
+            _record_deck_shortfall(state, player.index)
     frame.pc += 1
     return None
 
@@ -471,15 +509,20 @@ def _op_chronos_revert_turn_start(state, frame, op, request, answer):
 
 
 def _op_chronos_back_opp_clock(state, frame, op, request, answer):
-    """01-026: rewind to (turn_start - opponent's chronos contribution),
-    via set_chronos (single-compare transition tracking), only if the
-    opponent advanced the clock this turn."""
+    """01-026: rewind to (turn_start - opponent's chronos contribution), only if
+    the opponent advanced the clock this turn.
+
+    Records no day/night crossing, matching 01-008's revert: per Q&A No.17 a rewind
+    undoes a change rather than creating one, so it must not hand family D a
+    crossing that never occurred.
+    """
     from ..battle import set_chronos
     from ..state import PF_CHRONOS_ADVANCED
     opponent = state.players[1 - frame.owner]
     advanced = opponent.flags[PF_CHRONOS_ADVANCED]
     if advanced > 0:
-        set_chronos(state, (state.chronos_at_turn_start - advanced) % CHRONOS_SIZE)
+        set_chronos(state, (state.chronos_at_turn_start - advanced) % CHRONOS_SIZE,
+                    record_transition=False)
     frame.pc += 1
     return None
 
@@ -539,10 +582,17 @@ def _op_charger_to_abyss(state, frame, op, request, answer):
 
 def _op_name_guess_bonus(state, frame, op, request, answer):
     """03-047 family: +N attack when the guessed definition matches the
-    opponent's hand card at the 1-based index chosen earlier."""
+    opponent's hand card at the 1-based index chosen earlier.
+
+    The card text is 「相手の手札から1枚を選んで公開し、そのカード名のカードなら攻撃力+N」:
+    the chosen card is REVEALED whether or not it matches. 公開 means both players
+    see it (GR 10.2.1/10.4.1, as opposed to 見る, which shows only the effect's
+    controller), so the reveal is emitted before the match test.
+    """
     _, guess_reg, index_reg, amount = op
     opponent = state.players[1 - frame.owner]
     revealed = opponent.hand[frame.regs[index_reg] - 1]
+    _emit_reveal(state, frame, opponent.index, (revealed,))
     if state.inst_def[revealed] == frame.regs[guess_reg]:
         add_attack_modifier(state.players[frame.owner], amount)
     frame.pc += 1
@@ -578,6 +628,7 @@ def apply_self_defeat(state, player_index):
     identical with or without it, and it never enters the NN observation. The
     bot layer reads it to rate a deliberately thrown game differently.
     """
+    from ..battle import record_hp_zero
     player = state.players[player_index]
     old_hp = player.hp
     player.hp = 0
@@ -586,6 +637,7 @@ def apply_self_defeat(state, player_index):
         state.self_defeat_turn = state.turn
     if state.event_sink is not None and old_hp != 0:
         state.event_sink.append((EVENT_HP_CHANGED, player_index, -old_hp, 0))
+    record_hp_zero(state, player_index)
 
 
 def _op_lose_game(state, frame, op, request, answer):
@@ -609,10 +661,13 @@ def _op_deck_top_route(state, frame, op, request, answer):
 
 def _op_mill(state, frame, op, request, answer):
     player = _side_player(state, frame, op[1])
-    count = min(eval_expr(state, frame, op[2]), len(player.deck))
+    wanted = eval_expr(state, frame, op[2])
+    count = min(wanted, len(player.deck))
     for _ in range(count):
         instance_id = player.deck.pop(0)
         place_in_abyss(state, instance_id, player.index, frame.owner)
+    if wanted > count:
+        _record_deck_shortfall(state, player.index)
     frame.pc += 1
     return None
 

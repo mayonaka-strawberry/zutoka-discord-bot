@@ -40,6 +40,9 @@ log = logging.getLogger(__name__)
 # effect starts). Effects without an entry get the systematic line.
 EFFECT_NARRATION_OVERRIDES: dict[str, str] = {}
 
+#: Reveals that show the top of the opponent's DECK rather than anything in hand.
+DECK_TOP_REVEAL_EFFECTS = frozenset({'03-097', '03-103'})
+
 
 def describe_card(card: Any) -> dict[str, Any]:
     return {'card': [card.pack, card.id], 'name': card.name, 'effect': card.effect}
@@ -267,6 +270,29 @@ class MatchNarrator:
             channel_message = (
                 f'**Effect ({effect_id}):** {self._player_name(owner_index)} revealed '
                 f'{len(revealed)} {noun}: {names}.')
+        elif effect_id in DECK_TOP_REVEAL_EFFECTS:
+            # 03-097 / 03-103 show the top of the opponent's DECK, which stays
+            # where it is (Q&A No.45). Calling that a hand reveal would be wrong
+            # twice over: wrong zone, and it implies the whole hand.
+            owner_message = (
+                f'**Effect ({effect_id}):** Opponent\'s top deck card revealed: {names}.')
+            other_message = (
+                f'**Effect ({effect_id}):** Your top deck card was revealed: {names}.')
+            channel_message = (
+                f'**Effect ({effect_id}):** '
+                f"{self._player_name(revealed_owner_index)}'s top deck card "
+                f'revealed: {names}.')
+        elif len(revealed) == 1:
+            # The name-guess family picks ONE card out of the opponent's hand and
+            # shows it; the rest of the hand stays hidden.
+            owner_message = (
+                f'**Effect ({effect_id}):** Revealed from opponent\'s hand: {names}.')
+            other_message = (
+                f'**Effect ({effect_id}):** A card was revealed from your hand: {names}.')
+            channel_message = (
+                f'**Effect ({effect_id}):** '
+                f"a card from {self._player_name(revealed_owner_index)}'s hand "
+                f'revealed: {names}.')
         else:
             from types import SimpleNamespace
 

@@ -25,7 +25,7 @@ from engine_alpha.actions import (
     P_SET_SLOT_B,
     P_SKIP_SWAP,
 )
-from engine_alpha.state import PH_PROCESS_EFFECTS
+from engine_alpha.state import PH_PROCESS_EFFECTS, PH_TURN_END_EFFECTS
 from zutomayo.match.decisions import (
     KIND_BINARY_CHOICE,
     KIND_CARD_CHOICE,
@@ -77,8 +77,11 @@ def _effect_order_prompt(state, engine_request) -> str:
         definition_index_to_card(state.inst_def[instance_id]).name
         for instance_id in engine_request.candidates
     )
+    # Both windows that prompt for an order keep the already-ordered items in
+    # phase_ctx[4]: the main effect window (7 slots) and the turn-end one (6).
     ordered_count = 0
-    if state.phase == PH_PROCESS_EFFECTS and len(state.phase_ctx) == 7:
+    if (state.phase in (PH_PROCESS_EFFECTS, PH_TURN_END_EFFECTS)
+            and len(state.phase_ctx) >= 5):
         ordered_count = len(state.phase_ctx[4])
     return (
         f'**Choose effect order ({ordered_count + 1}/'
