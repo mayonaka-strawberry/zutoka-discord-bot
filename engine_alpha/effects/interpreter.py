@@ -649,12 +649,28 @@ def _op_lose_game(state, frame, op, request, answer):
 
 def _op_deck_top_route(state, frame, op, request, answer):
     """Top card of side's deck -> their charger (if SEND TO POWER) else
-    their abyss; the actor is the effect owner (02-041, self-placement)."""
+    their abyss; the actor is the effect owner (02-041, self-placement).
+
+    An empty deck is a loss, not a no-op. 02-041 names one card out of a deck
+    (「デッキの一番上のカードを…置く」) exactly as 01-104 does for the opponent
+    (「相手のデッキの一番上のカードを…アビスに置く」), and 01-104 compiles to
+    `mill`, which loses. This op used to be the one deck-consuming op that
+    clamped silently, so the same instruction lost the game or fizzled purely
+    by which op it compiled to (Ground Rules 8.2.1/8.2.2).
+
+    The shortfall is recorded against the DECK OWNER, which for 02-041's SELF
+    target makes it self-inflicted.
+    """
     from ..zones import to_power_or_abyss
     player = _side_player(state, frame, op[1])
     if player.deck:
         instance_id = player.deck.pop(0)
         to_power_or_abyss(state, instance_id, player.index, frame.owner)
+    else:
+        # The pc advance below is dead on this branch: the shortfall always sets a
+        # winner, and both _exec_ops and resume bail on `winner != -1` before the
+        # next op. Kept so the two branches stay symmetrical.
+        _record_deck_shortfall(state, player.index)
     frame.pc += 1
     return None
 

@@ -132,6 +132,11 @@ def eval_cond(state: GameState, owner_index: int, cond) -> bool:
         return enemy.set_c != -1
     if kind == "own_battle_played":
         return own.battle != -1 and bool(state.inst_played[own.battle])
+    # Currently used by ZERO catalog entries, and that is deliberate: the 2026-08
+    # audit stripped it off 01-092/04-089, where an "if you can draw" gate with no
+    # basis in the card text silently turned an impossible draw into a no-op
+    # instead of the Ground Rules 8.2.1 loss. Kept because the primitive itself is
+    # sound -- but a new entry using it needs the card text to actually say "if".
     if kind == "deck_ge":
         return len(_player(state, owner_index, cond[1]).deck) >= cond[2]
     if kind == "hand_count_ge":

@@ -1818,6 +1818,27 @@ def test_grand_rule_5_4_3_1_double_deck_out_is_a_draw():
     assert _end_turn_for(other_state, other_state.players[1]) is False
 
 
+def test_grand_rule_5_4_3_1_winner_arithmetic_through_the_phase_driver():
+    """The test above calls _end_turn_for directly, which leaves _ph_end_turn's
+    own `2 if all(decked_out) else 1 - decked_out.index(True)` untested -- and that
+    expression, not the bool, is what actually decides the game. Drive the phase.
+    """
+    for empty, expected in ((None, 2), (0, 1), (1, 0)):
+        game = make_game()
+        state = game.state
+        for index, player in enumerate(state.players):
+            player.cards_played = 1
+            if empty is None or index == empty:
+                player.deck.clear()
+            else:
+                player.deck.append(spawn(game, find_character()))
+        state.phase_ctx = []
+
+        game._ph_end_turn(state, None, None)
+        assert state.winner == expected, (
+            f"empty={empty}: expected {expected}, got {state.winner}")
+
+
 def test_qa_79_public_zone_selection_requires_at_least_one_card():
     """Q&A No.79 names 04-002 directly: with valid targets visible in the power
     charger (a public zone, Ground Rules 1.3.5.1) the player must pick 1 to 2,
@@ -2240,6 +2261,320 @@ def test_qa_92_a_deck_reaching_zero_without_a_shortfall_is_not_a_loss():
     run_effect(game, 0, instance)
     assert len(owner.deck) == 0
     assert state.winner == -1, "the deck hit 0 but nothing was short"
+
+
+# ---------------------------------------------------------------------------
+# 02-041 / deck_top_route: the last op that clamped a deck shortfall silently
+# ---------------------------------------------------------------------------
+
+def _arm_02_041(game: Game, owner: int, *, meet_gate: bool = True) -> int:
+    """Put a dispatchable 02-041 in `owner`'s battle zone, gate met by default.
+
+    02-041 reads 「前のターンで使用したキャラクターカードの属性が闇なら」, so the gate is
+    the PREVIOUS turn's character being darkness -- nothing to do with the deck.
+    Note the caller still owes the 2 power its cost needs when driving the real
+    phase; `run_effect` bypasses the cost check.
+    """
+    state = game.state
+    player = state.players[owner]
+    dark = next(d.index for d in cards.CARD_DB
+                if d.card_type == cards.TYPE_CHARACTER
+                and d.attribute == cards.ATTR_DARKNESS)
+    player.prev_battle_def = dark if meet_gate else -1
+    if player.battle != -1:          # don't orphan whatever make_game left there
+        to_power_or_abyss(state, player.battle, owner)
+    instance = spawn(game, card_with_effect("02-041"))
+    player.battle = instance
+    state.inst_played[instance] = 1
+    return instance
+
+
+def test_gr_8_2_1_02_041_cannot_route_from_an_empty_deck_and_loses():
+    """Ground Rules 8.2.1/8.2.2: 02-041 names one card out of a deck
+    (「デッキの一番上のカードを…置く」) and cannot supply it, so its owner loses.
+
+    01-104 is the same instruction aimed at the opponent
+    (「相手のデッキの一番上のカードを…アビスに置く」) and has always lost the game,
+    because it compiles to `mill`. `deck_top_route` used to no-op instead, so the
+    identical instruction lost or fizzled purely by which op it compiled to.
+    """
+    game = make_game()
+    state = game.state
+    owner = state.players[0]
+    owner.deck.clear()
+
+    run_effect(game, 0, _arm_02_041(game, 0))
+    assert state.winner == 1, "the owner cannot process its own card and loses"
+
+
+def test_qa_92_02_041_routes_its_last_card_without_losing():
+    """The boundary case for the test above: with exactly one card the
+    instruction completes, and a deck reaching 0 is not itself a defeat."""
+    game = make_game()
+    state = game.state
+    owner = state.players[0]
+    owner.deck.clear()
+    last = spawn(game, cards.CARD_DB[0].index)
+    owner.deck.append(last)
+
+    run_effect(game, 0, _arm_02_041(game, 0))
+    assert len(owner.deck) == 0
+    # CARD_DB[0] has SEND TO POWER 0, so the destination is deterministic --
+    # asserting a disjunction here could not catch a routing regression.
+    assert cards.SEND_TO_POWER_T[state.inst_def[last]] == 0
+    assert last in owner.abyss, "the card was routed to the abyss"
+    assert state.winner == -1, "the deck hit 0 but nothing was short"
+
+
+def test_02_041_on_an_empty_deck_does_not_lose_when_it_never_resolves():
+    """The other side of the fix, and the more dangerous direction to regress: an
+    effect that does not resolve cannot deck anyone out.
+
+    Three ways 02-041 never resolves, all with an empty deck behind it:
+    an unmet power cost (it costs 2, and an unpaid effect is skipped like any
+    other), an unmet gate (the previous character was not darkness), and a
+    negated instance. If any of these started losing the game, every player
+    holding 02-041 with an empty deck would die on sight.
+    """
+    from engine_alpha.effects.dispatch import HANDLED_EFFECTS
+    from engine_alpha.game import _collect_eligible
+
+    # 1. Power cost unmet: dispatched, but skipped before start_effect.
+    game = make_game()
+    state = game.state
+    give_priority(game, 0)
+    state.players[0].deck.clear()
+    source = _arm_02_041(game, 0)
+    state.players[0].charger.clear()          # 0 power against a cost of 2
+    state.players[0].set_a = state.players[0].set_b = state.players[0].set_c = -1
+    events = run_process_effects(game)
+    assert state.inst_def[source] in cost_skipped_definitions(events), (
+        "the cost gate is what stopped it")
+    assert state.inst_def[source] not in started_definitions(events)
+    assert state.winner == -1, "an unaffordable effect cannot deck its owner out"
+
+    # 2. Gate unmet: dispatched and paid for, but start_effect pushes no frame.
+    game = make_game()
+    state = game.state
+    state.players[0].deck.clear()
+    source = _arm_02_041(game, 0, meet_gate=False)
+    run_effect(game, 0, source)
+    assert state.winner == -1, "the gate is what decides whether it processes"
+
+    # 3. Negated: never collected in the first place.
+    game = make_game()
+    state = game.state
+    state.players[0].deck.clear()
+    source = _arm_02_041(game, 0)
+    state.inst_neg[source] = 1
+    assert cards.EFFECT_T[state.inst_def[source]] in HANDLED_EFFECTS
+    assert source not in _collect_eligible(state, state.players[0])
+    assert state.winner == -1
+
+
+def _set_up_02_041_battle_preempt(game: Game) -> None:
+    """Owner holds a lethal attack over the opponent, and 02-041 with no deck."""
+    state = game.state
+    give_priority(game, 0)
+    owner, opponent = state.players
+    _arm_02_041(game, 0)
+    fill_charger_to(game, 0, 1)          # 2 power: covers 02-041's cost
+    opponent.hp = 10
+    opponent.battle = spawn(game, find_character())
+    opponent.set_c = -1
+
+
+def test_02_041_deck_out_pre_empts_a_battle_its_owner_would_have_won():
+    """Accepted consequence 1 of making 02-041 lose: the shortfall lands in
+    PROCESS_EFFECTS, which runs before BATTLE, so a battle the owner would have
+    won never happens.
+
+    The control arm is what makes this a statement about the shortfall rather
+    than about the board: the identical position with ONE card in the deck routes
+    it, reaches BATTLE, and the owner wins. Both arms also assert the premise --
+    the owner really does out-attack the opponent lethally -- because otherwise
+    the setup could stop being a winning position without any test noticing.
+    """
+    from engine_alpha.battle import get_effective_attack
+
+    # Control: one card in the deck, everything else identical.
+    control = make_game()
+    _set_up_02_041_battle_preempt(control)
+    control_owner, control_opponent = control.state.players
+    control_owner.deck[:] = [spawn(control, cards.CARD_DB[0].index)]
+    owner_attack = get_effective_attack(control.state, control_owner)
+    opponent_attack = get_effective_attack(control.state, control_opponent)
+    assert owner_attack > opponent_attack, "premise: the owner wins the battle"
+    assert owner_attack - opponent_attack >= control_opponent.hp, "and lethally"
+
+    control_events = run_process_effects(control)
+    assert any(event[0] == EVENT_BATTLE_RESULT for event in control_events), (
+        "control: BATTLE resolves when the deck can supply the card")
+    assert control.state.winner == 0, "control: the owner wins that battle"
+
+    # The real case: same position, empty deck.
+    game = make_game()
+    _set_up_02_041_battle_preempt(game)
+    state = game.state
+    owner, opponent = state.players
+    owner.deck.clear()
+    assert get_effective_attack(state, owner) > get_effective_attack(state, opponent)
+
+    events = run_process_effects(game)
+
+    assert state.winner == 1, "the owner loses in PROCESS_EFFECTS"
+    assert opponent.hp == 10, "the opponent never took battle damage"
+    assert not any(event[0] == EVENT_BATTLE_RESULT for event in events), (
+        "the game ended before BATTLE could resolve")
+
+
+def test_02_041_deck_out_takes_the_loss_alone_where_both_would_have_decked_out():
+    """Accepted consequence 2: this replaces a reachable GR 5.4.3.1 draw.
+
+    Both decks empty and both players owing an end-of-turn draw is a winner = 2
+    draw. The 02-041 shortfall fires first, in PROCESS_EFFECTS, so its owner loses
+    alone -- the first writer of `winner` wins, as it does for a double knock-out.
+
+    This has to be driven through the phase machinery, and both players must owe
+    a draw. `run_effect` calls start_effect directly, so _ph_end_turn would never
+    run; and with cards_played == 0 the mandatory draw is zero cards, which an
+    empty deck satisfies -- either way there would be no draw to displace. The
+    control arm proves the draw is really there to lose.
+    """
+    def build() -> Game:
+        game = make_game()
+        state = game.state
+        give_priority(game, 0)
+        _arm_02_041(game, 0)
+        fill_charger_to(game, 0, 1)      # 2 power: covers 02-041's cost
+        for player in state.players:
+            player.deck.clear()
+            player.cards_played = 1      # both owe a draw they cannot make
+            player.set_a = player.set_b = player.set_c = -1
+        state.players[1].battle = spawn(game, find_character())
+        return game
+
+    # Control: the same position with 02-041's gate unmet, so it never resolves
+    # and the turn reaches _ph_end_turn with both players short.
+    control = build()
+    control.state.players[0].prev_battle_def = -1
+    run_process_effects(control)
+    assert control.state.winner == 2, (
+        "control: without the shortfall this position is a GR 5.4.3.1 draw")
+
+    game = build()
+    run_process_effects(game)
+    assert game.state.winner == 1, "not a draw: the owner's shortfall came first"
+
+
+def test_top_card_reveals_survive_an_empty_deck():
+    """Ground Rules 8.2.1 turns on cards LEAVING the deck zone, not on a count
+    being named. 03-097 and 03-103 only look at the top card -- Q&A No.45 puts it
+    straight back -- so they cannot fall short.
+
+    They MUST fizzle rather than lose: both are area enchants, and
+    _collect_eligible re-queues set_c every turn with no inst_played check, so a
+    loss here would kill a player every turn once their deck reached 0.
+    """
+    for effect_id in ("03-097", "03-103"):
+        game = make_game()
+        state = game.state
+        state.event_sink = []
+        state.players[1].deck.clear()
+        area = spawn(game, card_with_effect(effect_id))
+        state.players[0].set_c = area
+        run_effect(game, 0, area)
+        # Guard against the assertion going vacuous if a future gate stops the
+        # effect starting: winner == -1 is also the untouched default.
+        assert state.inst_def[area] in started_definitions(state.event_sink), (
+            f"{effect_id}: the effect must actually have resolved")
+        assert state.winner == -1, f"{effect_id}: a reveal cannot deck anyone out"
+
+
+def test_04_088_clamps_a_named_count_it_only_reorders():
+    """04-088 names 3 but never removes a card -- it looks at the opponent's top
+    cards and puts them back (opponent.deck[:view_count] = reordered). Nothing
+    leaves the deck zone, so a short deck is a clamp, not a shortfall.
+
+    Two arms: a 2-card deck actually reaches the reorder line (an empty deck
+    returns early at view_count <= 1 and would never exercise it).
+    """
+    for deck_size in (2, 0):
+        game = make_game()
+        state = game.state
+        state.event_sink = []
+        stock_abyss(game, 0, 1)          # 04-088 self-defeats on an empty abyss
+        opponent = state.players[1]
+        opponent.deck[:] = [spawn(game, find_character()) for _ in range(deck_size)]
+
+        source = spawn(game, card_with_effect("04-088"))
+        run_effect_auto(game, 0, source)
+
+        assert state.inst_def[source] in started_definitions(state.event_sink)
+        assert len(opponent.deck) == deck_size, "the deck is reordered, not drained"
+        assert state.winner == -1, (
+            f"deck of {deck_size}: looking at fewer than 3 is not a shortfall")
+
+
+# ---------------------------------------------------------------------------
+# The scenarios the deck-out audit was raised for
+# ---------------------------------------------------------------------------
+
+def test_qa_70_04_027_mills_past_the_opponents_deck_and_wins():
+    """04-027 banks N from its own abyss and then mills the opponent by the same
+    N. Banking 7 against a 6-card deck leaves the mill one card short, so the
+    milled player loses (Q&A No.70, Ground Rules 8.2.2).
+
+    pick_number answers are the literal number; card picks are indices -- hence
+    the leading 7 followed by first-candidate picks.
+    """
+    game = make_game()
+    state = game.state
+    owner, opponent = state.players
+    stock_abyss(game, 0, 7)
+    opponent.deck.clear()
+    opponent.abyss.clear()
+    for _ in range(6):
+        opponent.deck.append(spawn(game, find_character()))
+    deck_before = len(owner.deck)
+
+    run_effect(game, 0, spawn(game, card_with_effect("04-027")),
+               answers=(7, 0, 0, 0, 0, 0, 0, 0))
+
+    assert len(owner.deck) == deck_before + 7, "all 7 were banked to the deck"
+    assert len(owner.abyss) == 0, "and none was left in the abyss"
+    assert len(opponent.deck) == 0, "the mill took every card it could"
+    assert len(opponent.abyss) == 6, "six cards were milled before it ran short"
+    assert state.winner == 0, "the milled player loses"
+
+
+def test_cumulative_mills_across_two_effects_deck_the_opponent_out():
+    """Two effects in one turn add up: 04-027 milling 3 then 04-057 milling 2 is
+    5 against a 4-card deck, and it is the SECOND effect that ends the game.
+
+    04-027's bank removes the chosen cards from its owner's abyss before 04-057's
+    own gate (「アビスに3枚以上のカードがあるなら」) is evaluated, so the owner needs 6
+    abyss cards to bank 3 and still meet it -- otherwise 04-057 never starts and
+    the test would pass for the wrong reason.
+    """
+    game = make_game()
+    state = game.state
+    owner, opponent = state.players
+    stock_abyss(game, 0, 6)
+    opponent.deck.clear()
+    opponent.abyss.clear()
+    for _ in range(4):
+        opponent.deck.append(spawn(game, find_character()))
+
+    run_effect(game, 0, spawn(game, card_with_effect("04-027")),
+               answers=(3, 0, 0, 0))
+    assert len(opponent.deck) == 1, "04-027 milled 3 of the 4"
+    assert state.winner == -1, "three mills into a four-card deck is not short"
+    assert len(owner.abyss) == 3, "04-057's gate still needs three abyss cards"
+
+    run_effect(game, 0, spawn(game, card_with_effect("04-057")))
+    assert len(opponent.deck) == 0
+    assert state.winner == 0, "the second mill ran short and ended it"
 
 
 def test_qa_17_a_rewind_does_not_manufacture_a_day_night_crossing():

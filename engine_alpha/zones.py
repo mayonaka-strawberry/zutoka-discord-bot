@@ -10,7 +10,7 @@ like the old engine:
   set when the watcher's *opponent* performed the placement.
 - PF_CARD_TO_POWER / PF_CHAR_TO_POWER are agent-based (04-033/02-058): set
   only when the charger owner themselves placed the card; opponent-forced
-  placements (04-006, 03-097 mill) do not count.
+  placements (04-006 — the only one in the engine) do not count.
 
 These functions append to the destination zone; removing the card from its
 source container is the caller's responsibility (matching the old engine).

@@ -455,7 +455,13 @@ class Game:
                 ordered = ctx[4]
                 position = ctx[5]
                 if position < len(ordered):
-                    if ctx[6] and any(p.hp <= 0 for p in state.players):
+                    # `state.winner` as well as HP: a deck shortfall ends the game
+                    # without touching HP, so an HP-only test is the one place the
+                    # two loss mechanisms would disagree. Unreachable today --
+                    # _advance's `while state.winner == -1` exits before this
+                    # handler is re-entered -- so this is defensive only.
+                    if ctx[6] and (state.winner != -1
+                                   or any(p.hp <= 0 for p in state.players)):
                         ctx[2] = 3
                         continue
                     ctx[5] = position + 1

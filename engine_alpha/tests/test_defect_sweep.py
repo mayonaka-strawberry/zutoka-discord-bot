@@ -68,6 +68,18 @@ GROUPS = {
     'shade_nesting': (30000, ('04-002', '04-094', '03-097')),
     'deck_shortfall': (40000, ('01-092', '04-089', '02-015', '04-057')),
     'baseline': (50000, ()),
+    # Breadth only -- this group does NOT gate the 02-041 deck-shortfall fix and
+    # must not be cited as its evidence. Measured over its own 150 games:
+    # `deck_top_route` fires 20 times and the empty-deck branch 0 times, so
+    # trajectories are bit-identical with the fix reverted. The deterministic
+    # tests in test_rulings.py (test_gr_8_2_1_02_041_*, the two accepted-
+    # consequence tests) are the real gate. What this buys is exercising 02-041
+    # and 01-006 -- which nests effects without a cost check -- inside full random
+    # games, alongside the encoder and invariant checks every group runs.
+    # It is a SEPARATE group rather than more cards in `deck_shortfall` because
+    # _deck_containing samples `10 + len(distinct)`, so growing that tuple
+    # re-rolls its RNG stream and replaces its 150 games instead of adding to them.
+    'deck_top_route': (60000, ('02-041', '01-006')),
 }
 
 

@@ -78,6 +78,12 @@ def reveal_top_03_097(state, frame, request, answer):
     of placing the real instance.
     """
     opponent = state.players[1 - frame.owner]
+    # Deliberate fizzle, NOT the deck-shortfall loss the draw/mill/deck_top_route
+    # ops record. The discriminator is whether cards LEAVE the deck zone: this one
+    # only looks (Q&A No.45 puts the card straight back), so no processing fails.
+    # It also has to fizzle: an area enchant is re-queued every turn with no
+    # inst_played check, so a loss here would kill a player every turn once their
+    # deck hits 0 and gut the Q&A No.92 boundary.
     if not opponent.deck:
         return None
     top = opponent.deck[0]
@@ -98,6 +104,8 @@ def reveal_top_03_103(state, frame, request, answer):
     POWER -> attack +30; otherwise this area enchant moves to the owner's
     charger (owner-actor placement flags fire — old code)."""
     opponent = state.players[1 - frame.owner]
+    # Deliberate fizzle for the same two reasons as reveal_top_03_097: nothing
+    # leaves the deck zone, and an area enchant re-queues every turn.
     if not opponent.deck:
         return None
     top = opponent.deck[0]
@@ -261,6 +269,14 @@ def chaos_04_088(state, frame, request, answer):
         state.inst_face_up[chosen] = 0
         state.inst_neg[chosen] = 0
         owner.deck.append(chosen)
+        # This clamp is deliberate, and is NOT the silent-clamp defect that
+        # draw/mill/deck_top_route record as a loss. 04-088 names a count (3),
+        # but it only looks at and reorders cards WITHIN the deck -- nothing
+        # leaves the deck zone (see opponent.deck[:view_count] = reordered
+        # below), so there is no processing that can fail short. Cards leaving
+        # the zone, not a named count, is what Ground Rules 8.2.1 turns on.
+        # (Scoped to this line: the empty-abyss branch above is a real
+        # bank-or-lose self-defeat, not a fizzle.)
         view_count = min(3, len(opponent.deck))
         if view_count <= 1:
             return None

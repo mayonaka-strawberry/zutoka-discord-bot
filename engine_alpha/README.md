@@ -86,12 +86,20 @@ two card-level bugs it missed. Fixes, each covered by a test in
   a turn-end heal can no longer revive a dead player (Q&A No.41, No.34, No.92;
   Ground Rules 1.2.3/5.4.1). A double knock-out resolves as "first to reach 0
   loses" (user ruling 2026-08-13); the engine never produces an HP draw.
-- **Deck shortfall from an effect** (`interpreter` draw/mill ops): a player who
-  cannot supply the cards an effect names loses, instead of the count being
-  silently clamped (Ground Rules 8.2.1/8.2.2, Q&A No.70).
+- **Deck shortfall from an effect** (`interpreter` `draw` / `draw_exact` / `mill` /
+  `deck_top_route`): a player who cannot supply the cards an effect names loses,
+  instead of the count being silently clamped (Ground Rules 8.2.1/8.2.2,
+  Q&A No.70). The test is whether cards must **leave the deck zone**, not whether
+  a count is named — so 03-097/03-103 (look at the top card, which Q&A No.45 puts
+  straight back) and 04-088 (name 3, but only reorder within the deck) fizzle on a
+  short deck and are meant to. 03-097/03-103 have to: they are area enchants, and
+  `_collect_eligible` re-queues `set_c` every turn with no `inst_played` check, so
+  a loss there would kill a player every turn once their deck reached 0.
 - **Simultaneous deck-out** (`game._ph_end_turn`): a draw when neither player
   can make the mandatory end-of-turn draw (Ground Rules 5.4.3.1). `_end_turn_for`
   now reports the failure instead of writing a winner per player.
+- **A deck merely reaching 0 is not a defeat** (Q&A No.92) — that waits for the
+  next mandatory draw. Only a shortfall is immediate.
 - **Public-zone selections** (`custom.shade_use_two`): 04-002 must pick 1 to 2
   from the power charger, not 0 to 2 (Q&A No.79, Ground Rules 1.3.5.1).
   Hidden-zone picks keep their 0 minimum (Q&A No.90).
@@ -156,6 +164,20 @@ regression test citing its source:
 - **Discord offered a dead "Set nothing" button** on the single-slot set view, which
   the broker dropped, stalling the prompt for the full timeout and then setting a
   card for the player; three in a row forfeited.
+- **02-041 fizzled on an empty deck** where 01-104 lost the game. Both are
+  「デッキの一番上のカードを…置く」 — one named card out of a deck — but 01-104 compiles
+  to `mill` and 02-041 to `deck_top_route`, which was the last op still clamping a
+  shortfall silently. The 2026-08 audit fixed this class for 01-092 / 04-089 /
+  02-015 and never reached this op. Two outcome changes were accepted with the
+  fix, each pinned by a test: the loss lands in `PROCESS_EFFECTS`, so it (1)
+  pre-empts a battle its owner would have won that turn, and (2) replaces a
+  reachable GR 5.4.3.1 draw with the owner losing alone. In every other case the
+  owner would have decked out at `_ph_end_turn` regardless — 02-041 is a battle
+  character, so `cards_played >= 1` on the turn it fires — and the fix only moves
+  the same loss one phase earlier. (A third case, an own bank refilling the deck
+  later in the same batch, is *unreachable*: set zones dispatch only ENCHANTs and
+  there is one battle slot, so 02-041 and the CHARACTER-only bank family
+  04-006/04-027/04-088/04-105 can never co-resolve.)
 - Smaller: 02-015 dropped its tail when a nested effect ended the game; 01-092 /
   04-089 / 02-015 skipped the deck-shortfall loss (GR 8.2.1); 01-026 manufactured a
   day/night crossing a rewind should not create (Q&A No.17); `PF_ATTACK_BONUS` went

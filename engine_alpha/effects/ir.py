@@ -66,11 +66,20 @@ Ops (interpreter.py OP_TABLE); `side` relative to owner:
   hp:        ('heal', side, expr)  ('damage', side, expr)
              ('eot_damage', side, expr)  ('reflect', side)
   clock:     ('adv_chronos', expr) ('set_chronos_to', expr) ('midnight_extend',)
-  cards:     ('draw', side, expr)              min(expr, deck) drawn
+  cards:     ('draw', side, expr)              min(expr, deck) drawn; a short
+                 deck keeps the partial draw AND loses the game for `side`
+             ('draw_exact', side, expr)        all-or-nothing: a short deck draws
+                 nothing and loses the game for `side`
              ('move_reg', reg, dst_zone, dst_side, order)
                  dst_zone in 'abyss'|'charger'|'deck'|'hand'; order 'top'|'bottom'
                  (actor for placement triggers is always the effect owner)
-             ('mill', side, expr)              top N of side's deck -> side's abyss
+             ('mill', side, expr)              top N of side's deck -> side's abyss;
+                 a short deck mills what it can and loses the game for `side`
+             ('deck_top_route', side)          02-041: top card of side's deck ->
+                 their charger (if SEND TO POWER) else their abyss; an empty deck
+                 loses the game for `side`
+             (every deck shortfall above is Ground Rules 8.2.1/8.2.2, Q&A No.70;
+              a deck merely REACHING 0 is not a loss -- Q&A No.92)
              ('charger_to_abyss', side)        04-105: empty side's charger into
                  that side's OWN abyss (actor = effect owner)
              ('reveal_reg', reg)  ('reveal_hand', side)
