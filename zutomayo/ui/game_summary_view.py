@@ -23,6 +23,8 @@ from typing import Any, Optional
 
 import discord
 
+from zutomayo.match.agents import solo_opponent_label
+
 log = logging.getLogger(__name__)
 
 EMBED_DESCRIPTION_LIMIT = 4096
@@ -81,8 +83,8 @@ def _overview_lines(game_row: dict, player_names: dict[int, str]) -> list[str]:
     if game_row.get('is_tcg'):
         mode_label = f'TCG best of {game_row.get("best_of")}'
     elif game_row.get('is_solo'):
-        difficulty = game_row.get('solo_difficulty', 'normal')
-        mode_label = f'solo ({difficulty})'
+        solo_opponent = game_row.get('solo_difficulty', 'normal')
+        mode_label = f'solo ({solo_opponent_label(solo_opponent)})'
     else:
         mode_label = 'standard'
 

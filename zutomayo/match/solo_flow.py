@@ -29,11 +29,11 @@ MODEL_PLAYER_INDEX = 1
 def create_model_adapter(session: 'GameSession', opponent: str):
     """Build the decision adapter for a solo opponent. Raises ValueError when
     the opponent has no deployable checkpoint."""
-    from zutomayo.match.agents import available_solo_opponents
+    from zutomayo.match.agents import available_solo_opponents, solo_opponent_label
     from zutomayo.match.agents.agent_adapter import ModelDecisionAdapter, create_solo_agent
 
     if opponent not in available_solo_opponents():
-        raise ValueError(f'Solo opponent {opponent!r} is not available.')
+        raise ValueError(f'Model {solo_opponent_label(opponent)} is not available.')
     return ModelDecisionAdapter(create_solo_agent(opponent), lambda: session.broker)
 
 

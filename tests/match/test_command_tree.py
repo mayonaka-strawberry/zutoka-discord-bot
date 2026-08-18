@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
-from zutomayo.cogs.game_cog import GameCog, SOLO_MODEL_ALPHA_ZERO
+from zutomayo.cogs.game_cog import GameCog
+from zutomayo.match.agents import SOLO_OPPONENT_ALPHA_ZERO
 
 DISCORD_SUBCOMMAND_LIMIT = 25
+
+# Model stack names that must never reach a player-facing surface.
+STACK_NAMES = ('alphazero', 'alpha zero', 'ppo', 'transformer')
 
 EXPECTED_TOP_LEVEL = {
     'create', 'createdraft', 'playuniguri', 'deck', 'join', 'end', 'quit',
@@ -80,7 +85,7 @@ def test_create_draft_rejects_best_of_without_tcg():
 
 def test_play_uniguri_rejects_a_guild_channel():
     interaction = FakeInteraction(in_guild=True)
-    run_command(GameCog.play_uniguri, build_cog(), interaction, model=SOLO_MODEL_ALPHA_ZERO)
+    run_command(GameCog.play_uniguri, build_cog(), interaction, model=SOLO_OPPONENT_ALPHA_ZERO)
     assert 'DM' in interaction.response.messages[0]['content']
 
 
@@ -89,7 +94,31 @@ def test_play_uniguri_reports_model_a_untrained(monkeypatch):
 
     monkeypatch.setattr(alpha_zero.inference, 'find_checkpoint', lambda: None)
     interaction = FakeInteraction(in_guild=False)
-    run_command(GameCog.play_uniguri, build_cog(), interaction, model=SOLO_MODEL_ALPHA_ZERO)
+    run_command(GameCog.play_uniguri, build_cog(), interaction, model=SOLO_OPPONENT_ALPHA_ZERO)
     assert interaction.response.messages[0]['content'] == (
         'Model A has not yet been trained. Play against model B'
     )
+
+
+def test_play_uniguri_offers_only_the_letters():
+    """Players pick a model by letter; the stack behind each letter is an
+    implementation detail that must never reach the command picker."""
+    command = next(
+        command for command in GameCog.group.commands if command.name == 'playuniguri'
+    )
+    model_parameter = next(
+        parameter for parameter in command.parameters if parameter.name == 'model'
+    )
+
+    assert [choice.name for choice in model_parameter.choices] == ['A', 'B']
+
+    visible_text = ' '.join([
+        command.description,
+        model_parameter.description,
+        *(choice.name for choice in model_parameter.choices),
+    ])
+    for stack_name in STACK_NAMES:
+        # Whole words only: "opponent" legitimately contains "ppo".
+        assert not re.search(rf'\b{stack_name}\b', visible_text, re.IGNORECASE), (
+            f'{stack_name!r} is visible in the command picker'
+        )

@@ -15,6 +15,11 @@ from zutomayo.data.player_storage import (
     list_ranked_profiles,
 )
 from zutomayo.engine.game_session import session_manager
+from zutomayo.match.agents import (
+    SOLO_OPPONENT_ALPHA_ZERO,
+    SOLO_OPPONENT_PPO,
+    solo_opponent_label,
+)
 from zutomayo.ui.player_embeds import (
     build_leaderboard_embed,
     build_profile_embed,
@@ -34,12 +39,6 @@ log = logging.getLogger(__name__)
 
 
 LEADERBOARD_MINIMUM_GAMES = 1
-
-# Players choose a solo opponent by letter; these are the identifiers
-# zutomayo.match.agents.SOLO_OPPONENT_MODULES keys the model stacks by.
-SOLO_MODEL_ALPHA_ZERO = 'alphazero'
-SOLO_MODEL_PPO = 'ppo'
-SOLO_MODEL_LABELS = {SOLO_MODEL_ALPHA_ZERO: 'A', SOLO_MODEL_PPO: 'B'}
 
 
 class GameCog(commands.Cog):
@@ -187,10 +186,10 @@ class GameCog(commands.Cog):
         name='playuniguri',
         description='Play a solo game against a trained model opponent (DMs only)',
     )
-    @app_commands.describe(model='A (AlphaZero) or B (PPO transformer)')
+    @app_commands.describe(model='Choose your opponent: A or B')
     @app_commands.choices(model=[
-        app_commands.Choice(name='A', value=SOLO_MODEL_ALPHA_ZERO),
-        app_commands.Choice(name='B', value=SOLO_MODEL_PPO),
+        app_commands.Choice(name='A', value=SOLO_OPPONENT_ALPHA_ZERO),
+        app_commands.Choice(name='B', value=SOLO_OPPONENT_PPO),
     ])
     async def play_uniguri(self, interaction: discord.Interaction, model: str) -> None:
         from zutomayo.match.agents import available_solo_opponents
@@ -204,7 +203,7 @@ class GameCog(commands.Cog):
         # Checked ahead of availability so model A gives its own message rather
         # than the generic one, and starts working with no code change the
         # moment a checkpoint is dropped into model/.
-        if model == SOLO_MODEL_ALPHA_ZERO:
+        if model == SOLO_OPPONENT_ALPHA_ZERO:
             from alpha_zero.inference import find_checkpoint
 
             if find_checkpoint() is None:
@@ -215,7 +214,7 @@ class GameCog(commands.Cog):
 
         if model not in available_solo_opponents():
             await interaction.response.send_message(
-                f'Model {SOLO_MODEL_LABELS.get(model, model)} is not available yet.',
+                f'Model {solo_opponent_label(model)} is not available yet.',
                 ephemeral=True,
             )
             return

@@ -187,7 +187,7 @@ class TestSoloResume:
         self, monkeypatch, install_in_memory_backends,
     ):
         async def failing_resume_game(bot, game_id, **kwargs):
-            raise ValueError("Solo opponent 'alphazero' is not available.")
+            raise ValueError('Model A is not available.')
 
         monkeypatch.setattr(resume_module, 'resume_game', failing_resume_game)
         interaction = FakeInteraction(in_guild=False)

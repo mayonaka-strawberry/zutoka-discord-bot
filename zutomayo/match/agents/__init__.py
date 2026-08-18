@@ -8,10 +8,26 @@ from typing import Any
 
 BOT_NAME = 'メカうにぐり'
 
+SOLO_OPPONENT_ALPHA_ZERO = 'alphazero'
+SOLO_OPPONENT_PPO = 'ppo'
+
 SOLO_OPPONENT_MODULES = {
-    'alphazero': 'alpha_zero.inference',
-    'ppo': 'ppo_transformer.inference',
+    SOLO_OPPONENT_ALPHA_ZERO: 'alpha_zero.inference',
+    SOLO_OPPONENT_PPO: 'ppo_transformer.inference',
 }
+
+# Players only ever see the letter. Which stack sits behind each letter is an
+# implementation detail and must not reach a Discord surface.
+SOLO_OPPONENT_LABELS = {
+    SOLO_OPPONENT_ALPHA_ZERO: 'A',
+    SOLO_OPPONENT_PPO: 'B',
+}
+
+
+def solo_opponent_label(opponent: str) -> str:
+    """The player-facing letter for a solo opponent identifier. Unknown values
+    pass through unchanged, so legacy 'normal'/'easy' rows still read sensibly."""
+    return SOLO_OPPONENT_LABELS.get(opponent, opponent)
 
 
 def available_solo_opponents() -> list[str]:

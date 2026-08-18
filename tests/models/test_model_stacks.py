@@ -181,6 +181,19 @@ def test_solo_opponents_track_deployed_checkpoints():
     assert ('ppo' in available) is (ppo_checkpoint() is not None)
 
 
+def test_unavailable_opponent_error_names_the_model_by_letter(monkeypatch):
+    """The message reaches the player verbatim through the resume handler, so it
+    speaks in letters rather than naming the stack."""
+    from zutomayo.match import solo_flow
+    from zutomayo.match import agents
+
+    monkeypatch.setattr(agents, 'available_solo_opponents', lambda: [])
+    with pytest.raises(ValueError, match='Model A is not available'):
+        solo_flow.create_model_adapter(object(), 'alphazero')
+    with pytest.raises(ValueError, match='Model B is not available'):
+        solo_flow.create_model_adapter(object(), 'ppo')
+
+
 def test_agent_adapter_submits_agent_action():
     import asyncio
 
