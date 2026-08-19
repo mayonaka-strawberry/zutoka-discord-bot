@@ -172,7 +172,11 @@ is_terminal() / returns()`:
   (one view answers the engine's iterative requests, both players prompted
   concurrently). Concurrency is also what keeps a placement secret: neither
   player learns anything from the other's timing, and nothing is posted between
-  the two commitments.
+  the two commitments. A resume can go live *inside* one of those families,
+  because replay never fills the selection cache: the adapter therefore presents
+  from the pending request's purpose, not from the phase's card allowance, so a
+  player who set slot A before the save is asked for the optional second card
+  alone, and a seat that already answered during replay is not prompted again.
 - `state_view.py`: read-only `BoardView` / `PlayerView` / `CardView`
   projections consumed by embeds and the PIL board renderer.
 - `narrator.py`: translates engine events (`engine_alpha/events.py`) into

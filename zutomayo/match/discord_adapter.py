@@ -35,7 +35,7 @@ from zutomayo.match.decisions import (
     PAYLOAD_ACTION,
     MatchDecisionRequest,
 )
-from zutomayo.match.presentation import maximum_cards_to_set
+from zutomayo.match.presentation import PASS_LABEL_BY_PURPOSE, maximum_cards_to_set
 from zutomayo.match.state_view import card_view
 
 log = logging.getLogger(__name__)
@@ -43,6 +43,35 @@ log = logging.getLogger(__name__)
 FAMILY_MULLIGAN = 'mulligan'
 FAMILY_INITIAL_CARD = 'initial_card'
 FAMILY_SET_CARDS = 'set_cards'
+
+# The purpose a family opens on, for the seat that is pre-presented before the
+# engine has asked it anything.
+_FIRST_PURPOSE = {
+    FAMILY_MULLIGAN: P_MULLIGAN,
+    FAMILY_INITIAL_CARD: P_INITIAL_CARD,
+    FAMILY_SET_CARDS: P_SET_SLOT_A,
+}
+
+
+def _seat_already_answered(state: Any, seat: int) -> bool:
+    """Whether the engine has already taken this seat's answer in the current
+    compound phase. Read off phase_ctx, which is where the engine tracks it.
+
+    PH_INITIAL_SET and PH_SET_CARDS both hold ``[commit_order, position, ...]``,
+    so every seat before ``position`` in the order is done. PH_MULLIGAN holds
+    ``[player_position, marked]``, where the position indexes players directly.
+    """
+    from engine_alpha.state import PH_INITIAL_SET, PH_MULLIGAN, PH_SET_CARDS
+
+    context = state.phase_ctx
+    if state.phase in (PH_INITIAL_SET, PH_SET_CARDS):
+        if len(context) < 2:
+            return False
+        order, position = context[0], context[1]
+        return seat in order[:position]
+    if state.phase == PH_MULLIGAN:
+        return bool(context) and seat < context[0]
+    return False
 
 
 class PendingSelection:
@@ -54,6 +83,10 @@ class PendingSelection:
         self.chosen: Optional[list[int]] = None
         self.consumed_count = 0
         self.on_answer: Optional[Callable[[], None]] = None
+        # Set when the view was built for slot B alone, which only happens
+        # when a resume goes live between the two set-cards sub-requests.
+        # The single pick then belongs to slot B, not slot A.
+        self.starts_at_slot_b = False
 
     def resolve(self, chosen_instance_ids: list[int]) -> None:
         if self.chosen is not None:
@@ -100,7 +133,7 @@ class DiscordMatchDecisionAdapter:
         if selection is None:
             selection = PendingSelection()
             self.pending_selections[key] = selection
-            await self._present_compound_view(session, player_index, family)
+            await self._present_compound_view(session, player_index, family, request.purpose)
             await self._pre_present_other_player(session, 1 - player_index, family)
 
         def answer_now() -> None:
@@ -128,7 +161,7 @@ class DiscordMatchDecisionAdapter:
         key = (request.player_index, family)
         selection = PendingSelection()
         self.pending_selections[key] = selection
-        await self._present_compound_view(session, request.player_index, family)
+        await self._present_compound_view(session, request.player_index, family, request.purpose)
 
         def submit_answer() -> None:
             action = self._compound_action(selection, request)
@@ -182,6 +215,14 @@ class DiscordMatchDecisionAdapter:
             return None
 
         # P_SET_SLOT_B
+        if selection.starts_at_slot_b:
+            # Slot A was answered before a restart, so the view asked for the
+            # second card only and the single pick is that card.
+            if not chosen:
+                return len(candidates)  # PASS: no second card
+            if chosen[0] in candidates:
+                return candidates.index(chosen[0])
+            return None
         if len(chosen) < 2:
             return len(candidates)  # PASS: no second card
         if chosen[1] in candidates:
@@ -193,16 +234,25 @@ class DiscordMatchDecisionAdapter:
             return
         if not self.transport.delivers_to_player(session, other_index):
             return
+        state = session.game.state
+        if _seat_already_answered(state, other_index):
+            # Live, pre-presentation always happens before either player has
+            # committed. A resume that goes live mid-phase is the exception:
+            # the seat ahead in the commit order already answered during
+            # replay, and prompting it again produces a view whose answer has
+            # no engine request behind it.
+            return
         if family == FAMILY_SET_CARDS:
-            state = session.game.state
             player = state.players[other_index]
             if min(maximum_cards_to_set(state, other_index), len(player.hand)) == 0:
                 return
         selection = PendingSelection()
         self.pending_selections[(other_index, family)] = selection
-        await self._present_compound_view(session, other_index, family)
+        await self._present_compound_view(session, other_index, family, _FIRST_PURPOSE[family])
 
-    async def _present_compound_view(self, session: Any, player_index: int, family: str) -> None:
+    async def _present_compound_view(
+        self, session: Any, player_index: int, family: str, purpose: int,
+    ) -> None:
         from zutomayo.ui.views import ActionSelectView, RedrawView, TwoStepCardSelectView
 
         key = (player_index, family)
@@ -244,6 +294,32 @@ class DiscordMatchDecisionAdapter:
             await self.transport.send_to_player(session, player_index, content=prompt, view=view)
             return
 
+        def single_pick_callback(payload_type: str, payload: Any) -> None:
+            selection.resolve([] if payload >= len(instance_ids) else [instance_ids[payload]])
+
+        if purpose == P_SET_SLOT_B:
+            # A resume went live between the two set-cards sub-requests: slot A
+            # is already committed, so only the optional second card is open.
+            # Sizing the view off maximum_cards_to_set here would ask for both
+            # again and mis-map the answer onto slot B.
+            selection.starts_at_slot_b = True
+            await self._send_hand_briefing(session, player_index, hand_views, 1, slot_b_only=True)
+            view = ActionSelectView(
+                session, player_index, hand_views,
+                placeholder='Select a 2nd card to set...',
+                allow_pass=True,
+                pass_label=PASS_LABEL_BY_PURPOSE[P_SET_SLOT_B],
+                confirm=True,
+                opponent_name=self._opponent_name(session, player_index),
+                submit_callback=single_pick_callback,
+            )
+            await self.transport.send_to_player(
+                session, player_index,
+                content='Your 1st card is already set. Set a 2nd card, or none.',
+                view=view,
+            )
+            return
+
         maximum = min(maximum_cards_to_set(state, player_index), len(instance_ids))
         await self._send_hand_briefing(session, player_index, hand_views, maximum)
         if maximum >= 2:
@@ -257,9 +333,6 @@ class DiscordMatchDecisionAdapter:
             )
             prompt = 'You may set up to 2 cards. Select your first card.'
         else:
-            def single_callback(payload_type: str, payload: Any) -> None:
-                selection.resolve([] if payload >= len(instance_ids) else [instance_ids[payload]])
-
             view = ActionSelectView(
                 session, player_index, hand_views,
                 placeholder='Select a card to set...',
@@ -271,13 +344,14 @@ class DiscordMatchDecisionAdapter:
                 allow_pass=False,
                 confirm=True,
                 opponent_name=self._opponent_name(session, player_index),
-                submit_callback=single_callback,
+                submit_callback=single_pick_callback,
             )
             prompt = 'Set a card from your hand.'
         await self.transport.send_to_player(session, player_index, content=prompt, view=view)
 
     async def _send_hand_briefing(
         self, session: Any, player_index: int, hand_views: list, maximum: int,
+        *, slot_b_only: bool = False,
     ) -> None:
         """Last turn's result and this turn's hand, DM'd ahead of the set-cards
         view - the reminder of why one player gets two slots and the other one."""
@@ -288,7 +362,11 @@ class DiscordMatchDecisionAdapter:
         if not self.transport.delivers_to_player(session, player_index):
             return
         last_battle_winner = session.game.state.last_battle_winner
-        if maximum >= 2:
+        if slot_b_only:
+            # Resumed mid-phase: the last-turn result already bought this player
+            # its two slots and one of them is spent, so lead with what is left.
+            status = 'Resumed mid-turn | 1st card already set | Set 1 more card, or none'
+        elif maximum >= 2:
             status = f'Last Turn Result: LOSE | Set up to {maximum} cards'
         elif last_battle_winner == player_index:
             status = 'Last Turn Result: WIN | Set 1 card'

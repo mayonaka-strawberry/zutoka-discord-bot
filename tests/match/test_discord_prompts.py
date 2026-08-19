@@ -7,13 +7,13 @@ from __future__ import annotations
 import asyncio
 import random
 
-from engine_alpha.actions import P_SET_SLOT_A
+from engine_alpha.actions import P_SET_SLOT_A, P_SET_SLOT_B
 from engine_alpha.game import Game
 from engine_alpha.state import PH_INITIAL_SET, PH_SET_CARDS
 from zutomayo.match.discord_adapter import (
     FAMILY_INITIAL_CARD, FAMILY_SET_CARDS, DiscordMatchDecisionAdapter,
 )
-from zutomayo.match.presentation import build_match_request
+from zutomayo.match.presentation import build_match_request, maximum_cards_to_set
 from tests.match.support import FakeSession, RecordingTransport, random_full_pool_decks
 
 
@@ -166,3 +166,123 @@ def test_set_slot_a_offers_no_pass_and_cannot_submit_an_empty_selection():
     candidates = list(engine_request.candidates)
     selection.chosen = [candidates[1]]
     assert adapter._compound_action(selection, request) == 1
+
+
+# -- going live inside a compound family (resume) -------------------------
+#
+# A resume replays the decision log and then presents whatever request was
+# pending when the process stopped, through a fresh adapter -- replay never
+# populates the PendingSelection cache. So an adapter handed a mid-family
+# request is exactly what a go-live produces, and needs no resume machinery
+# to reproduce.
+
+
+def _resumed_at_slot_b(seed: int = 1):
+    """A game pending on slot B with slot A already committed, as a resume
+    that went live between the two set-cards sub-requests would find it."""
+    game = _play_until(seed, PH_SET_CARDS)
+    rng = random.Random(seed)
+    while not (game.state.pending.purpose == P_SET_SLOT_A
+               and maximum_cards_to_set(game.state, game.state.acting) == 2
+               and len(game.state.players[game.state.acting].hand) >= 3):
+        game.apply(rng.choice(game.legal_actions()))
+        assert game.state.phase == PH_SET_CARDS, 'walked out of the set-cards phase'
+    acting = game.state.acting
+    game.apply(0)  # slot A, answered before the restart and present in the log
+    assert game.state.pending.purpose == P_SET_SLOT_B
+    assert game.state.acting == acting
+    return game, acting
+
+
+def test_resuming_at_slot_b_asks_only_for_the_second_card(monkeypatch):
+    """A go-live between slot A and slot B used to re-present the whole family.
+
+    The view was sized from `min(maximum_cards_to_set, len(hand))`, a
+    whole-phase quantity, so a two-slot player got TwoStepCardSelectView and
+    'You may set up to 2 cards' for a turn where only slot B was still open.
+    `_compound_action` then read `chosen[1]`: one card plus 'None' submitted a
+    PASS and the card was never set, and two cards set the second and silently
+    discarded the first.
+    """
+    from zutomayo.ui import embeds
+
+    async def fake_hand_image(hand):
+        return 'hand-image'
+
+    monkeypatch.setattr(embeds, 'create_hand_image_off_thread', fake_hand_image)
+
+    game, acting = _resumed_at_slot_b()
+    engine_request = game.decision_context()
+    assert engine_request.allow_pass is True, 'the engine leaves slot B optional'
+
+    session, adapter = _runtime(game)
+    request = _present(session, adapter, game, sequence_number=42)
+
+    prompt = session.transport.player_messages[acting][-1]
+    assert '2nd card' in prompt['content']
+    view = prompt['view']
+    assert view.allow_pass is True, 'slot B is optional, so the pass belongs here'
+    assert view.pass_label == 'Set no second card'
+    assert type(view).__name__ == 'ActionSelectView', 'only one slot is open'
+
+    # The single pick is slot B's card, not a first card to be discarded.
+    selection = adapter.pending_selections[(acting, FAMILY_SET_CARDS)]
+    candidates = list(engine_request.candidates)
+    assert selection.starts_at_slot_b is True
+    selection.chosen = [candidates[2]]
+    assert adapter._compound_action(selection, request) == 2
+
+
+def test_resuming_at_slot_b_can_still_decline_the_second_card(monkeypatch):
+    from zutomayo.ui import embeds
+
+    async def fake_hand_image(hand):
+        return 'hand-image'
+
+    monkeypatch.setattr(embeds, 'create_hand_image_off_thread', fake_hand_image)
+
+    game, acting = _resumed_at_slot_b()
+    engine_request = game.decision_context()
+    session, adapter = _runtime(game)
+    request = _present(session, adapter, game, sequence_number=42)
+
+    selection = adapter.pending_selections[(acting, FAMILY_SET_CARDS)]
+    selection.chosen = []
+    assert adapter._compound_action(selection, request) == len(engine_request.candidates)
+
+
+def test_a_seat_that_already_set_its_cards_is_not_prompted_again():
+    """Pre-presentation is what sends both players their view at once. Live it
+    always runs before either has committed; a resume going live mid-phase is
+    the exception, and the seat ahead in the commit order answered during
+    replay. Its view would have no engine request behind it."""
+    game = _play_until(3, PH_SET_CARDS)
+    rng = random.Random(3)
+    while game.state.phase_ctx[1] != 1:  # walk to the second committer
+        game.apply(rng.choice(game.legal_actions()))
+        assert game.state.phase == PH_SET_CARDS, 'walked out of the set-cards phase'
+    acting = game.state.acting
+    finished = 1 - acting
+    assert game.state.players[finished].set_a != -1, 'precondition: it already set'
+
+    session, adapter = _runtime(game)
+    _present(session, adapter, game)
+
+    assert session.transport.player_messages[acting], 'the pending seat must be prompted'
+    assert session.transport.player_messages[finished] == [], 'no ghost prompt'
+    assert (finished, FAMILY_SET_CARDS) not in adapter.pending_selections
+
+
+def test_a_seat_that_already_placed_its_battle_card_is_not_prompted_again():
+    game = _play_until(7, PH_INITIAL_SET)
+    first = game.state.acting
+    game.apply(0)  # placed before the restart, in the log
+    second = game.state.acting
+    assert game.state.players[first].battle != -1
+
+    session, adapter = _runtime(game)
+    _present(session, adapter, game)
+
+    assert session.transport.player_messages[second], 'the pending seat must be prompted'
+    assert session.transport.player_messages[first] == [], 'no ghost prompt'
+    assert (first, FAMILY_INITIAL_CARD) not in adapter.pending_selections

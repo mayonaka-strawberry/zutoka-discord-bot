@@ -40,9 +40,11 @@ from zutomayo.match.state_view import card_view, definition_index_to_card
 EFFECT_PROMPT_TIMEOUT_SECONDS = 300.0
 FLOW_PROMPT_TIMEOUT_SECONDS = 300.0
 
+# Slot A is deliberately absent: Ground Rules 5.2.1.5 / Q&A No.4 make it
+# unpassable while the hand has cards, and a label here is what let a dead
+# "Set nothing" button reach the view once already.
 PASS_LABEL_BY_PURPOSE = {
     P_MULLIGAN: 'Keep hand',
-    P_SET_SLOT_A: 'Set nothing',
     P_SET_SLOT_B: 'Set no second card',
     P_EFFECT_TARGET: 'Skip',
 }
