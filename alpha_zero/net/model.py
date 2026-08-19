@@ -47,6 +47,11 @@ class UniguriNet(nn.Module):
                 f'effect_capacity {cfg.effect_capacity} is below the effect count '
                 f'{NUM_EFFECTS}; migrate the checkpoint (model_common/migrate_checkpoint.py)'
             )
+        if cfg.song_capacity < NUM_SONGS:
+            raise ValueError(
+                f'song_capacity {cfg.song_capacity} is below the song count '
+                f'{NUM_SONGS}; migrate the checkpoint (model_common/migrate_checkpoint.py)'
+            )
         self.cfg = cfg
         self.gradient_checkpointing = False
         d = cfg.embed_dim
@@ -54,7 +59,7 @@ class UniguriNet(nn.Module):
         self.identity_embedding = nn.Embedding(cfg.identity_capacity + 1, cfg.identity_embedding_dim)
         self.attribute_embedding = nn.Embedding(6, 16)
         self.type_embedding = nn.Embedding(4, 8)
-        self.song_embedding = nn.Embedding(NUM_SONGS + 1, 16)
+        self.song_embedding = nn.Embedding(cfg.song_capacity + 1, 16)
         self.rarity_embedding = nn.Embedding(6, 8)
         self.effect_embedding = nn.Embedding(cfg.effect_capacity + 1, cfg.effect_embedding_dim)
         self.zone_embedding = nn.Embedding(N_ZONE_SLOTS, 16)
@@ -123,11 +128,16 @@ class UniguriNet(nn.Module):
             effect_index == NUM_EFFECTS,
             torch.full_like(effect_index, self.cfg.effect_capacity),
             effect_index)
+        song_index = tok_int[..., 3]
+        song_index = torch.where(
+            song_index == NUM_SONGS,
+            torch.full_like(song_index, self.cfg.song_capacity),
+            song_index)
         parts = torch.cat([
             self.identity_embedding(identity_index),
             self.attribute_embedding(tok_int[..., 1]),
             self.type_embedding(tok_int[..., 2]),
-            self.song_embedding(tok_int[..., 3]),
+            self.song_embedding(song_index),
             self.rarity_embedding(tok_int[..., 4]),
             self.zone_embedding(tok_int[..., 6]),
             self.effect_embedding(effect_embedding_index),

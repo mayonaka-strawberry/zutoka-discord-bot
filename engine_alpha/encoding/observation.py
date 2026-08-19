@@ -30,7 +30,9 @@ from ..cards import (
 )
 from ..state import (
     GameState, N_PLAYER_FLAGS, N_GLOBAL_FLAGS,
-    PF_ATTACK_OVERRIDE, PH_MULLIGAN,
+    PF_ATTACK_BONUS, PF_ATTACK_OVERRIDE, PF_BATTLE_DAMAGE, PF_CHRONOS_ADVANCED,
+    PF_DAMAGE_REDUCED, PF_DAMAGE_REDUCTION, PF_DAMAGE_TAKEN,
+    PF_END_OF_TURN_DAMAGE, PF_POWER_BONUS, PH_MULLIGAN,
 )
 
 # Zone-slot vocabulary (relative to acting player)
@@ -43,7 +45,7 @@ _ZK_BATTLE, _ZK_SET_A, _ZK_SET_B, _ZK_SET_C, _ZK_HAND, _ZK_CHARGER, _ZK_ABYSS, _
 N_ZONE_SLOTS = _ZONE_BASE + 16
 
 N_INT_FEATURES = 7   # identity, attribute, card_type, song, rarity, effect, zone_slot
-N_FLOAT_FEATURES = 14
+N_FLOAT_FEATURES = 15
 MAX_TOKENS = 4 + 2 * (4 + 20 + 20 + 20 + 20)  # 172
 
 # Categorical paddings (index = vocabulary size means "none")
@@ -60,7 +62,20 @@ _RARITY_T = tuple(int(x) for x in RARITY)
 
 # Globals layout
 N_GLOBALS = (18 + 2) + 2 + 8 + 1 + 14 + N_PURPOSES + 4 + 2 + 3 + 2 + 2 + 4 \
-    + 2 * N_PLAYER_FLAGS + N_GLOBAL_FLAGS + 4 + 2
+    + 2 * N_PLAYER_FLAGS + N_GLOBAL_FLAGS + 4 + 2 + 2 + 18
+
+# Divisor per player flag, so the encoded value stays monotonic in the raw one.
+# This replaced a `value / 100 if abs(value) > 1 else float(value)` rule whose
+# branch put a 50x cliff between 1 (encoded 1.0) and 2 (encoded 0.02); every
+# count-driven flag crosses that boundary in ordinary play, PF_CHRONOS_ADVANCED
+# on essentially every turn. Booleans stay at 1.0 so they keep unit scale.
+_FLAG_SCALE = tuple(
+    100.0 if index in (PF_ATTACK_BONUS, PF_DAMAGE_REDUCTION, PF_END_OF_TURN_DAMAGE,
+                       PF_BATTLE_DAMAGE, PF_DAMAGE_TAKEN, PF_DAMAGE_REDUCED)
+    else 20.0 if index == PF_POWER_BONUS
+    else 18.0 if index == PF_CHRONOS_ADVANCED
+    else 1.0
+    for index in range(N_PLAYER_FLAGS))
 
 
 def _gather_chosen(state: GameState) -> set[int]:
@@ -117,7 +132,8 @@ def encode(game) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int]]:
         row += 1
 
     def add_instance_token(instance_id: int, zone_slot: int, position: float = 0.0,
-                           effective_attack: float = 0.0) -> None:
+                           effective_attack: float = 0.0,
+                           owner_swapped_songs: int = 0) -> None:
         nonlocal row
         def_index = state.inst_def[instance_id]
         attr_override = state.inst_attr_ovr[instance_id]
@@ -145,6 +161,10 @@ def encode(game) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int]]:
         f[11] = 1.0 if attr_override != -1 else 0.0
         f[12] = 1.0 if instance_id in candidates else 0.0
         f[13] = 1.0 if instance_id in chosen else 0.0
+        # Did this card's owner swap away from THIS card's song this turn? The
+        # `swapped_from_song` condition is per-song and per-owner, so carrying it
+        # on the token is both exact and cheaper than a NUM_SONGS-wide global.
+        f[14] = 1.0 if owner_swapped_songs & (1 << SONG_T[def_index]) else 0.0
         token_of_instance[instance_id] = row
         row += 1
 
@@ -156,22 +176,28 @@ def encode(game) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int]]:
     for relative in (0, 1):
         player = state.players[acting if relative == 0 else 1 - acting]
         eff_atk = get_effective_attack(state, player) / 200.0
+        swapped = player.swapped_from_songs
         if player.battle != -1:
             add_instance_token(player.battle, _ZONE_BASE + _ZK_BATTLE * 2 + relative,
-                               effective_attack=eff_atk)
+                               effective_attack=eff_atk, owner_swapped_songs=swapped)
         for zone_kind, single in ((_ZK_SET_A, player.set_a), (_ZK_SET_B, player.set_b),
                                   (_ZK_SET_C, player.set_c)):
             if single != -1:
-                add_instance_token(single, _ZONE_BASE + zone_kind * 2 + relative)
+                add_instance_token(single, _ZONE_BASE + zone_kind * 2 + relative,
+                                   owner_swapped_songs=swapped)
         for instance_id in player.hand[:20]:
-            add_instance_token(instance_id, _ZONE_BASE + _ZK_HAND * 2 + relative)
+            add_instance_token(instance_id, _ZONE_BASE + _ZK_HAND * 2 + relative,
+                               owner_swapped_songs=swapped)
         for instance_id in player.charger[:20]:
-            add_instance_token(instance_id, _ZONE_BASE + _ZK_CHARGER * 2 + relative)
+            add_instance_token(instance_id, _ZONE_BASE + _ZK_CHARGER * 2 + relative,
+                               owner_swapped_songs=swapped)
         for instance_id in player.abyss[:20]:
-            add_instance_token(instance_id, _ZONE_BASE + _ZK_ABYSS * 2 + relative)
+            add_instance_token(instance_id, _ZONE_BASE + _ZK_ABYSS * 2 + relative,
+                               owner_swapped_songs=swapped)
         for depth, instance_id in enumerate(player.deck[:20]):
             add_instance_token(instance_id, _ZONE_BASE + _ZK_DECK * 2 + relative,
-                               position=(depth + 1) / 20.0)
+                               position=(depth + 1) / 20.0,
+                               owner_swapped_songs=swapped)
 
     # Draft: partial decks as definition tokens in the deck slots
     if state.draft is not None:
@@ -238,7 +264,7 @@ def encode(game) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int]]:
             if flag_index == PF_ATTACK_OVERRIDE:
                 g[base + flag_index] = 0.0 if value == -1 else (value + 1) / 200.0
             else:
-                g[base + flag_index] = value / 100.0 if abs(value) > 1 else float(value)
+                g[base + flag_index] = value / _FLAG_SCALE[flag_index]
     o += 2 * N_PLAYER_FLAGS
     for flag_index in range(N_GLOBAL_FLAGS):
         g[o + flag_index] = float(state.gflags[flag_index])
@@ -253,6 +279,15 @@ def encode(game) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int]]:
         player = state.players[acting if relative == 0 else 1 - acting]
         g[o + relative] = 1.0 if player.area_blocked else 0.0
     o += 2
+    # `swapped_any`: the per-song bit lives on each card token (tok_float[.., 14]);
+    # this is the song-independent form the condition also tests.
+    for relative in (0, 1):
+        player = state.players[acting if relative == 0 else 1 - acting]
+        g[o + relative] = 1.0 if player.swapped_from_songs else 0.0
+    o += 2
+    # Clock position at the start of this turn — what 01-008 rewinds to and what
+    # 01-026 counts back from. Same one-hot width as state.chronos above.
+    g[o + state.chronos_at_turn_start] = 1.0; o += 18
     assert o == N_GLOBALS
 
     # Candidate rows for the pointer head

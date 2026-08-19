@@ -15,13 +15,14 @@ and the commands below will be missing.
 
 ## Configuration
 
-Defaults live in [config.py](config.py) as a tree of dataclasses — that file is
-the tracked, reproducible baseline. `ppo_transformer/.env` layers per-machine
-overrides on top of it and is gitignored.
+**`ppo_transformer/.env` is the source of truth for what a run does.** Every key
+in the override surface is set there at its live value, so reading that one file
+tells you the whole configuration. The dataclasses in [config.py](config.py) are
+a *fallback* for anything `.env` omits, not the reference.
 
 ```
 PPO_<SECTION>_<FIELD>=value   # e.g. PPO_TRAIN_MINIBATCH_SIZE=2048
-PPO_<NAME>=value              # run-level, e.g. PPO_ITERATIONS=2000
+PPO_<NAME>=value              # run-level, e.g. PPO_ITERATIONS=2400
 ```
 
 Precedence, highest first: **CLI flag → process environment → `.env` → dataclass
@@ -31,26 +32,45 @@ default.** So a one-off experiment needs no file edit:
 $env:PPO_TRAIN_GAE_LAMBDA='1.0'; python -m ppo_transformer.train.run_train
 ```
 
-To list every key with its current value:
+`.env` is gitignored, so the run's configuration is not itself version
+controlled. Checkpoints close that gap: `runs/checkpoints/iteration_*.pt` stores
+the full config dict, so any run's exact settings are recoverable from it.
 
-```powershell
-python -m ppo_transformer.config                          # print the full surface
-python -m ppo_transformer.config > ppo_transformer\.env   # regenerate .env
-```
+Two consequences of `.env` being authoritative:
 
-Every line in that output is commented, so redirecting it into `.env` documents
-the whole surface without changing any behaviour. Generating it from the
-dataclasses is deliberate — a hand-maintained template drifts, and this one
-cannot.
+- **It is only authoritative while it is complete.** A key added to `config.py`
+  will not appear there on its own, and will silently run on its default. Diff
+  after any config change:
+
+  ```powershell
+  python -m ppo_transformer.config > $env:TEMP\ppo.env
+  diff $env:TEMP\ppo.env ppo_transformer\.env
+  ```
+
+  Do **not** redirect that output straight over `.env` — it would destroy the
+  hand-written measurements the file carries.
+
+- **An empty value reads as unset, not as an assignment.** `KEY=` is a no-op
+  (`model_common/env_config.py`), so a setting whose meaning is "empty" cannot be
+  written down positively. `PPO_DEVICE` is the only such key and is deliberately
+  left commented; `PPO_TRAIN_DECK_POOL_PATH` states its path explicitly rather
+  than relying on the empty-means-default fallback.
 
 Bad values fail at startup rather than mid-run: `load_config()` validates that
 the opponent mix sums to 1, that `embed_dim` divides by `num_heads`, that the
-identity/effect capacities cover the card catalog, that the minibatch fits
+identity/effect/song capacities cover the card catalog, that the minibatch fits
 inside the rollout, and that warmup fits inside the decay horizon.
+
+One place `.env` is *not* the source of truth, and cannot be: the deployment
+path. `inference.py` loads bare state dicts (`runs/latest_weights.pt`,
+`runs/snapshots/*.pt`) which carry no config, so it falls back to the `NetConfig`
+defaults in `config.py`. Every `PPO_NET_*` value pinned in `.env` must therefore
+match its `config.py` default, or a weights file deployed that way will not load.
+Deploying from `runs/checkpoints/` avoids the issue entirely.
 
 ### The horizon block
 
-Six settings are one unit and live together at the top of `.env` rather than in
+Seven settings are one unit and live together at the top of `.env` rather than in
 their own sections, because a partial edit fails quietly:
 
 - `PPO_ITERATIONS`
@@ -63,6 +83,9 @@ their own sections, because a partial edit fails quietly:
 - `PPO_TRAIN_SNAPSHOT_CAPACITY` — the pool evicts FIFO, so capacity is really a
   window over the most recent promotions, and how much of a run that window
   spans depends entirely on the horizon
+- the `P_LATEST_VS_LATEST` / `P_VS_SNAPSHOT` / `P_VS_RANDOM` split, which stays
+  in the `train` section (it must sum to 1.0) but whose staged change is
+  described in the block
 
 A key in this block must not also be set live further down the file. `.env` is
 read by python-dotenv when it is importable, and for a key repeated inside one
@@ -70,12 +93,24 @@ file dotenv keeps the **last** occurrence — so the block's value would be
 silently overridden by the section below. This is what the `-> Horizon block`
 pointer comments in the sections are protecting.
 
-`.env` ships a short pilot block active and a long-run block commented out;
-exactly one should be uncommented. The anneal fraction is deliberately *not*
-constant between them — exploration need is roughly absolute rather than
-proportional, so a short run wants a larger fraction (60%) than a long one
-(40%), or it spends most of its life at the entropy floor with a value head that
-has barely trained.
+`.env` currently has the **2400-iteration** block active, with the archived
+400-iteration pilot block commented out below it; exactly one should be
+uncommented. The anneal fraction is deliberately *not* constant between them —
+exploration need is roughly absolute rather than proportional, so a short run
+wants a larger fraction (60%) than a long one (40%), or it spends most of its
+life at the entropy floor with a value head that has barely trained.
+
+Every number in that block is calibrated against the 244 iterations of the
+400-iteration pilot, and several of them correct what a first draft assumed. The
+two worth knowing:
+
+- **Gate pass rate is ~21%, not the 40-50% the pool-window arithmetic assumed.**
+  `capacity × interval / pass_rate` is only as good as that denominator.
+- **A higher gating threshold is not free at a long horizon.** Raising it to
+  0.58 to suppress noise promotions looks right on paper (0.55 is only 1.41
+  sigma above chance at 200 games) but measured against the pilot's gates it
+  drops the pass rate to 2.7% in steady state, which would leave the pool nearly
+  empty and send `P_VS_SNAPSHOT` back to self-play.
 
 **Switching horizons requires a fresh runs directory.** `--resume` restores the
 iteration counter, so pointing a long-run block at a finished short run replays
@@ -96,7 +131,7 @@ python -m ppo_transformer.train.run_train
 python -m ppo_transformer.train.run_train --resume    # continue an existing run
 ```
 
-Each iteration prints four lines, plus a fifth on gating iterations. The
+Each iteration prints four lines, plus two more on gating iterations. The
 `win_rate_vs_random` line is absent when `PPO_TRAIN_P_VS_RANDOM` is 0, since
 then nothing plays the baseline:
 
@@ -105,9 +140,24 @@ iteration 42: games=13820 samples=65536 total_loss=0.2109
   learning_rate=2.6e-04 epochs=2/3 elapsed=119s
   policy_loss=-0.0041 value_loss=0.4361 entropy=1.823
   clip_fraction=0.112 approximate_kl_divergence=0.0071 explained_variance=+0.564
-  win_rate_vs_random=0.914 (573 games)
+  win_rate_vs_random=0.914 (573 games) self_defeat_rate=0.0412
+  win_rate_vs_greedy=0.664 (100 games)
   gate 0.583 vs best -> promoted (pool_size: 9, gpu_memory 4.1G)
 ```
+
+`win_rate_vs_greedy` is the line to read for progress. Everything else on this
+display is either relative to the run's own past self (the gate, the pool win
+rates) or saturates early (`win_rate_vs_random` sits at 0.90-0.92 from a few
+hundred iterations on), so a plateau in them cannot be told apart from
+convergence. The benchmark plays `engine_alpha`'s `GreedyHeuristicAgent` on a
+fixed set of matchups — re-seeded from `PPO_TRAIN_SEED` every time, so only the
+policy moves between readings — and never gates promotion.
+
+`self_defeat_rate` is the share of rollout games ending in a CHAOS bank-or-lose
+termination. Those games get a shaped terminal reward of `-4.0` / `+0.25`
+instead of `±1`, so this rate is what decides whether that shaping is a large
+share of the gradient or a rare variance source. It is not small under an
+untrained policy (~0.3 at initialization).
 
 `games` is cumulative; `samples` is the decisions collected this iteration
 (`PPO_TRAIN_ROLLOUT_DECISIONS`); `learning_rate` follows the warmup-then-cosine
@@ -163,15 +213,16 @@ gate result and VRAM, is also appended to `runs/metrics.jsonl` — one JSON obje
 per line, readable with `model_common.metrics_log.read_metrics`. The keys there
 are namespaced (`policy/clip_fraction`, `value/explained_variance`) and are the
 stable record; the console labels are display only. Keys that depend on what
-happened that iteration are written only when they apply: `gate/win_rate` and
-`gate/promoted` on gating iterations, `rollout/win_rate_vs_random` and
-`rollout/games_vs_random` when a baseline game actually finished. An absent key
-is not a zero.
+happened that iteration are written only when they apply: `gate/win_rate`,
+`gate/promoted`, `benchmark/win_rate_vs_greedy` and `benchmark/games_vs_greedy`
+on gating iterations, `rollout/win_rate_vs_random` and `rollout/games_vs_random`
+when a baseline game actually finished, `rollout/self_defeat_rate` when any game
+finished. An absent key is not a zero.
 
 ### The KL early stop
 
-`PPO_TRAIN_TARGET_KL` (default 0.05) caps how far one rollout is allowed to move
-the policy. At the end of each epoch, if that epoch's mean
+`PPO_TRAIN_TARGET_KL` (currently 0.07) caps how far one rollout is allowed to
+move the policy. At the end of each epoch, if that epoch's mean
 `approximate_kl_divergence` exceeded the target, the remaining epochs are
 skipped — they would be training on data the policy has already left behind.
 Checked at the epoch boundary rather than mid-epoch, so a short update is never
@@ -182,6 +233,15 @@ per-step KL falls, all `PPO_TRAIN_PPO_EPOCHS` epochs run again with no config
 change. Prefer tuning this over cutting `PPO_TRAIN_PPO_EPOCHS` or the learning
 rate, both of which slow every iteration whether or not it needed slowing. Set
 it to `0.0` to disable.
+
+**Watch that it stays a guard and does not become a cap.** At 0.05 it stopped
+being self-regulating in practice: the pilot reported `epochs=2/3` on 200
+consecutive iterations, with `approximate_kl_divergence` averaging 0.054 — over
+the bar by 8%, so a third of every update was withheld permanently — while
+`clip_fraction` sat at a healthy 0.211 and 79% of gates were failing. A standing
+value of `epochs_completed` below `PPO_TRAIN_PPO_EPOCHS`, with `clip_fraction`
+inside 0.05-0.20, means the target is too tight rather than the policy too eager.
+Raising it to 0.07 restored the epochs at no extra rollout cost.
 
 ## Stopping safely
 
@@ -404,9 +464,19 @@ it is a window over the most recent promotions rather than a full league, and th
 gate plays only the newest entry. Both mean a policy can drift around a strategy
 loop — beating its recent self, and so passing gates, while losing to its own
 policy from far earlier in the run. If strength plateaus while gates keep passing,
-suspect that before suspecting the learning rate. At 40 slots the window covers a
-400-iteration run and only a small fraction of a 4800-iteration one, which is why
-capacity sits in the horizon block.
+suspect that before suspecting the learning rate. Window length is
+`capacity × interval / pass_rate`, which is why capacity sits in the horizon
+block — and note the pass rate *divides*, so a lower one widens the window.
+
+**Do not read the gate as a measure of improvement.** Over the pilot's steady
+state (iteration ≥ 100) it averaged 0.509 with a standard deviation of 0.0366,
+against a binomial noise floor of 0.0373 at ~180 decided games. It was measuring
+almost pure noise: four (later ten) iterations of policy movement is a small true
+effect, and no threshold recovers a signal that is not there. Treat a promotion
+as pool diversity, and read `benchmark/win_rate_vs_greedy` for actual progress.
+One worry can be retired, though — the shared deck pair (all `GATING_GAMES` play
+one sampled pair) does *not* visibly inflate variance beyond the binomial floor,
+because seat alternation in `run_series` cancels the deck asymmetry.
 
 **`clip_fraction` above ~0.3 and `approximate_kl_divergence` above ~0.05,
 persistently.** The updates are leaving the trust region: the later epochs are
@@ -461,11 +531,22 @@ Applied defaults worth knowing about, and knobs worth trying:
   batched argmax agree on 512/512 real positions, and a full rollout produces
   byte-identical samples either way. `RandomOpponent` still acts inline, since
   it has no forward to batch.
-- **Iteration cost.** ~119.5 s at the settings above, measured 2026-07-29 over
-  iterations 16-31 of a live run (averaged after the first snapshot promotion —
-  earlier iterations are cheaper because there is no opponent net to run). So
-  400 iterations is ~13.3 h and 4800 is ~6.6 d. Gating iterations cost ~45 s
-  extra for the 200-game series.
+- **Iteration cost grows with the snapshot pool.** Not a constant — the old
+  "~119.5 s/iteration" figure was measured at pool size ~2 and does not
+  generalise, because `_batched_opponent_step` runs one fp32 forward per
+  *distinct* snapshot in play per round, and every pool member is in play while
+  the pool is smaller than the ~180 concurrent snapshot games. Fitted over 172
+  non-gating iterations of the pilot:
+
+  ```
+  seconds = 76.0 + 3.62 * pool_size        (+49.1 s on a gating iteration)
+  ```
+
+  Raw buckets agree: pool 4 → 89.5 s, pool 8 → 105.6 s, pool 12 → 117.3 s. At
+  the 2400 horizon (gate every 10, ~18% pass rate, pool reaching ~43) that
+  integrates to ~106 h, about 4.4 days. Budget from the fit, not from a single
+  early measurement — and note that gate *interval* is the cheapest lever on
+  total cost, since it divides the 49.1 s and widens the pool window at once.
 - **`PPO_TRAIN_GAE_LAMBDA` (0.98).** The reward is terminal-only, so lambda
   controls how much of the actual game outcome reaches early decisions: at 0.95
   a decision 50 steps from the end sees it at weight 0.08, at 0.98 it sees 0.36.
@@ -493,19 +574,34 @@ Applied defaults worth knowing about, and knobs worth trying:
   once over the whole rollout instead of per minibatch — a 1024-sample minibatch
   out of 65536 is a noisy estimate of the mean and std. Set false for the old
   per-minibatch behaviour.
-- **`PPO_TRAIN_P_VS_RANDOM` (0.15).** Games against a uniform-random opponent
-  are cheap early signal and mostly wasted compute later; consider decaying it
-  toward 0.05 once snapshots exist.
+- **`PPO_TRAIN_P_VS_RANDOM` (0.15, staged to 0.05).** Games against a
+  uniform-random opponent are cheap early signal and mostly wasted compute
+  later — the pilot's `win_rate_vs_random` sat flat at 0.90-0.92 for its last 84
+  iterations, i.e. 15% of every rollout spent on near-zero advantage. Drop it to
+  0.05 once the pool has ~8 entries, moving the 0.10 to `P_VS_SNAPSHOT`. Staged
+  rather than set low from the start, because while the pool is empty
+  `P_VS_SNAPSHOT` also falls back to self-play.
 - **Snapshot sampling (`PPO_TRAIN_SNAPSHOT_HARDNESS_BIAS`, 0).** `0` weights
   snapshots by `p(1-p)`, favouring evenly matched opponents; `1` shifts weight
   toward snapshots the learner still loses to.
 - **`PPO_TRAIN_VALUE_CLIP_RANGE` (0.2).** Value clipping is of debated benefit
   in PPO; worth an ablation.
-- **`PPO_TRAIN_TARGET_KL` (0.05).** The KL early stop described above. Added
-  after the first pilot ran at `clip_fraction` ~0.51 and
+- **`PPO_TRAIN_VALUE_LOSS_WEIGHT` (1.0, raised from 0.5).** The pilot's
+  `explained_variance` moved only 0.238 → 0.272 across 150 iterations, and a
+  weak value baseline is the likeliest reason advantages stay noisy. Do not
+  expect it to approach 1.0: the value head cannot know whether it faces a
+  random opponent (win ~0.91) or a peer (~0.50), which is ~8.7% of outcome
+  variance on its own at `P_VS_RANDOM=0.15`, and decks are random 25% of the
+  time. A rise to ~0.35-0.40 is the realistic target; revert to 0.5 if
+  `loss/policy` stalls or entropy falls faster than the pilot's trajectory.
+- **`PPO_TRAIN_TARGET_KL` (0.07, raised from 0.05).** The KL early stop described
+  above, including why the original value became a standing cap rather than a
+  guard. Added after the first pilot ran at `clip_fraction` ~0.51 and
   `approximate_kl_divergence` ~0.11 for fifteen straight iterations — the whole
-  192-step update ran with nothing watching how far the policy had moved. The
-  value is a first cut from that measurement (~0.035-0.04 KL per epoch); worth
-  re-tuning once the run has a longer gate history to compare against.
+  192-step update ran with nothing watching how far the policy had moved.
+- **`PPO_TRAIN_BENCHMARK_GAMES` (100).** The absolute-strength benchmark against
+  `GreedyHeuristicAgent`, on the gating cadence, never gating promotion. ~12 s
+  per gate. Set to 0 to disable, but a long run without it has no signal that
+  distinguishes improvement from convergence.
 - `PPO_TRAIN_PPO_EPOCHS`, `CLIP_RANGE` and `MINIBATCH_SIZE` are the remaining
   standard PPO knobs.

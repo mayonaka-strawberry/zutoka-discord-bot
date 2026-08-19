@@ -68,6 +68,13 @@ class PpoAgent:
             state_dict = payload['model_state_dict']
             net_config = NetConfig(**payload['config']['net']) if 'config' in payload else NetConfig()
         else:
+            # A bare state dict carries no config, so this falls back to the
+            # NetConfig DEFAULTS — deliberately not ppo_transformer/.env, which
+            # this module must keep working without. `runs/latest_weights.pt`
+            # and everything under `runs/snapshots/` are bare, so any PPO_NET_*
+            # value pinned in .env must match its config.py default or a weights
+            # file deployed this way will not load. Prefer deploying a file from
+            # `runs/checkpoints/`, which carries its own config.
             state_dict = payload
             net_config = NetConfig()
 

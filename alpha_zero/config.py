@@ -51,6 +51,8 @@ class NetConfig:
     identity_capacity: int = 512
     # Same headroom rule for the effect table (one row per effect program).
     effect_capacity: int = 320
+    # And for the song table (one row per song).
+    song_capacity: int = 64
 
 
 @dataclass
@@ -211,7 +213,7 @@ class Config:
         # every config load, and a checkout without card data should still be
         # able to render the template.
         try:
-            from engine_alpha.cards import NUM_CARDS, NUM_EFFECTS
+            from engine_alpha.cards import NUM_CARDS, NUM_EFFECTS, NUM_SONGS
         except Exception:
             return self
         if self.net.identity_capacity < NUM_CARDS:
@@ -222,6 +224,10 @@ class Config:
             raise ValueError(
                 f"ALPHA_NET_EFFECT_CAPACITY ({self.net.effect_capacity}) is below "
                 f"the effect count ({NUM_EFFECTS}); see model_common/migrate_checkpoint.py")
+        if self.net.song_capacity < NUM_SONGS:
+            raise ValueError(
+                f"ALPHA_NET_SONG_CAPACITY ({self.net.song_capacity}) is below "
+                f"the song count ({NUM_SONGS}); see model_common/migrate_checkpoint.py")
         return self
 
 

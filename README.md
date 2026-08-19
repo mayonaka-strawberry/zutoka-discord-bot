@@ -281,8 +281,15 @@ The file extension is optional, and an entry may instead be a directory of
 
 ```powershell
 New-Item -ItemType Directory -Force model
-Copy-Item ppo_transformer\runs\latest_weights.pt model\ppo_transformer
+Copy-Item ppo_transformer\runs\checkpoints\iteration_02400.pt model\ppo_transformer
 ```
+
+Prefer a file from `runs/checkpoints/` over `runs/latest_weights.pt`. Checkpoints
+carry their own config; `latest_weights.pt` and the snapshots are bare state
+dicts, so loading one falls back to the `NetConfig` defaults in `config.py`
+rather than the values in `.env`. Both work while those agree — which is why the
+net block is pinned in both places — but the checkpoint is the one that stays
+correct if they ever diverge.
 
 `find_checkpoint()` consults `model/` first, then the older
 `<stack>/deploy/model.pt` location, then the newest checkpoint under
@@ -320,10 +327,21 @@ decks using a measured default distribution, and say so at startup.
 
 ## Training
 
-Both model stacks are configured the same way: dataclass defaults in
-`<stack>/config.py` are the tracked baseline, and a gitignored `<stack>/.env`
-layers per-machine overrides on top. Precedence is **CLI flag → process
-environment → `.env` → default**.
+Both model stacks read the same key shape, and precedence is **CLI flag →
+process environment → `.env` → dataclass default**. What differs is which layer
+is authoritative:
+
+- `alpha_zero` — dataclass defaults in `alpha_zero/config.py` are the tracked
+  baseline; `alpha_zero/.env` layers per-machine overrides on top.
+- `ppo_transformer` — **`ppo_transformer/.env` is the source of truth.** Every
+  key is set there at its live value, and `config.py` is a fallback for anything
+  it omits. That makes the file authoritative only while it is complete, so diff
+  it against the generated template after any config change rather than
+  overwriting it (it carries hand-written measurements). See
+  [ppo_transformer/README.md](ppo_transformer/README.md).
+
+Both `.env` files are gitignored. Checkpoints store the full config dict, so a
+run's exact settings stay recoverable from `runs/checkpoints/iteration_*.pt`.
 
 ```
 ALPHA_<SECTION>_<FIELD>   ALPHA_<NAME>     alpha_zero

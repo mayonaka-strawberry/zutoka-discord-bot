@@ -35,11 +35,12 @@ class NetConfig:
     effect_feature_projection_dim: int = 64
     effect_embedding_dim: int = 32
     identity_embedding_dim: int = 96
-    # Identity- and effect-indexed tables are sized to these capacities so
-    # new catalog rows slot into reserved space without shape changes (see
+    # Identity-, effect- and song-indexed tables are sized to these capacities
+    # so new catalog rows slot into reserved space without shape changes (see
     # model_common/migrate_checkpoint.py for growing past them).
     identity_capacity: int = 512
     effect_capacity: int = 320
+    song_capacity: int = 64
 
 
 @dataclass
@@ -75,8 +76,13 @@ class TrainConfig:
     # termination (see model_common.termination.chaos_self_defeat_loser).
     self_defeat_loss_reward: float = -4.0
     self_defeat_win_reward: float = 0.25
-    learning_rate: float = 3e-4
-    learning_rate_final: float = 3e-5
+    # 1e-4, not the 3e-4 this carried until 2026-08-19. At 3e-4 the first pilot
+    # collapsed: entropy 1.06 -> 0.26 by iteration 27 with the bonus still near
+    # its initial value, and the gate fell 1.000 -> 0.390 as the learner started
+    # losing to its own iteration-20 snapshot. `.env` is the source of truth for
+    # a real run; this is the fallback, so it should be a value known to work.
+    learning_rate: float = 1e-4
+    learning_rate_final: float = 1e-5
     warmup_iterations: int = 10
     learning_rate_decay_iterations: int = 1000  # cosine horizon; match planned iterations
     weight_decay: float = 1e-4
@@ -99,6 +105,12 @@ class TrainConfig:
     gating_games: int = 200
     gating_win_rate: float = 0.55
     snapshot_capacity: int = 30
+    # Absolute-strength benchmark against engine_alpha's 1-ply heuristic, run on
+    # the gating cadence. Observational only — it never gates promotion. The
+    # gate and the pool win rates are all relative to a past self, so a plateau
+    # there cannot be told apart from convergence, and win_rate_vs_random
+    # saturates once the policy is any good. 0 disables.
+    benchmark_games: int = 100
     # Snapshot sampling: how fast the learner's per-snapshot win rate tracks
     # results, the floor weight so no snapshot is starved, and the shift from
     # variance weighting (0) toward preferring snapshots the learner loses to (1).
@@ -171,7 +183,7 @@ class Config:
                 f"({self.train.learning_rate_decay_iterations})")
 
         try:
-            from engine_alpha.cards import NUM_CARDS, NUM_EFFECTS
+            from engine_alpha.cards import NUM_CARDS, NUM_EFFECTS, NUM_SONGS
         except Exception:
             return self
         if self.net.identity_capacity < NUM_CARDS:
@@ -182,6 +194,10 @@ class Config:
             raise ValueError(
                 f"PPO_NET_EFFECT_CAPACITY ({self.net.effect_capacity}) is below "
                 f"the effect count ({NUM_EFFECTS}); see model_common/migrate_checkpoint.py")
+        if self.net.song_capacity < NUM_SONGS:
+            raise ValueError(
+                f"PPO_NET_SONG_CAPACITY ({self.net.song_capacity}) is below "
+                f"the song count ({NUM_SONGS}); see model_common/migrate_checkpoint.py")
         return self
 
 
