@@ -232,9 +232,13 @@ alpha_zero/scripts/
 alpha_zero/net/wrapper.py
 alpha_zero/runs/
 alpha_zero/.env
+alpha_zero/README.md
 ppo_transformer/train/
+ppo_transformer/scripts/
 ppo_transformer/runs/
+ppo_transformer/eval_results/
 ppo_transformer/.env
+ppo_transformer/README.md
 model_common/arena.py
 model_common/opponent_pool.py
 model_common/migrate_checkpoint.py

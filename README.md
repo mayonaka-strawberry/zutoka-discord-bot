@@ -297,10 +297,11 @@ correct if they ever diverge.
 run. A stack with no checkpoint anywhere is simply not offered:
 `/zutomayo playuniguri model:A` answers that model A has not been trained yet.
 
-Each stack has its own README covering configuration, running, stopping
-safely, and resuming: [alpha_zero/README.md](alpha_zero/README.md) and
-[ppo_transformer/README.md](ppo_transformer/README.md). See
-[Training](#training) below for the short version.
+Each stack keeps its own README covering configuration, running, stopping
+safely, resuming and tuning, but those are gitignored alongside the training
+code they document (`alpha_zero/README.md`, `ppo_transformer/README.md`) and so
+exist only on a machine that trains. A clone has everything it needs to *play*
+from a checkpoint; see [Training](#training) below for the short version.
 
 The deployed AlphaZero agent plays with search rather than a single policy
 forward, because training and promotion gating both select for strength with
@@ -337,8 +338,8 @@ is authoritative:
   key is set there at its live value, and `config.py` is a fallback for anything
   it omits. That makes the file authoritative only while it is complete, so diff
   it against the generated template after any config change rather than
-  overwriting it (it carries hand-written measurements). See
-  [ppo_transformer/README.md](ppo_transformer/README.md).
+  overwriting it (it carries hand-written measurements). `python -m
+  ppo_transformer.config` prints that template with every key at its default.
 
 Both `.env` files are gitignored. Checkpoints store the full config dict, so a
 run's exact settings stay recoverable from `runs/checkpoints/iteration_*.pt`.
