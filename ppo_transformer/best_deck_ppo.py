@@ -24,7 +24,7 @@ single-threaded, without which the processes only contend.
 Usage:
     python -m ppo_transformer.best_deck_ppo
     python -m ppo_transformer.best_deck_ppo --workers 8
-    python -m ppo_transformer.best_deck_ppo --max-decks 8 --games-per-pair 2
+    python -m ppo_transformer.best_deck_ppo --max-decks 8 --games-per-pair 3
 """
 
 from __future__ import annotations
@@ -156,7 +156,7 @@ def _play_pair(pair_index: int) -> dict:
     Seats alternate on `(game_index + pair_index)`. An odd `games_per_pair`
     hands one deck an extra game in seat 0; keying the parity on the pair index
     as well as the game index alternates which deck that is from one opponent to
-    the next, so over the 110 opponents a deck faces it comes out even. Which
+    the next, so over the opponents a deck faces it comes out even. Which
     seat is NIGHT is left to the engine's own seed-driven coin flip, as it is
     for a real single match.
     """
@@ -311,8 +311,8 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
                         help='Deck pool export to rank (default: data/training_decks.json)')
     parser.add_argument('--games-per-pair', type=int, default=3,
                         help='Games between each pair of decks (default: 3)')
-    parser.add_argument('--top', type=int, default=15,
-                        help='How many decks to write out (default: 15)')
+    parser.add_argument('--top', type=int, default=20,
+                        help='How many decks to write out (default: 20)')
     parser.add_argument('--output', default=str(DEFAULT_OUTPUT_PATH),
                         help='Where to write the ranked decks (default: data/best_decks_ppo.json)')
     parser.add_argument('--seed-base', type=int, default=0,
