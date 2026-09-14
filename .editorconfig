@@ -1,0 +1,18 @@
+# Keeps editors from re-saving source as Windows ANSI, which silently rewrites
+# every multi-byte character (Japanese card and bot names, em dashes, curly
+# quotes) into mojibake that is still valid UTF-8. See tests/test_source_encoding.py
+# for the guard that catches it when this fails.
+
+root = true
+
+[*]
+charset = utf-8
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.py]
+indent_style = space
+indent_size = 4
+
+[*.md]
+trim_trailing_whitespace = false

@@ -473,6 +473,19 @@ model stacks are report-only; their guarantee is the transcript tier plus
 dev-bot playtests. Thresholds are measured-minus-flake-margin: raise them,
 never lower them.
 
+`tests/test_source_encoding.py` scans every `.py`, `.md`, `.json`, `.jsonl`,
+`.sql`, `.txt` and `.gz` file for two forms of encoding damage: a leading UTF-8
+byte order mark, and text that was read as Windows ANSI and written back as
+UTF-8. Compressed files are decompressed first, so the golden match baseline -
+which carries narration text and player names - is covered too. The second
+form matters because the result is still *valid* UTF-8 that simply holds the
+wrong characters, so neither git nor a decode check can see it - it has to be
+matched on content. This is not hypothetical: the bot name in the solo-game
+acceptance message shipped corrupted that way, and the same round-trip left a
+byte order mark that made `ast.parse()` fail on the file. Keep an
+editor configured for UTF-8 without a BOM; `.editorconfig` sets this for
+editors that honour it.
+
 The match regression suite drives 24 seeded games through the real match
 runtime (broker, presentation, narrator, driver) with scripted players and a
 recording transport, and compares winners, decision fingerprints and

@@ -1,4 +1,4 @@
-﻿import json
+import json
 import logging
 import discord
 from discord import app_commands
@@ -16,6 +16,7 @@ from zutomayo.data.player_storage import (
 )
 from zutomayo.engine.game_session import session_manager
 from zutomayo.match.agents import (
+    BOT_NAME,
     SOLO_OPPONENT_ALPHA_ZERO,
     SOLO_OPPONENT_PPO,
     solo_opponent_label,
@@ -231,7 +232,7 @@ class GameCog(commands.Cog):
         session.solo_difficulty = opponent
 
         await interaction.response.send_message(
-            f'**ãƒ¡ã‚«ã†ã«ãã‚Š** has accepted **{interaction.user.display_name}**\'s challenge!\n'
+            f'**{BOT_NAME}** has accepted **{interaction.user.display_name}**\'s challenge!\n'
             f'Game ID: `{session.game_id}`\n'
             f'Starting solo game...'
         )
@@ -1130,7 +1131,7 @@ class GameCog(commands.Cog):
 
     @group.command(
         name='history',
-        description='List recent finished games (yours or another playerâ€™s) with their game ids',
+        description='List recent finished games (yours or another player’s) with their game ids',
     )
     @app_commands.describe(player='Another player to look up (search by name); leave empty for yourself')
     async def game_history(self, interaction: discord.Interaction, player: str | None = None) -> None:
@@ -1176,10 +1177,10 @@ class GameCog(commands.Cog):
             mode_label = f'TCG bo{row["best_of"]}' if row['is_tcg'] else row['mode']
             played_date = row['created_at'].date().isoformat() if row['created_at'] else ''
             lines.append(
-                f'`{row["game_id"]}` â€” {mode_label} vs {opponent_name} â€” {outcome} ({played_date})'
+                f'`{row["game_id"]}` — {mode_label} vs {opponent_name} — {outcome} ({played_date})'
             )
 
-        title = 'Your Recent Games' if viewing_own else f'Recent Games â€” {display_name}'
+        title = 'Your Recent Games' if viewing_own else f'Recent Games — {display_name}'
         embed = discord.Embed(
             title=title,
             description='\n'.join(lines),
