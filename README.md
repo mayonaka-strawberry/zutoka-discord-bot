@@ -281,7 +281,7 @@ The file extension is optional, and an entry may instead be a directory of
 
 ```powershell
 New-Item -ItemType Directory -Force model
-Copy-Item ppo_transformer\runs\checkpoints\iteration_02400.pt model\ppo_transformer
+Copy-Item ppo_transformer\runs\checkpoints\iteration_00800.pt model\ppo_transformer
 ```
 
 Prefer a file from `runs/checkpoints/` over `runs/latest_weights.pt`. Checkpoints
@@ -316,15 +316,37 @@ credits plays. The league records how each drafted deck performed and
 `zutomayo/bot_decks.json`, the deck pool solo opponents draw from.
 
 Games that start from fixed decks — every ppo_transformer game, and
-alpha_zero's non-draft matchups — draw from the training deck pool exported by
-`scripts/export_training_decks.py` (`model_common/deck_pool.py`), mixing real
-player decks with generated random legal decks so unplayed cards still receive
-gradient. The mix is `probability_user_deck` (default 0.75) in each stack's
-config. Generated decks range over the whole card pool but take their
-distinct-card count from the export's own distribution, so they share the copy
-structure real decks have (players run two copies of most cards) instead of
-being uniformly random. Without an export the stacks fall back to generated
-decks using a measured default distribution, and say so at startup.
+alpha_zero's non-draft matchups — draw from a training deck pool exported by
+`scripts/export_training_decks.py` (`model_common/deck_pool.py`). Generated decks
+range over the whole card pool but take their distinct-card count from the
+export's own distribution, so they share the copy structure real decks have
+(players run two copies of most cards) instead of being uniformly random.
+
+One run of the export writes **both** stacks' pools from one database pass, and
+they differ in two ways:
+
+| | `data/training_decks_ppo.json` | `data/training_decks_alpha_zero.json` |
+|---|---|---|
+| CHAOS decks | excluded | kept |
+| `probability_user_deck` | 1.0 — every game is a real deck | 0.75 — the rest generated |
+
+ppo_transformer leaves out every deck holding a CHAOS card because it plays fixed
+decks only and never drafts: a CHAOS self-defeat is a termination it can neither
+cause deliberately nor learn to avoid at deck-building time, only absorb as
+variance. The exclusion is airtight there for the same reason, and it applies to
+the generated decks too — a pool file declares its exclusion in
+`excluded_attributes`, and the loader both enforces it on the stored decks and
+narrows the random generator to the same cards. alpha_zero keeps CHAOS, because
+most of its games draft from the whole catalog regardless and excluding them
+would reach only its fixed-deck minority. Either default can be flipped per stack
+with `--ppo-include-chaos-decks` / `--no-alpha-zero-include-chaos-decks`.
+
+The cost of `probability_user_deck = 1.0` is that ppo_transformer only ever sees
+the cards its pooled decks run — a little over half the catalog — so re-run the
+export whenever the player meta shifts. Without an export alpha_zero falls back to
+generated decks and says so at startup; ppo_transformer instead fails at startup,
+because for it that fallback is not a degraded run but the opposite of the
+configured one.
 
 ## Training
 
@@ -433,7 +455,7 @@ URL unless noted.
 | `scripts/postgresql_tools.py` | Locates the PostgreSQL client binaries across platforms (`PGBIN`, PATH, defaults); used by the dump/restore pair. |
 | `scripts/database_transfer.py` | Shared table specifications and serializers for the JSON export/import pair. |
 | `scripts/reset_elo.py` | Reset one Elo ladder for all players: `--format standard` or `--format tcg`. Lifetime and deck stats are untouched. |
-| `scripts/export_training_decks.py` | Export every saved deck (standard plus TCG main decks) to `data/training_decks.json` as a guid plus 20 `{pack, id}` card references, deduplicated with an owner count. The guid is derived from the cards, so the same deck keeps the same guid across re-exports. This is the deck pool the model stacks train against; re-run it to refresh. `--dry-run`, `--include-defaults`, `--min-users N`. |
+| `scripts/export_training_decks.py` | Export every saved deck (standard plus TCG main decks) as a guid plus 20 `{pack, id}` card references, deduplicated with an owner count. The guid is derived from the cards, so the same deck keeps the same guid across re-exports. One run writes both stacks' pools from one database pass: `data/training_decks_ppo.json` (CHAOS decks dropped) and `data/training_decks_alpha_zero.json` (kept). Re-run it to refresh. `--dry-run`, `--include-defaults`, `--min-users N`, `--ppo-include-chaos-decks`, `--no-alpha-zero-include-chaos-decks`, `--output-ppo`, `--output-alpha-zero`. |
 | `scripts/migrate_json_to_postgresql.py` | One-shot migration of the legacy JSON decks/usernames into PostgreSQL (already run). |
 | `scripts/wipe_legacy_game_records.py` | One-shot cutover: clears pre-engine_alpha game records and Elo, preserving decks and names (already run). |
 | `scripts/calibrate_board.py` | Draws colored zone markers onto the board image to verify renderer coordinates. Writes `calibration_output.jpg`. |

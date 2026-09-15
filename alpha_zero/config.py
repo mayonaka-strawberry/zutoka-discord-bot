@@ -146,10 +146,16 @@ class LeagueConfig:
     # Deck source for the fixed-deck matchups. The pool is the exported set of
     # real player decks (scripts/export_training_decks.py); the remainder are
     # generated random legal decks. Drafted games are unaffected — deck
-    # building there is the model's own job. An empty path means
-    # model_common.deck_pool.DEFAULT_DECK_POOL_PATH; a missing file falls back
-    # to random decks.
-    deck_pool_path: str = ''
+    # building there is the model's own job. A missing file falls back to random
+    # decks and says so at startup.
+    #
+    # This stack reads its own pool, which keeps the decks holding a CHAOS card
+    # that ppo_transformer's export leaves out. Excluding them here would be
+    # mostly theatre: p_latest_vs_latest and p_vs_snapshot_drafting are drafted
+    # from the whole catalog, and p_vs_snapshot_stored_deck replays a deck the
+    # league drafted, so only p_pool_decks and the learner seat of the stored-deck
+    # matchup come through this file at all.
+    deck_pool_path: str = 'data/training_decks_alpha_zero.json'
     probability_user_deck: float = 0.75
 
 
@@ -182,6 +188,14 @@ class Config:
             raise ValueError(
                 "ALPHA_LEAGUE_PROBABILITY_USER_DECK must be within [0, 1], got "
                 f"{self.league.probability_user_deck}")
+        if not self.league.deck_pool_path:
+            # Not mere hygiene: there is no shared default left to fall through
+            # to, and Path('') is the working directory, which exists — so an
+            # empty value would reach open() and raise PermissionError deep in
+            # the loader rather than reporting a missing pool.
+            raise ValueError(
+                "ALPHA_LEAGUE_DECK_POOL_PATH must name a pool file; an empty "
+                "value reads as unset and resolves to the working directory")
         if not 0.0 <= self.mcts.playout_cap_fraction <= 1.0:
             raise ValueError(
                 "ALPHA_MCTS_PLAYOUT_CAP_FRACTION must be within [0, 1], got "

@@ -41,11 +41,11 @@ from pathlib import Path
 
 from engine_alpha.game import Game
 from model_common.deck_pool import (
-    DEFAULT_DECK_POOL_PATH,
+    PPO_DECK_POOL_PATH,
     card_references,
     deck_guid,
     describe_deck_pool,
-    load_deck_pool,
+    load_deck_pool_file,
 )
 from ppo_transformer.inference import PpoAgent, find_checkpoint
 
@@ -307,8 +307,8 @@ def write_output(path: Path, payload: dict) -> None:
 def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description='Rank decks by round robin under the deployed PPO checkpoint.')
-    parser.add_argument('--deck-pool', default=str(DEFAULT_DECK_POOL_PATH),
-                        help='Deck pool export to rank (default: data/training_decks.json)')
+    parser.add_argument('--deck-pool', default=str(PPO_DECK_POOL_PATH),
+                        help='Deck pool export to rank (default: data/training_decks_ppo.json)')
     parser.add_argument('--games-per-pair', type=int, default=3,
                         help='Games between each pair of decks (default: 3)')
     parser.add_argument('--top', type=int, default=20,
@@ -337,11 +337,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(f'checkpoint: {checkpoint}')
 
-    pool = load_deck_pool(arguments.deck_pool)
-    print(describe_deck_pool(pool, arguments.deck_pool))
+    pool_file = load_deck_pool_file(arguments.deck_pool)
+    pool = pool_file.decks
+    print(describe_deck_pool(pool, arguments.deck_pool,
+                             pool_file.excluded_attribute_names))
     if not pool:
         print(f'No decks to rank. Generate the pool with '
-              f'scripts/export_training_decks.py, or point --deck-pool at an '
+              f'scripts/export_training_decks.py, which writes '
+              f'data/training_decks_ppo.json, or point --deck-pool at an '
               f'existing export.', file=sys.stderr)
         return 1
     if arguments.max_decks > 0:

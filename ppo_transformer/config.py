@@ -117,13 +117,23 @@ class TrainConfig:
     snapshot_win_rate_smoothing: float = 0.02
     snapshot_minimum_weight: float = 0.05
     snapshot_hardness_bias: float = 0.0
-    # Deck source per game. The pool is the exported set of real player decks
-    # (scripts/export_training_decks.py); the remainder are generated random
-    # legal decks so unplayed cards still receive gradient. An empty path means
-    # model_common.deck_pool.DEFAULT_DECK_POOL_PATH; a missing file falls back
-    # to random decks for every game.
-    deck_pool_path: str = ''
-    probability_user_deck: float = 0.75
+    # Deck source per game (scripts/export_training_decks.py). This stack reads
+    # its own pool, which leaves out every deck holding a CHAOS card, and the
+    # generated decks honour the same exclusion: ppo_transformer plays fixed decks
+    # only and never drafts, so a CHAOS self-defeat is a termination it can
+    # neither cause deliberately nor learn to avoid at deck-building time — only
+    # absorb as variance. alpha_zero keeps those decks, because most of its games
+    # draft from the whole catalog regardless. The path resolves against the
+    # working directory, the repository root for
+    # `python -m ppo_transformer.train.run_train`.
+    #
+    # probability_user_deck is 1.0: every game is a deck someone actually built.
+    # That costs the gradient on cards no pooled deck runs, which is the trade —
+    # the generated share existed to reach them. A pool that loads empty is fatal
+    # rather than a log line (train/rollout.py deck_sampler_for), because falling
+    # back to generated decks would be the exact opposite of what this asks for.
+    deck_pool_path: str = 'data/training_decks_ppo.json'
+    probability_user_deck: float = 1.0
 
 
 @dataclass
@@ -147,6 +157,14 @@ class Config:
             raise ValueError(
                 "PPO_TRAIN_PROBABILITY_USER_DECK must be within [0, 1], got "
                 f"{self.train.probability_user_deck}")
+        if not self.train.deck_pool_path:
+            # Not mere hygiene: there is no shared default left to fall through
+            # to, and Path('') is the working directory, which exists — so an
+            # empty value would reach open() and raise PermissionError deep in
+            # the loader rather than reporting a missing pool.
+            raise ValueError(
+                "PPO_TRAIN_DECK_POOL_PATH must name a pool file; an empty value "
+                "reads as unset and resolves to the working directory")
         if not 0.0 <= self.train.gae_lambda <= 1.0:
             raise ValueError(
                 f"PPO_TRAIN_GAE_LAMBDA must be within [0, 1], got {self.train.gae_lambda}")

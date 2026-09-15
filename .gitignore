@@ -213,8 +213,10 @@ zutomayo/.DS_Store
 
 zutomayo/bot_decks.json
 
-# Training deck pool exported from the database (scripts/export_training_decks.py)
-data/training_decks.json
+# Training deck pools exported from the database (scripts/export_training_decks.py).
+# A glob rather than one entry per stack, so the pre-split training_decks.json
+# stays ignored until it is deleted.
+data/training_decks*.json
 
 zutomayo/progress/*
 !zutomayo/progress/.gitkeep
