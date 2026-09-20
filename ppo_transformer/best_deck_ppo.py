@@ -23,8 +23,7 @@ single-threaded, without which the processes only contend.
 
 Usage:
     python -m ppo_transformer.best_deck_ppo
-    python -m ppo_transformer.best_deck_ppo --workers 8
-    python -m ppo_transformer.best_deck_ppo --max-decks 8 --games-per-pair 3
+    python -m ppo_transformer.best_deck_ppo --workers 8 --max-decks 20 --games-per-pair 9
 """
 
 from __future__ import annotations
