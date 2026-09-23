@@ -7,6 +7,8 @@ policy heads and a win/draw/loss value head.
   with a learned per-effect embedding (32) — the IR supplies structure, the
   embedding absorbs whatever the IR misses.
 - The CLS token receives the global-feature MLP output additively.
+- The encoder layers are pre-LN, which leaves the residual stream
+  unnormalized; a final LayerNorm normalizes it before any head reads it.
 - Identity head weights are tied to the identity embedding matrix, so draft
   picks and name-guesses share card knowledge.
 - Identity- and effect-indexed tables are allocated at configured capacities
@@ -80,7 +82,11 @@ class UniguriNet(nn.Module):
             d_model=d, nhead=cfg.num_heads, dim_feedforward=cfg.feedforward_dim,
             dropout=cfg.dropout, activation="gelu", batch_first=True,
             norm_first=True)
-        self.encoder = nn.TransformerEncoder(layer, num_layers=cfg.num_layers)
+        # Nested tensors are unavailable to pre-LN layers anyway; saying so
+        # explicitly keeps torch from warning about it on every construction.
+        self.encoder = nn.TransformerEncoder(layer, num_layers=cfg.num_layers,
+                                             enable_nested_tensor=False)
+        self.final_norm = nn.LayerNorm(d)
 
         self.value_head = nn.Sequential(
             nn.Linear(d, cfg.value_hidden_dim), nn.GELU(),
@@ -103,8 +109,8 @@ class UniguriNet(nn.Module):
                     lambda layer_input, transformer_layer=layer: transformer_layer(
                         layer_input, src_key_padding_mask=padding_mask),
                     tokens, use_reentrant=False)
-            return tokens
-        return self.encoder(tokens, src_key_padding_mask=~token_mask)
+            return self.final_norm(tokens)
+        return self.final_norm(self.encoder(tokens, src_key_padding_mask=~token_mask))
 
     def forward(self, tok_int: torch.Tensor, tok_float: torch.Tensor,
                 token_mask: torch.Tensor, global_features: torch.Tensor,
@@ -168,6 +174,20 @@ class UniguriNet(nn.Module):
 
     def parameter_count(self) -> int:
         return sum(p.numel() for p in self.parameters())
+
+
+def playing_state_dict(payload):
+    """The weights a loaded checkpoint should play with.
+
+    A training checkpoint carries the raw optimizer weights and their EMA
+    shadow; the shadow is what self-play is published from and what gets
+    deployed, so everything that plays games from a checkpoint uses it when
+    present. Anything that is not a training checkpoint is taken to be a bare
+    state dict and returned unchanged.
+    """
+    if isinstance(payload, dict) and 'model_state_dict' in payload:
+        return payload.get('ema_state_dict') or payload['model_state_dict']
+    return payload
 
 
 def priors_for_request(request, candidate_positions, pointer_scores,

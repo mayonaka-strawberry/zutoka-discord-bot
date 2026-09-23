@@ -120,7 +120,7 @@ class TrainConfig:
     # for memory (per-layer activation checkpointing).
     gradient_checkpointing: bool = True
     # Master seed for self-play matchups, deck draws and batch sampling.
-    seed: int = 1990929
+    seed: int = 19990929
 
 
 @dataclass

@@ -8,6 +8,7 @@ importorskip so a fresh clone still passes.
 
 from __future__ import annotations
 
+import os
 import random
 import sys
 from pathlib import Path
@@ -41,6 +42,28 @@ def _encoded_batch(game):
     token_mask = torch.ones(1, tokens_int.shape[0], dtype=torch.bool)
     global_features = torch.from_numpy(globals_row).unsqueeze(0)
     return tok_int, tok_float, token_mask, global_features, candidate_positions
+
+
+def _encoded_padded_batch(games):
+    """Several positions collated the way the evaluators do it: padded to the
+    longest token sequence, with a mask marking the real tokens."""
+    import numpy as np
+
+    from engine_alpha.encoding.observation import encode
+
+    encoded = [encode(game) for game in games]
+    longest = max(entry[0].shape[0] for entry in encoded)
+    tok_int = torch.zeros(len(games), longest, encoded[0][0].shape[1], dtype=torch.long)
+    tok_float = torch.zeros(len(games), longest, encoded[0][1].shape[1])
+    token_mask = torch.zeros(len(games), longest, dtype=torch.bool)
+    global_features = torch.zeros(len(games), encoded[0][2].shape[0])
+    for row, (tokens_int, tokens_float, globals_row, _) in enumerate(encoded):
+        token_count = tokens_int.shape[0]
+        tok_int[row, :token_count] = torch.from_numpy(tokens_int.astype(np.int64))
+        tok_float[row, :token_count] = torch.from_numpy(tokens_float)
+        token_mask[row, :token_count] = True
+        global_features[row] = torch.from_numpy(globals_row)
+    return tok_int, tok_float, token_mask, global_features
 
 
 def _mid_game(seed: int = 3):
@@ -83,6 +106,34 @@ def test_alpha_zero_forward_shapes_and_priors():
     legal = game.legal_actions()
     assert priors.shape[0] == len(legal)
     assert abs(float(priors.sum()) - 1.0) < 1e-4
+
+
+def test_alpha_zero_gradient_checkpointing_matches_the_plain_forward():
+    """Both encoder paths end in the final LayerNorm, so at dropout 0 the
+    recomputing path must reproduce the plain one exactly (padding included)."""
+    from alpha_zero.config import NetConfig
+    from alpha_zero.net.model import UniguriNet
+
+    net = UniguriNet(NetConfig(**TINY_ALPHA_ZERO_NET)).train()
+    batch = _encoded_padded_batch([_mid_game(3), _mid_game(9)])
+
+    net.gradient_checkpointing = False
+    plain = net(*batch, return_value_logits=True)
+    net.gradient_checkpointing = True
+    checkpointed = net(*batch, return_value_logits=True)
+
+    for plain_output, checkpointed_output in zip(plain, checkpointed):
+        assert torch.allclose(plain_output, checkpointed_output, atol=1e-5)
+
+
+def test_playing_state_dict_prefers_the_ema_weights():
+    from alpha_zero.net.model import playing_state_dict
+
+    raw = {'weight': torch.zeros(1)}
+    ema = {'weight': torch.ones(1)}
+    assert playing_state_dict({'model_state_dict': raw, 'ema_state_dict': ema}) is ema
+    assert playing_state_dict({'model_state_dict': raw, 'ema_state_dict': None}) is raw
+    assert playing_state_dict(raw) is raw, 'a bare state dict is returned unchanged'
 
 
 def test_alpha_zero_capacity_below_card_count_is_rejected():
@@ -256,3 +307,122 @@ def test_agent_adapter_falls_back_on_agent_failure():
     adapter = ModelDecisionAdapter(FailingAgent(), lambda: BrokerStub())
     asyncio.run(adapter.present_decision(SessionStub(), request))
     assert submissions == [(3, 'action', 2)], 'fallback is the PASS action'
+
+
+# ---------------------------------------------------------------------------
+# Live AlphaZero agent (alpha_zero/inference.py)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def live_alpha_zero(monkeypatch, tmp_path):
+    """alpha_zero.inference with an isolated config, an empty network cache,
+    CPU inference, and a tiny deployed checkpoint that carries its config."""
+    from dataclasses import asdict
+
+    import alpha_zero.config as alpha_config
+    import alpha_zero.inference as inference
+    import model_common.device as device_module
+    from alpha_zero.config import NetConfig
+    from alpha_zero.net.model import UniguriNet
+
+    monkeypatch.setattr(alpha_config, 'ENV_FILE', tmp_path / 'absent.env')
+    for name in list(os.environ):
+        if name.startswith('ALPHA_'):
+            monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(inference, '_LOADED_MODELS', {})
+    monkeypatch.setattr(device_module, 'select_device', lambda: torch.device('cpu'))
+    monkeypatch.setattr(device_module, 'bound_inference_threads',
+                        lambda maximum_threads=4: None)
+
+    net_config = NetConfig(**TINY_ALPHA_ZERO_NET)
+    net = UniguriNet(net_config)
+    checkpoint_path = tmp_path / 'alpha_zero.pt'
+    torch.save({'model_state_dict': net.state_dict(),
+                'ema_state_dict': net.state_dict(),
+                'config': {'net': asdict(net_config)}}, checkpoint_path)
+    monkeypatch.setattr(inference, 'find_checkpoint', lambda: checkpoint_path)
+    return inference, checkpoint_path
+
+
+def test_live_agent_never_searches_from_a_stale_tree(live_alpha_zero, monkeypatch):
+    """The bot's match driver applies the human's moves without calling
+    `observe`. Replaying that call pattern, every search must start from a
+    fresh root on a clone of the game, and every move must be legal."""
+    inference, _ = live_alpha_zero
+    from alpha_zero.mcts import mcts
+
+    real_search = mcts.run_search_batched
+    search_calls = []
+
+    def recording_search(game, *arguments, root=None, **keyword_arguments):
+        search_calls.append((game, root))
+        return real_search(game, *arguments, root=root, **keyword_arguments)
+
+    monkeypatch.setattr(mcts, 'run_search_batched', recording_search)
+    agent = inference.AlphaZeroAgent(mode='search', simulations_live=6)
+    live_positions = []
+    for seed in (4, 8):
+        game = Game(seed=seed, mode='fixed_decks', decks=random_full_pool_decks(seed))
+        human = random.Random(seed)
+        while not game.is_terminal():
+            legal = game.legal_actions()
+            if game.current_player() == 1:
+                live_positions.append(game)
+                action = agent.act(game)
+                assert action in legal
+            else:
+                action = human.choice(legal)
+            game.apply(action)
+
+    assert len(search_calls) == len(live_positions) > 0
+    assert all(root is None for _, root in search_calls)
+    assert all(searched is not live
+               for (searched, _), live in zip(search_calls, live_positions))
+
+
+def test_live_agents_share_one_loaded_network(live_alpha_zero):
+    """Concurrent games share the cached network, and replacing the deployed
+    file is picked up by the next game without growing the cache."""
+    inference, checkpoint_path = live_alpha_zero
+    first = inference.AlphaZeroAgent(mode='search')
+    second = inference.AlphaZeroAgent(mode='search')
+    first._ensure_loaded()
+    second._ensure_loaded()
+    assert first._evaluator is second._evaluator
+
+    status = checkpoint_path.stat()
+    os.utime(checkpoint_path, ns=(status.st_atime_ns, status.st_mtime_ns + 1_000_000_000))
+    third = inference.AlphaZeroAgent(mode='search')
+    third._ensure_loaded()
+    assert third._evaluator is not first._evaluator
+    assert len(inference._LOADED_MODELS) == 1
+
+
+def test_live_agent_refuses_bare_weights_of_a_non_default_network(
+        live_alpha_zero, monkeypatch, tmp_path):
+    inference, _ = live_alpha_zero
+    from alpha_zero.config import NetConfig
+    from alpha_zero.net.model import UniguriNet
+
+    bare_path = tmp_path / 'bare.pt'
+    torch.save(UniguriNet(NetConfig(**TINY_ALPHA_ZERO_NET)).state_dict(), bare_path)
+    monkeypatch.setattr(inference, 'find_checkpoint', lambda: bare_path)
+    with pytest.raises(ValueError, match='bare weights'):
+        inference.AlphaZeroAgent(mode='search')._ensure_loaded()
+
+
+def test_live_search_settings_survive_an_invalid_training_config(
+        live_alpha_zero, monkeypatch, caplog):
+    """A training `.env` that fails validation degrades live search to the
+    default settings instead of failing every live decision."""
+    inference, _ = live_alpha_zero
+    import alpha_zero.config as alpha_config
+
+    def invalid_config():
+        raise ValueError('ALPHA_NET_EMBED_DIM (100) must be divisible by ALPHA_NET_NUM_HEADS (8)')
+
+    monkeypatch.setattr(alpha_config, 'load_config', invalid_config)
+    agent = inference.AlphaZeroAgent(mode='search', simulations_live=4)
+    agent._ensure_loaded()
+    assert agent._mcts_config == alpha_config.MCTSConfig()
+    assert 'did not validate' in caplog.text

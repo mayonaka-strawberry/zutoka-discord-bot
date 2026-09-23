@@ -5,11 +5,24 @@ Loads the newest deployable checkpoint, selects the runtime device (CUDA,
 then Apple Silicon MPS, then CPU), and answers one decision at a time:
 
 - ``search`` mode (default): batched-leaf MCTS with a reduced live simulation
-  budget, reusing the subtree across decisions. Training and promotion gating
+  budget, built fresh for every decision. Training and promotion gating
   both measure strength *with* search, so this is the setting the checkpoint
   was selected for; raw policy play is substantially weaker.
 - ``policy`` mode: a single forward pass, masked to the legal actions -
   effectively instant on CPU, useful when latency matters more than strength.
+
+Every decision works on a clone of the game and no search tree is carried
+from one decision to the next. The match driver applies the human's moves
+without telling the agent (nothing calls ``observe``), so a tree kept from the
+previous decision would describe a position that no longer exists; at the
+live budget a fresh search costs well under a second, which makes reuse not
+worth that risk. Working on a clone also means a search abandoned by the bot's
+watchdog can never read a position the event loop has since moved on from.
+
+The loaded network is cached per process and shared by every game, keyed by
+the checkpoint's path, modification time and size: concurrent solo games do
+not each load a copy, and a new file dropped into ``model/`` is picked up by
+the next game without a restart.
 
 Both the mode and the live budget are overridable from the environment
 (``ALPHA_LIVE_MODE``, ``ALPHA_LIVE_SIMULATIONS``), so a deployment can trade
@@ -27,6 +40,7 @@ the engine); it must keep working on a clone that carries no training code.
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -42,6 +56,12 @@ CHECKPOINT_DIRECTORY = PACKAGE_ROOT / 'runs' / 'checkpoints'
 MODE_POLICY = 'policy'
 MODE_SEARCH = 'search'
 LIVE_SIMULATIONS = 64
+
+# Deployed model name -> (checkpoint fingerprint, evaluator). One entry per
+# deployed model: a changed checkpoint replaces its entry instead of adding
+# one, so a directory of checkpoints cannot grow the cache without bound.
+_LOADED_MODELS: dict[str, tuple[tuple, '_Evaluator']] = {}
+_LOADED_MODELS_LOCK = threading.Lock()
 
 
 def find_checkpoint() -> Optional[Path]:
@@ -102,9 +122,71 @@ class _Evaluator:
         return self.batch([game])[0]
 
 
+def _checkpoint_fingerprint(checkpoint_path: Path) -> tuple:
+    status = checkpoint_path.stat()
+    return (str(checkpoint_path.resolve()), status.st_mtime_ns, status.st_size)
+
+
+def _build_evaluator(checkpoint_path: Path) -> _Evaluator:
+    import torch
+
+    from model_common.device import bound_inference_threads, select_device
+    from .config import NetConfig
+    from .net.model import UniguriNet, playing_state_dict
+
+    payload = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
+    carries_config = isinstance(payload, dict) and 'config' in payload
+    net_config = NetConfig(**payload['config']['net']) if carries_config else NetConfig()
+    net = UniguriNet(net_config)
+    try:
+        net.load_state_dict(playing_state_dict(payload))
+    except RuntimeError as error:
+        if carries_config:
+            raise
+        raise ValueError(
+            f'{checkpoint_path} holds bare weights that do not fit the default network '
+            'shape. Deploy a training checkpoint, or any file that carries its "config", '
+            'so the network is built at the size it was trained at.') from error
+    device = select_device()
+    if device.type == 'cpu':
+        bound_inference_threads()
+    net = net.to(device).eval()
+    for parameter in net.parameters():
+        parameter.requires_grad_(False)
+    return _Evaluator(net, device)
+
+
+def _load_evaluator(checkpoint_path: Path) -> _Evaluator:
+    """The shared evaluator for `checkpoint_path`: loaded on first use, and
+    again only when the file on disk has changed since it was cached."""
+    fingerprint = _checkpoint_fingerprint(checkpoint_path)
+    with _LOADED_MODELS_LOCK:
+        cached = _LOADED_MODELS.get(DEPLOYED_MODEL_NAME)
+        if cached is not None and cached[0] == fingerprint:
+            return cached[1]
+        evaluator = _build_evaluator(checkpoint_path)
+        _LOADED_MODELS[DEPLOYED_MODEL_NAME] = (fingerprint, evaluator)
+        log.info('AlphaZero network loaded from %s on %s', checkpoint_path, evaluator.device)
+        return evaluator
+
+
+def _live_search_config():
+    """MCTS settings for live play. A training `.env` that fails validation
+    must not take live games down with it, so it degrades to the defaults."""
+    from .config import MCTSConfig, load_config
+
+    try:
+        return load_config().mcts
+    except ValueError as error:
+        log.warning('alpha_zero config did not validate (%s); live search uses the '
+                    'default MCTS settings', error)
+        return MCTSConfig()
+
+
 class AlphaZeroAgent:
     """act(game) -> engine action int. Loads lazily so importing this module
-    never requires torch or a checkpoint."""
+    never requires torch or a checkpoint. Holds no per-game search state, so
+    any position can be asked about in any order."""
 
     def __init__(self, mode: Optional[str] = None,
                  simulations_live: Optional[int] = None) -> None:
@@ -119,68 +201,39 @@ class AlphaZeroAgent:
             else env_setting('live_simulations', LIVE_SIMULATIONS, int))
         self._evaluator: Optional[_Evaluator] = None
         self._mcts_config = None
-        self._search_root = None
 
     def _ensure_loaded(self) -> None:
         if self._evaluator is not None:
             return
-        import torch
-
-        from model_common.device import bound_inference_threads, select_device
-        from .config import NetConfig, load_config
-        from .net.model import UniguriNet
-
         checkpoint_path = find_checkpoint()
         if checkpoint_path is None:
             raise ValueError('No AlphaZero checkpoint is deployed.')
-        payload = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
-        if isinstance(payload, dict) and 'model_state_dict' in payload:
-            state_dict = payload.get('ema_state_dict') or payload['model_state_dict']
-            net_config = NetConfig(**payload['config']['net']) if 'config' in payload else NetConfig()
-        else:
-            state_dict = payload
-            net_config = NetConfig()
-
-        net = UniguriNet(net_config)
-        net.load_state_dict(state_dict)
-        device = select_device()
-        if device.type == 'cpu':
-            bound_inference_threads()
-        net = net.to(device).eval()
-        for parameter in net.parameters():
-            parameter.requires_grad_(False)
-
-        self._evaluator = _Evaluator(net, device)
-        # From load_config() rather than a bare MCTSConfig, so live search
-        # settings (c_puct, batching width) are tunable from the environment.
-        self._mcts_config = load_config().mcts
-        log.info('AlphaZero agent loaded from %s on %s (%s mode, %d simulations)',
-                 checkpoint_path, device, self.mode, self.simulations_live)
+        self._evaluator = _load_evaluator(checkpoint_path)
+        self._mcts_config = _live_search_config()
+        log.info('AlphaZero agent ready (%s mode, %d simulations)',
+                 self.mode, self.simulations_live)
 
     def reset(self) -> None:
-        self._search_root = None
+        """Nothing to clear between games; kept for the arena agent protocol."""
 
     def observe(self, action: int) -> None:
-        if self.mode == MODE_SEARCH and self._search_root is not None:
-            from .mcts.mcts import reuse_subtree
-
-            self._search_root = reuse_subtree(self._search_root, action)
+        """No tree is kept between decisions, so there is nothing to advance;
+        kept for the arena agent protocol."""
 
     def act(self, game) -> int:
         self._ensure_loaded()
+        position = game.clone()
         if self.mode == MODE_SEARCH:
             import random
 
-            from .mcts.mcts import reuse_subtree, run_search_batched, select_action
+            from .mcts.mcts import run_search_batched, select_action
 
             root = run_search_batched(
-                game, self._evaluator.batch, self._mcts_config,
-                self.simulations_live, root=self._search_root, noise_rng=None)
-            action = select_action(root, temperature=0.0, rng=random.Random(0),
-                                   use_gumbel=self._mcts_config.use_gumbel_root)
-            self._search_root = reuse_subtree(root, action)
-            return action
+                position, self._evaluator.batch, self._mcts_config,
+                self.simulations_live, root=None, noise_rng=None)
+            return select_action(root, temperature=0.0, rng=random.Random(0),
+                                 use_gumbel=self._mcts_config.use_gumbel_root)
 
-        _, priors = self._evaluator(game)
-        legal = game.legal_actions()
+        _, priors = self._evaluator(position)
+        legal = position.legal_actions()
         return legal[int(priors.argmax())]
