@@ -1,10 +1,7 @@
 """
-Persistence layer for user-saved decks.
-
-Thin shim over the standard deck repository (see deck_repository.py); decks
-live in the PostgreSQL decks table keyed by Discord user id. The repository
-singleton is looked up through the module attribute on every call so tests
-can swap in an in-memory fake.
+Standard saved decks: a thin facade over deck_repository (decks table), plus the
+default decks file. The repository is looked up on every call so tests can swap in
+a fake.
 """
 
 from __future__ import annotations
@@ -72,10 +69,6 @@ def resolve_deck_cards(
     deck_data: dict,
     card_index: dict[tuple[int, int], Card],
 ) -> list[Card]:
-    """
-    Convert a saved deck's card references to Card objects.
-
-    Returns list[Card] of length 20 (with duplicates for copies).
-    Raises ValueError if any card reference is invalid.
-    """
+    """A saved deck's 20 cards as Card objects, copies repeated. Raises ValueError on
+    an invalid reference."""
     return resolve_card_list(deck_data, 'cards', card_index)

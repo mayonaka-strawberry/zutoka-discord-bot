@@ -1,9 +1,7 @@
-"""Area-enchant removal conditions (old check_area_enchant_removal).
-
-Called after CHARACTER_SWAP, after AREA_SWAP, and at END_TURN with
-end_of_turn=True. Area enchants whose power cost is unmet are never removed
-(Q&A rule). Removal routes through zones so placement triggers fire; 04-030
-is forced to the abyss by its card text despite having SEND TO POWER.
+"""Area-enchant end conditions. Checked after the character and area swaps, at
+END_TURN (end_of_turn=True), and after battle or effect damage (damage_only=True).
+An area whose power cost is unmet is never removed. Removal goes through zones so
+placement flags fire; 04-030 goes to the abyss despite SEND TO POWER (card text).
 """
 
 from __future__ import annotations
@@ -50,26 +48,19 @@ _ABYSS_AT_4 = (FX_03_086, FX_03_092, FX_03_098, FX_03_104)
 
 
 def on_area_enchant_leaves_play(state: GameState, area_instance: int, owner_index: int) -> None:
-    """Clean up persistent state tied to an area enchant on every removal path."""
+    """Clean up persistent state tied to a departing area enchant (a 03-055 block)."""
     if EFFECT_T[state.inst_def[area_instance]] == FX_03_055:
         state.players[1 - owner_index].area_blocked = False
 
 
-#: Area enchants whose end condition is an HP/damage threshold worded 「すぐに」, so it
-#: must be evaluated the instant HP changes rather than at the next phase boundary
-#: (Q&A No.16 for 03-058/03-085, Q&A No.80 for 04-091: 「HPの処理を終えたらすぐに」).
+#: Removed the instant HP changes, not at a phase boundary (Q&A No.16, 80).
 _DAMAGE_TRIGGERED = (FX_03_058, FX_03_085, FX_04_091)
 
 
 def check_area_removal(state: GameState, *, end_of_turn: bool = False,
                        damage_only: bool = False) -> None:
-    """Evaluate area-enchant end conditions.
-
-    `damage_only` restricts the pass to the HP/damage-triggered cards above. It is
-    used by the hooks that fire the moment HP changes, so those three cards leave play
-    at the right instant without dragging the other seventeen predicates onto a new
-    timing they were never audited against.
-    """
+    """Evaluate area-enchant end conditions. `damage_only` limits the pass to
+    _DAMAGE_TRIGGERED, for the hooks that run after battle or effect damage."""
     from ..battle import effective_power_cost, total_power  # avoid import cycle
 
     for player in state.players:
@@ -129,12 +120,7 @@ def check_area_removal(state: GameState, *, end_of_turn: bool = False,
         elif effect == FX_04_095:
             remove = bool(player.flags[PF_BATTLE_LOST])
         elif effect in (FX_03_058, FX_03_085):
-            # 「30ダメージ以上を受けたなら、すぐにアビスに置く」. Q&A No.16: because the
-            # text says すぐに, the card reaches the abyss in the gap between
-            # taking the damage and the turn-end processing, so its turn-end
-            # block never runs. Removing it here rather than inside
-            # process_end_of_turn_effects also keeps it out of play for anything
-            # that reads the zone in between (an opponent's 04-032, say).
+            # 30+ damage taken: removed at once, before its turn-end effect (Q&A No.16).
             remove = player.flags[PF_DAMAGE_TAKEN] >= 30
 
         if remove:

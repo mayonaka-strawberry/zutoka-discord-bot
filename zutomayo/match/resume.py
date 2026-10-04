@@ -1,12 +1,6 @@
 """
-Rebuild and replay engine_alpha matches from their persisted records.
-
-The core primitive: reconstruct the Game from the manifest (seed + decks),
-put the broker in replay mode with the loaded decision log, and run the
-normal driver with the transport muted. Deterministic replay reproduces the
-exact state; when the log is exhausted the broker goes live and play
-continues. The full startup/resume orchestration (session rebuilding,
-Discord announcements) is wired by the match flow.
+Rebuild a persisted match: recreate the Game from its manifest (seed, decks),
+replay the decision log through the broker with the transport muted, then go live.
 """
 
 from __future__ import annotations
@@ -20,7 +14,7 @@ log = logging.getLogger(__name__)
 
 
 def rebuild_game_from_manifest(manifest: dict[str, Any]) -> Any:
-    """Reconstruct the engine game exactly as it was first created."""
+    """Reconstruct a non-TCG match's engine game exactly as it was first created."""
     from engine_alpha.game import Game
 
     decks = (
@@ -31,7 +25,7 @@ def rebuild_game_from_manifest(manifest: dict[str, Any]) -> Any:
 
 
 async def load_replay_state(broker: Any, game_id: str) -> None:
-    """Load the persisted decision log into a broker and enter replay mode."""
+    """Load the persisted decision log into a broker and enter replay mode if it is non-empty."""
     from zutomayo.match.persistence import load_match_decision_log
 
     broker.replay_log = await load_match_decision_log(game_id)
@@ -58,11 +52,9 @@ async def resume_all(bot: Any) -> None:
 
 
 async def load_saved_game_for_resume(game_id: str, requester_discord_id: int) -> dict[str, Any]:
-    """
-    Validate that a saved game can be resumed by this player right now.
-    Returns the game row. Raises ValueError with a user-facing message when
-    the game is missing, not saved, not theirs, or a participant is busy.
-    """
+    """The game row, if this player can resume it now. Raises ValueError (a user-facing
+    message) when the game is missing, not saved, on an old schema, not theirs, or a
+    player is busy."""
     from zutomayo.engine.game_persistence import STATUS_SAVED, get_game_row
     from zutomayo.engine.game_session import session_manager
     from zutomayo.match.persistence import SCHEMA_VERSION_ENGINE_ALPHA
@@ -158,9 +150,8 @@ async def resume_game(
         session.transport.muted = True
         session.broker.on_go_live = _make_go_live_callback(session, announcement)
     except BaseException:
-        # Nothing is running yet, so the registration above would otherwise
-        # strand both players in a game that never starts (a solo opponent
-        # whose checkpoint is gone raises here, for example).
+        # Undo the registration, or both players stay stuck in a game that never
+        # starts (for example, a solo opponent whose checkpoint is gone).
         if entry_coroutine is not None:
             entry_coroutine.close()
         session_manager.remove_game(session.game_id)
@@ -200,7 +191,7 @@ def _rebuild_session(manifest: dict[str, Any]) -> Any:
 
 
 async def _run_single_resumed_match(flow: Any, session: Any, deck_0: list, deck_1: list) -> None:
-    """Mirror run_game without the pre-persistence deck-building phase."""
+    """run_game without deck building, which happened before the record existed."""
     from zutomayo.engine.game_session import session_manager
 
     await flow.run_single_match(session, deck_0, deck_1)

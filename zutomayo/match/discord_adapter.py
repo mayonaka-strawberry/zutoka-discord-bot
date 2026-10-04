@@ -1,21 +1,12 @@
 """
-DiscordMatchDecisionAdapter: presents MatchDecisionRequests as Discord DM
-views and answers the engine's iterative decisions from compound selections.
+DiscordMatchDecisionAdapter: shows MatchDecisionRequests as Discord DM views.
 
-Three prompt families are compound: the mulligan (the engine asks card-by-card,
-the player answers once with a set of cards to redraw), the initial battle card,
-and set-cards (the engine asks slot A then slot B, the player answers once with
-an ordered pick of up to two cards). For those, the full legacy view
-(RedrawView / TwoStepCardSelectView) is presented once and a PendingSelection
-cache feeds the engine's individual requests. Both players' compound views go
-out concurrently, exactly like the pre-port flows: the second mover's view is
-pre-presented while the engine still waits on the first, which is safe because
-each player's candidates are their own hand. Concurrency is what keeps a
-placement secret - neither player learns anything from the other's timing, and
-committing a card never advances the phase, so no gate can fire in between.
-
-If a cached selection ever fails to match the engine's live candidates, the
-cache is dropped and the prompt is re-presented sequentially.
+The mulligan, initial battle card and set-cards prompts are compound: the engine
+asks one card at a time, the player answers once (RedrawView /
+TwoStepCardSelectView), and a PendingSelection feeds the engine's requests. Both
+players' views go out together, so neither learns anything from the other's
+timing, and committing a card never advances the phase. A cached selection that no
+longer fits the live candidates is dropped and the prompt is shown again.
 """
 
 from __future__ import annotations
@@ -54,13 +45,9 @@ _FIRST_PURPOSE = {
 
 
 def _seat_already_answered(state: Any, seat: int) -> bool:
-    """Whether the engine has already taken this seat's answer in the current
-    compound phase. Read off phase_ctx, which is where the engine tracks it.
-
-    PH_INITIAL_SET and PH_SET_CARDS both hold ``[commit_order, position, ...]``,
-    so every seat before ``position`` in the order is done. PH_MULLIGAN holds
-    ``[player_position, marked]``, where the position indexes players directly.
-    """
+    """Whether the engine already took this seat's answer in the current compound
+    phase. Read from phase_ctx: ``[commit_order, position, ...]`` in the set phases,
+    ``[player_position, marked]`` in the mulligan."""
     from engine_alpha.state import PH_INITIAL_SET, PH_MULLIGAN, PH_SET_CARDS
 
     context = state.phase_ctx
@@ -83,9 +70,7 @@ class PendingSelection:
         self.chosen: Optional[list[int]] = None
         self.consumed_count = 0
         self.on_answer: Optional[Callable[[], None]] = None
-        # Set when the view was built for slot B alone, which only happens
-        # when a resume goes live between the two set-cards sub-requests.
-        # The single pick then belongs to slot B, not slot A.
+        # The view asked for slot B only (a resume went live between the set-card requests).
         self.starts_at_slot_b = False
 
     def resolve(self, chosen_instance_ids: list[int]) -> None:
@@ -166,10 +151,8 @@ class DiscordMatchDecisionAdapter:
         def submit_answer() -> None:
             action = self._compound_action(selection, request)
             if action is None:
-                # The re-presented picks still do not fit the live candidates. Falling
-                # back to the first legal action keeps the match moving, but it is a
-                # choice made FOR the player, so say so rather than hiding it behind
-                # `or 0` (which also silently conflated "no answer" with action 0).
+                # Still no fit: fall back to the first legal action, and log it,
+                # since it is chosen for the player.
                 action = request.engine_request.legal_actions()[0]
                 log.warning(
                     'Re-presented selection still did not fit for sequence %d (%s); '
@@ -205,9 +188,7 @@ class DiscordMatchDecisionAdapter:
 
         if request.purpose == P_SET_SLOT_A:
             if not chosen:
-                # Setting zero cards is illegal (GR 5.2.1.5), and the view no longer
-                # offers it. Returning None re-presents rather than submitting a PASS
-                # the engine would reject.
+                # Setting zero cards is illegal (Ground Rules 5.2.1.5): show it again.
                 return None
             if chosen[0] in candidates:
                 selection.consumed_count = 1
@@ -236,11 +217,8 @@ class DiscordMatchDecisionAdapter:
             return
         state = session.game.state
         if _seat_already_answered(state, other_index):
-            # Live, pre-presentation always happens before either player has
-            # committed. A resume that goes live mid-phase is the exception:
-            # the seat ahead in the commit order already answered during
-            # replay, and prompting it again produces a view whose answer has
-            # no engine request behind it.
+            # After a mid-phase resume (answered during replay) or when the engine
+            # skipped an empty hand: nothing is waiting for a new answer.
             return
         if family == FAMILY_SET_CARDS:
             player = state.players[other_index]
@@ -298,10 +276,8 @@ class DiscordMatchDecisionAdapter:
             selection.resolve([] if payload >= len(instance_ids) else [instance_ids[payload]])
 
         if purpose == P_SET_SLOT_B:
-            # A resume went live between the two set-cards sub-requests: slot A
-            # is already committed, so only the optional second card is open.
-            # Sizing the view off maximum_cards_to_set here would ask for both
-            # again and mis-map the answer onto slot B.
+            # A resume went live after slot A was committed: ask for the
+            # optional second card only.
             selection.starts_at_slot_b = True
             await self._send_hand_briefing(session, player_index, hand_views, 1, slot_b_only=True)
             view = ActionSelectView(
@@ -336,11 +312,8 @@ class DiscordMatchDecisionAdapter:
             view = ActionSelectView(
                 session, player_index, hand_views,
                 placeholder='Select a card to set...',
-                # Ground Rules 5.2.1.5 / Q&A No.4: a player holding cards must set at
-                # least one, so there is no "set nothing" option. Offering one produced
-                # a dead button: the broker dropped the illegal action, the prompt then
-                # stalled for the full timeout, and the fallback set the first hand card
-                # anyway -- three of those in a row forfeited the match.
+                # No "set nothing": a player holding cards must set one
+                # (Ground Rules 5.2.1.5; Q&A No.4).
                 allow_pass=False,
                 confirm=True,
                 opponent_name=self._opponent_name(session, player_index),

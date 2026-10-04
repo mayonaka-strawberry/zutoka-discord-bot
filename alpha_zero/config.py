@@ -1,18 +1,10 @@
-"""All alpha_zero hyperparameters as one dataclass tree.
-
-Every tunable lives here so runs are reproducible from a single config dump.
-The defaults in this file are the tracked baseline; `alpha_zero/.env` (or the
-process environment) layers per-machine overrides on top via `load_config()`:
+"""alpha_zero hyperparameters as one dataclass tree; the defaults are the tracked
+baseline. alpha_zero/.env or the environment overrides them through load_config():
 
     ALPHA_<SECTION>_<FIELD>=value    e.g. ALPHA_MCTS_SIMULATIONS_IN_GAME=256
     ALPHA_<NAME>=value               run-level, read by the entry scripts
 
-To see every key with its current default:
-
-    python -m alpha_zero.config
-
-Redirecting that to `alpha_zero/.env` writes a fully-commented file that
-changes nothing until you uncomment a line.
+`python -m alpha_zero.config` prints every key, commented out.
 """
 
 from __future__ import annotations
@@ -30,10 +22,7 @@ SECTIONS = ("engine", "net", "mcts", "train", "league")
 
 @dataclass
 class NetConfig:
-    # Self-play throughput, not capacity, is the binding constraint at 256
-    # simulations per decision, so the net is sized for cheap forwards. 8
-    # layers x 384 is ~14M parameters; 8 x 512 (~25M) is the next step up if
-    # games/hour turns out to be comfortable.
+    # Sized for fast self-play forwards: 8 x 384 is about 15M parameters.
     embed_dim: int = 384
     num_layers: int = 8
     num_heads: int = 8
@@ -44,14 +33,12 @@ class NetConfig:
     effect_feature_projection_dim: int = 64
     effect_embedding_dim: int = 32
     identity_embedding_dim: int = 96
-    # Identity-indexed tables are sized to this capacity rather than the
-    # current card count, so new cards occupy pre-allocated rows and existing
-    # checkpoints keep loading (see model_common/migrate_checkpoint.py for
-    # growing past it).
+    # Rows beyond the card count, so new cards keep checkpoints loadable
+    # (model_common/migrate_checkpoint.py grows past it).
     identity_capacity: int = 512
-    # Same headroom rule for the effect table (one row per effect program).
+    # Same headroom, for the effect table.
     effect_capacity: int = 320
-    # And for the song table (one row per song).
+    # Same headroom, for the song table.
     song_capacity: int = 64
 
 
@@ -69,14 +56,11 @@ class MCTSConfig:
     dirichlet_alpha_max: float = 1.0
     virtual_loss: int = 3
     max_leaves_per_step: int = 12
-    # Counts in-game *decisions*, not turns — micro-decision chains (mulligan
-    # marks, set A/B, effect ordering) mean one turn is several decisions.
+    # Counts decisions, not turns (a turn is several decisions).
     temperature_moves: int = 30
     playout_cap_fraction: float = 0.25  # fraction of games played at reduced budget
     playout_cap_divisor: int = 4
-    # Break near-ties among root visit counts with prior-plus-Gumbel scores
-    # instead of index order; helps when the budget is too small for visits to
-    # discriminate.
+    # Break near-ties in root visits by prior plus Gumbel noise, not index order.
     use_gumbel_root: bool = False
 
 
@@ -94,30 +78,20 @@ class TrainConfig:
     warmup_steps: int = 2000
     gradient_clip: float = 1.0
     max_sample_reuse: float = 8.0
-    # Weight on the win/draw/loss value cross-entropy relative to the policy
-    # cross-entropy.
+    # Value cross-entropy weight relative to the policy loss.
     value_loss_weight: float = 1.0
-    # CHAOS bank-or-lose cards end the game immediately when the Abyss
-    # minimum is not met. The value head is a win/draw/loss classifier, so a
-    # scaled outcome cannot be expressed as a target; the emphasis goes into
-    # the per-sample value-loss weight instead. The self-defeating player's
-    # decisions are trained harder (learn to avoid the blunder) and the
-    # decisions of the player handed the win are trained softer (a free win
-    # is weak evidence that those positions were winning). Applies only to
-    # that termination (see model_common.termination.chaos_self_defeat_loser).
+    # CHAOS self-defeat value-loss weights: the self-defeater's decisions train
+    # harder, the gifted winner's softer (model_common.termination).
     self_defeat_loss_sample_weight: float = 4.0
     self_defeat_win_sample_weight: float = 0.25
     checkpoint_interval_steps: int = 2000
-    # Checkpoints kept on disk, newest first. The best checkpoint and every
-    # league snapshot are always retained regardless. 0 disables pruning.
+    # Newest checkpoints kept; the best one and league snapshots always stay. 0 keeps all.
     checkpoint_retention: int = 5
     evaluator_max_batch: int = 512
     evaluator_max_wait_ms: float = 2.0
-    # Exponential moving average of weights, used for published/evaluation
-    # weights; 0 disables.
+    # Weight EMA for published and evaluation weights; 0 disables.
     ema_decay: float = 0.999
-    # Recompute encoder activations in the backward pass to trade compute
-    # for memory (per-layer activation checkpointing).
+    # Recompute activations in the backward pass: less memory, more compute.
     gradient_checkpointing: bool = True
     # Master seed for self-play matchups, deck draws and batch sampling.
     seed: int = 19990929
@@ -131,8 +105,7 @@ class LeagueConfig:
     deck_min_games: int = 30
     gating_games: int = 200
     gating_win_rate: float = 0.55
-    # Search budget both sides get during gating. Set this to
-    # ALPHA_LIVE_SIMULATIONS to make promotion measure deployed strength.
+    # Gating search budget; set to ALPHA_LIVE_SIMULATIONS to gate on deployed strength.
     gating_simulations: int = 128
     elo_k_factor: float = 24.0
     # Beta prior pulling deck win rates toward 0.5: (wins + p) / (games + 2p).
@@ -141,20 +114,11 @@ class LeagueConfig:
     p_latest_vs_latest: float = 0.55
     p_vs_snapshot_stored_deck: float = 0.20
     p_vs_snapshot_drafting: float = 0.10
-    # Implicit remainder in sample_matchup; validated to stay consistent.
+    # The remainder in sample_matchup; validated with the others.
     p_pool_decks: float = 0.15
-    # Deck source for the fixed-deck matchups. The pool is the exported set of
-    # real player decks (scripts/export_training_decks.py); the remainder are
-    # generated random legal decks. Drafted games are unaffected — deck
-    # building there is the model's own job. A missing file falls back to random
-    # decks and says so at startup.
-    #
-    # This stack reads its own pool, which keeps the decks holding a CHAOS card
-    # that ppo_transformer's export leaves out. Excluding them here would be
-    # mostly theatre: p_latest_vs_latest and p_vs_snapshot_drafting are drafted
-    # from the whole catalog, and p_vs_snapshot_stored_deck replays a deck the
-    # league drafted, so only p_pool_decks and the learner seat of the stored-deck
-    # matchup come through this file at all.
+    # Real player decks for fixed-deck matchups (scripts/export_training_decks.py);
+    # the rest are generated, and a missing file means all are. Keeps CHAOS decks:
+    # only p_pool_decks, the stored-deck learner seat and fixed-deck gating read it.
     deck_pool_path: str = 'data/training_decks_alpha_zero.json'
     probability_user_deck: float = 0.75
 
@@ -171,12 +135,7 @@ class Config:
         return asdict(self)
 
     def validate(self) -> "Config":
-        """Fails loudly on inconsistent settings.
-
-        Once `.env` is the primary surface, a typo'd override is far more
-        likely than a bad default, and most of these would otherwise surface
-        as a confusing shape error thousands of steps into a run.
-        """
+        """Fail at load on inconsistent settings, not with a shape error mid-run."""
         env_config.check_probabilities_sum(
             {"p_latest_vs_latest": self.league.p_latest_vs_latest,
              "p_vs_snapshot_stored_deck": self.league.p_vs_snapshot_stored_deck,
@@ -189,10 +148,7 @@ class Config:
                 "ALPHA_LEAGUE_PROBABILITY_USER_DECK must be within [0, 1], got "
                 f"{self.league.probability_user_deck}")
         if not self.league.deck_pool_path:
-            # Not mere hygiene: there is no shared default left to fall through
-            # to, and Path('') is the working directory, which exists — so an
-            # empty value would reach open() and raise PermissionError deep in
-            # the loader rather than reporting a missing pool.
+            # An empty path is the working directory, which fails deep in the loader.
             raise ValueError(
                 "ALPHA_LEAGUE_DECK_POOL_PATH must name a pool file; an empty "
                 "value reads as unset and resolves to the working directory")
@@ -223,9 +179,7 @@ class Config:
                 f"ALPHA_TRAIN_LEARNING_RATE_DECAY_STEPS "
                 f"({self.train.learning_rate_decay_steps})")
 
-        # Imported lazily: reading the card database is not worth paying for on
-        # every config load, and a checkout without card data should still be
-        # able to render the template.
+        # Lazy: the template must render without card data.
         try:
             from engine_alpha.cards import NUM_CARDS, NUM_EFFECTS, NUM_SONGS
         except Exception:
@@ -247,8 +201,8 @@ class Config:
 
 DEFAULT_CONFIG = Config()
 
-# Run-level settings, mirrored by the flags in scripts/run_train.py. Kept here
-# so the generated template documents them alongside the section fields.
+# Run-level settings (the scripts/run_train.py flags, plus the live agent's mode and
+# budget read by inference.py), listed in the template.
 RUN_SETTINGS: tuple[tuple[str, object, str], ...] = (
     ("runs_dir", "alpha_zero/runs", "where checkpoints, buffer and league live"),
     ("workers", 0, "0 = inline self-play on the training device"),
@@ -275,8 +229,7 @@ def load_config() -> Config:
 
 
 def env_setting(name: str, default, target_type: type | None = None):
-    """Run-level setting: ALPHA_<NAME> from .env/environment, else default.
-    Used by entry scripts for workers/iterations/device/etc."""
+    """Run-level setting ALPHA_<NAME> from .env or the environment, else `default`."""
     return env_config.env_setting(name, default, PREFIX, ENV_FILE, target_type)
 
 

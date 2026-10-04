@@ -1,17 +1,14 @@
-"""State -> network observation.
+"""State -> network observation, relative to the acting player. Includes hidden
+information (opponent hand, deck order) on purpose.
 
-Everything is relative to the acting player ("self" = the player owning the
-pending decision). The game state is encoded as a token sequence.
-
-Output (numpy, variable length T <= MAX_TOKENS):
-  tok_int   [T, N_INT_FEATURES] int16   categorical indices (embedded by net)
+Output (numpy, T <= MAX_TOKENS tokens):
+  tok_int   [T, N_INT_FEATURES] int16 categorical indices
   tok_float [T, N_FLOAT_FEATURES] float32
   globals   [N_GLOBALS] float32
-  candidate_positions: for SELECT_CARD requests, token row of each candidate
-    (action i -> candidate_positions[i]); the PASS action maps to the PASS
-    token row appended at the end of the list.
+  candidate_positions: the token row of each SELECT_CARD candidate; PASS maps to
+    the PASS row, appended last.
 
-Token order: CLS, PASS, prev-battle-def x2, then per side (self, opp):
+Token order: CLS, PASS, previous battle definitions x2, then per side (self, opp):
 battle, set_a, set_b, set_c, hand..., charger..., abyss..., deck...
 """
 
@@ -64,11 +61,7 @@ _RARITY_T = tuple(int(x) for x in RARITY)
 N_GLOBALS = (18 + 2) + 2 + 8 + 1 + 14 + N_PURPOSES + 4 + 2 + 3 + 2 + 2 + 4 \
     + 2 * N_PLAYER_FLAGS + N_GLOBAL_FLAGS + 4 + 2 + 2 + 18
 
-# Divisor per player flag, so the encoded value stays monotonic in the raw one.
-# This replaced a `value / 100 if abs(value) > 1 else float(value)` rule whose
-# branch put a 50x cliff between 1 (encoded 1.0) and 2 (encoded 0.02); every
-# count-driven flag crosses that boundary in ordinary play, PF_CHRONOS_ADVANCED
-# on essentially every turn. Booleans stay at 1.0 so they keep unit scale.
+# Divisor per player flag, keeping encoded values monotonic. Booleans use 1.0.
 _FLAG_SCALE = tuple(
     100.0 if index in (PF_ATTACK_BONUS, PF_DAMAGE_REDUCTION, PF_END_OF_TURN_DAMAGE,
                        PF_BATTLE_DAMAGE, PF_DAMAGE_TAKEN, PF_DAMAGE_REDUCED)
@@ -161,9 +154,7 @@ def encode(game) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int]]:
         f[11] = 1.0 if attr_override != -1 else 0.0
         f[12] = 1.0 if instance_id in candidates else 0.0
         f[13] = 1.0 if instance_id in chosen else 0.0
-        # Did this card's owner swap away from THIS card's song this turn? The
-        # `swapped_from_song` condition is per-song and per-owner, so carrying it
-        # on the token is both exact and cheaper than a NUM_SONGS-wide global.
+        # Whether the owner swapped away from this card's song this turn (swapped_from_song).
         f[14] = 1.0 if owner_swapped_songs & (1 << SONG_T[def_index]) else 0.0
         token_of_instance[instance_id] = row
         row += 1
@@ -285,8 +276,7 @@ def encode(game) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int]]:
         player = state.players[acting if relative == 0 else 1 - acting]
         g[o + relative] = 1.0 if player.swapped_from_songs else 0.0
     o += 2
-    # Clock position at the start of this turn — what 01-008 rewinds to and what
-    # 01-026 counts back from. Same one-hot width as state.chronos above.
+    # Turn-start clock: 01-008 rewinds to it, 01-026 counts back from it.
     g[o + state.chronos_at_turn_start] = 1.0; o += 18
     assert o == N_GLOBALS
 

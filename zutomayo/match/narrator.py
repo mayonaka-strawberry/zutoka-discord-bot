@@ -1,17 +1,12 @@
 """
-MatchNarrator: translates engine event tuples into player-facing messages and
-the permanent game_events stream (same string event types as before, so the
-summary renderer keeps working).
+MatchNarrator: turns engine events into player messages and the permanent
+game_events stream (read by the summary view).
 
-The driver drains ``state.event_sink`` after every ``Game.apply`` and hands the
-batch here together with the projected BoardView and the per-phase BoardView
-snapshots the sink captured mid-apply. Phase-change events are handed to the
-GatePresenter, which posts the board/zone bundle for that boundary; the events
-in between only add what a gate cannot show on its own (effect resolution
-embeds, effect-driven HP swings, redraw results). Effect activity is aggregated
-across applies and flushed as one embed per player batch, mirroring the
-pre-port cadence. Everything is muted automatically while the transport is
-muted (replay) because all sends go through the transport.
+The driver hands it each Game.apply's events plus the per-phase BoardView snapshots.
+Phase changes go to the GatePresenter; everything else adds only what a gate cannot
+show (effect embeds, effect HP changes, redraw results). Effects are batched into
+one embed per player batch. Replay is silent because every send goes through the
+muted transport.
 """
 
 from __future__ import annotations
@@ -37,7 +32,7 @@ from zutomayo.match.state_view import BoardView, definition_index_to_card
 log = logging.getLogger(__name__)
 
 # Optional bespoke narration per effect id ('XX-YYY' -> text shown when the
-# effect starts). Effects without an entry get the systematic line.
+# effect starts), in addition to every effect's line in the effect embed.
 EFFECT_NARRATION_OVERRIDES: dict[str, str] = {}
 
 #: Reveals that show the top of the opponent's DECK rather than anything in hand.
@@ -49,12 +44,7 @@ def describe_card(card: Any) -> dict[str, Any]:
 
 
 def reveal_effect_details(effect_id: str) -> tuple[Optional[str], Optional[int]]:
-    """(song label, per-card attack bonus) read out of the effect's own IR.
-
-    The TAIDADA reveal line quotes both, and reading them from the catalog
-    rather than hard-coding them keeps the message from drifting if
-    catalog_data.py changes a bonus or reuses the family for another song.
-    """
+    """(song label, per-card attack bonus) from the effect's IR, for the TAIDADA reveal line."""
     from engine_alpha.cards import SONG_NAMES
     from engine_alpha.effects.catalog import CATALOG
     from engine_alpha.effects.ir import Sel
@@ -80,7 +70,7 @@ def _zone_key(view: Any) -> Optional[list[int]]:
 
 
 def build_state_snapshot_from_board_view(board_view: BoardView) -> dict[str, Any]:
-    """Same dict shape as the legacy build_state_snapshot, from a BoardView."""
+    """The state-snapshot dict stored with game events, built from a BoardView."""
     players = []
     for player in board_view.players:
         players.append({
@@ -233,21 +223,16 @@ class MatchNarrator:
         await self._send_lines(lines)
 
     async def _broadcast_reveal(self, event: tuple) -> None:
-        """Show revealed cards to both players and the channel.
-
-        Keeps the pre-port send order - owner DM, opponent DM, channel - so a
-        reveal reads the same way it always has. Two shapes: the TAIDADA
-        family reveals the owner's own picks, 03-045 reveals the opponent's
-        whole hand, and `revealed_owner_index` is what tells them apart.
-        """
+        """Show revealed cards: owner DM, then opponent DM, then the channel.
+        `revealed_owner_index` tells own cards (TAIDADA picks, own-hand reveals) from
+        the opponent's (03-045's hand, a deck top, a name-guess pick)."""
         owner_index, revealed_owner_index = event[1], event[2]
         source_card = definition_index_to_card(event[3])
         effect_id = f'{source_card.pack:02d}-{source_card.id:03d}'
         revealed = [definition_index_to_card(index) for index in event[4:]]
 
         if not revealed:
-            # Owner only, as the pre-port announce_effect_fizzle was: a reveal
-            # that did not happen tells the opponent nothing.
+            # Nothing revealed: tell the owner only.
             await self.transport.send_to_player(
                 self.session, owner_index,
                 content=f'**Effect ({effect_id}):** Nothing revealed. No effect.',
@@ -271,9 +256,7 @@ class MatchNarrator:
                 f'**Effect ({effect_id}):** {self._player_name(owner_index)} revealed '
                 f'{len(revealed)} {noun}: {names}.')
         elif effect_id in DECK_TOP_REVEAL_EFFECTS:
-            # 03-097 / 03-103 show the top of the opponent's DECK, which stays
-            # where it is (Q&A No.45). Calling that a hand reveal would be wrong
-            # twice over: wrong zone, and it implies the whole hand.
+            # 03-097 / 03-103 show the top of the opponent's deck, not their hand.
             owner_message = (
                 f'**Effect ({effect_id}):** Opponent\'s top deck card revealed: {names}.')
             other_message = (
@@ -323,10 +306,7 @@ class MatchNarrator:
         embed: Any = None,
     ) -> None:
         """One leg of a reveal broadcast; `player_index` None means the channel.
-
-        The image is rendered here rather than once by the caller because a
-        discord.File is consumed on send, so each leg needs its own.
-        """
+        Renders its own image because a discord.File is consumed on send."""
         if player_index is not None and not self.transport.delivers_to_player(
                 self.session, player_index):
             return
@@ -397,7 +377,7 @@ class MatchNarrator:
 
 
 class _CardHolder:
-    """Duck-typed CardInstance stand-in (.card) for embed builders."""
+    """Minimal stand-in with `.card`, for the embed builders."""
 
     def __init__(self, card: Any) -> None:
         self.card = card

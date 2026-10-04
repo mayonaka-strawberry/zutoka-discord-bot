@@ -9,7 +9,7 @@ from zutomayo.data import database
 from zutomayo.data import name_storage
 
 
-# Do not use Privileged Intents
+# Never request privileged intents:
 # https://support-dev.discord.com/hc/en-us/articles/6207308062871-What-are-Privileged-Intents
 # https://support-dev.discord.com/hc/en-us/articles/40281523410967-Changes-to-Privileged-Intent-Access-for-Discord-Apps
 
@@ -22,9 +22,7 @@ intents = discord.Intents.default()
 
 class ZutokaBot(commands.Bot):
     async def setup_hook(self) -> None:
-        # Fail fast if PostgreSQL is unreachable: every storage module
-        # depends on the pool, so starting without it would only defer
-        # the failure to the first command.
+        # Fail fast if PostgreSQL is unreachable.
         await database.initialize_pool()
         await database.apply_schema()
         await name_storage.load_display_name_cache()

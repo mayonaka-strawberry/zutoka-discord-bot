@@ -1,13 +1,8 @@
 """
-PostgreSQL connection pool for the bot.
-
-The pool is created once at startup (ZutokaBot.setup_hook in main.py) and
-closed on shutdown. Storage modules obtain it through get_pool(); tests never
-initialize a pool and instead swap in in-memory backends at the module level.
-
-Connection configuration comes from DATABASE_URL in the environment (loaded
-from .env by main.py). When DATABASE_URL is absent, asyncpg falls back to the
-standard PGHOST / PGPORT / PGUSER / PGPASSWORD / PGDATABASE variables.
+PostgreSQL connection pool, created at startup (main.py setup_hook) and closed on
+shutdown; storage modules use get_pool(). Unit tests swap in in-memory backends;
+integration tests create a pool from ZUTOKA_TEST_DATABASE_URL. Configured by
+DATABASE_URL, else the standard PG* variables.
 """
 
 from __future__ import annotations
@@ -66,7 +61,7 @@ def get_pool() -> asyncpg.Pool:
 
 
 async def apply_schema() -> None:
-    """Apply schema.sql; every statement is idempotent (CREATE ... IF NOT EXISTS)."""
+    """Apply schema.sql; every statement is idempotent (IF NOT EXISTS, ON CONFLICT DO NOTHING)."""
     schema_sql = SCHEMA_FILE.read_text(encoding='utf-8')
     async with get_pool().acquire() as connection:
         await connection.execute(schema_sql)

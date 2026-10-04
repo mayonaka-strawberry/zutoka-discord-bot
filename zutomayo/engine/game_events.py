@@ -1,13 +1,7 @@
 """
-Event taxonomy for the permanent per-game event stream (game_events table).
-
-Events are recorded live only (never during replay) and are observation-only:
-recording reads game state but never mutates it, so the deterministic-replay
-contract and the regression baselines are unaffected.
-
-The stream drives /zutomayo summary. The MatchNarrator translates engine
-events into these types; card references are [pack, id] pairs (the card_keys
-convention).
+Event types for the permanent game_events stream behind /zutomayo summary. Recorded
+live only, never during replay, and recording never changes game state. Card
+references are [pack, id] pairs.
 """
 
 from __future__ import annotations

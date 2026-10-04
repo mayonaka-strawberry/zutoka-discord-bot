@@ -1,4 +1,4 @@
-"""M0 gate: card database integrity."""
+"""Card database integrity, plus RNG determinism."""
 
 from collections import Counter
 

@@ -80,18 +80,7 @@ def parse_deck_input(
     raw_input: str,
     card_index: dict[tuple[int, int], Card],
 ) -> tuple[list[Card] | None, list[str]]:
-    """
-    Parse and validate a deck list string.
-
-    Args:
-        raw_input: The raw text from the user's modal input.
-        card_index: Pre-built (pack, id) -> Card lookup from build_card_index().
-
-    Returns:
-        A tuple of (cards, errors):
-        - cards is a list[Card] of exactly 20 cards if valid, or None if invalid
-        - errors is a list of human-readable error strings (empty if valid)
-    """
+    """Parse a deck list: (20 cards, []) if valid, else (None, error messages)."""
     errors: list[str] = []
 
     cleaned = raw_input.strip()

@@ -1,10 +1,5 @@
-"""Counter-based deterministic RNG for game-state chance events.
-
-The game state stores only two ints (key, counter). Every chance event
-derives its outcome purely from (key, counter) and increments the counter,
-so clones share identical futures and replays are exact. Implemented as
-splitmix64 streams + Fisher-Yates in pure Python: no generator objects to
-clone, no numpy per-call construction overhead, platform-stable.
+"""Counter-based RNG: each chance event is a pure function of (key, counter), so clones
+share every future. splitmix64 plus Fisher-Yates in pure Python.
 """
 
 from __future__ import annotations
@@ -21,8 +16,7 @@ def _splitmix64(x: int) -> int:
 
 
 def derive_seed(key: int, salt: int) -> int:
-    """A decorrelated 64-bit seed from (key, salt); used to give each game in
-    a series its own engine seed derived from one persisted series seed."""
+    """A 64-bit seed decorrelated from (key, salt); gives each game of a series its own seed."""
     x = ((key * 0x2545F4914F6CDD1D) ^ (salt * 0xD1342543DE82EF95)) & _MASK
     value, _ = _splitmix64(x)
     return value
@@ -38,10 +32,7 @@ def _stream(key: int, counter: int, count: int) -> list[int]:
     return out
 
 def shuffled(items: list[int], key: int, counter: int) -> list[int]:
-    """Deterministic Fisher-Yates shuffle of `items` for chance event `counter`.
-
-    Callers must bump the state's rng counter by 1 after use.
-    """
+    """Shuffle `items` for chance event `counter`. The caller must then increment the counter."""
     result = list(items)
     n = len(result)
     if n < 2:

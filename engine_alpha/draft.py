@@ -1,9 +1,5 @@
-"""Draft-phase helpers: pick legality and deck completion.
-
-The draft is the first 40 plies of the game: strictly alternating picks
-(20 each) from the full card pool, at most MAX_COPIES of any definition per
-player. The pool does not deplete (both players may pick the same card).
-The future-NIGHT player picks first; even pick numbers belong to them.
+"""Draft legality. The draft is the first 40 plies: alternating picks, 20 each, from a
+pool that never depletes, at most MAX_COPIES per card. The night player picks first.
 """
 
 from __future__ import annotations

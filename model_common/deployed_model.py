@@ -1,19 +1,12 @@
-"""Checkpoint discovery from the repository-root `model/` directory.
+"""Checkpoint discovery in the untracked repository-root model/ directory, filled by
+hand because checkpoints exceed GitHub's 100 MB file limit. Each stack has one entry
+named after its package:
 
-`model/` is the deployment drop point: an untracked folder the operator fills
-by hand, so the weights never pass through git (a bare PPO state dict is ~129
-MB, well over GitHub's per-file limit). Each stack claims one entry named after
-its package - `model/ppo_transformer`, `model/alpha_zero` - and the layout is
-deliberately permissive, because the file is placed manually and an extension
-is easy to forget:
+    model/ppo_transformer          a file with no extension
+    model/ppo_transformer.pt       the same, with the extension
+    model/ppo_transformer/*.pt     a directory: the last file by name wins
 
-    model/ppo_transformer          a file, whatever its name says
-    model/ppo_transformer.pt       the same file with the usual extension
-    model/ppo_transformer/*.pt     a directory, newest checkpoint wins
-
-Stdlib only, and no torch - the live Discord bot imports this path through
-`alpha_zero.inference` and `ppo_transformer.inference` on machines that carry
-no training code.
+Stdlib only, so importing it never needs torch.
 """
 
 from __future__ import annotations

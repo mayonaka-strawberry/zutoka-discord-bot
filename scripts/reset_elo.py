@@ -1,13 +1,10 @@
 """
-Reset every player's ELO for one ladder to the starting rating.
+Reset one Elo ladder for every player: rating and peak to the starting rating, games
+played to 0. Other stats are untouched.
 
 Usage:
     python scripts/reset_elo.py --format standard
     python scripts/reset_elo.py --format tcg
-
-Iterates all profiles in the database and resets the three ELO fields of the
-chosen ladder (rating, peak, games played). Lifetime win/loss/draw stats,
-deck stats, and opponent stats are left untouched.
 """
 
 from __future__ import annotations

@@ -1,15 +1,9 @@
 """Discord views for the draft phase.
 
-``DraftPackSelectionView`` walks a player through choosing the pack for each of
-their boxes, opens the boxes, reveals them, and hands off to
-``DraftCardPickerView`` for building a deck from the opened cards.
-
-``DraftCardPickerView`` is a paginated multi-select picker used in two modes:
-box mode (the pages mirror the two 25-card grid images of each opened box, with
-the matching image attached) and pool mode (a plain card list, used for the TCG
-side-deck pick). All draft views have no timeout; each callback first verifies
-the game is still active, so clicks on a stale view after a quit or end are
-handled gracefully.
+DraftPackSelectionView picks each box's pack, opens and reveals the boxes, then
+hands off to DraftCardPickerView: a paginated multi-select in box mode (pages match
+each box's two 25-card images) or pool mode (the TCG side-deck pick). The views have
+no timeout; every callback first checks that the game is still active.
 """
 
 from __future__ import annotations
@@ -109,10 +103,8 @@ class DraftCardPickerView(discord.ui.View):
         self._warning: str | None = None
         self._page_image_bytes: dict[int, bytes | None] = {}
 
-        # Each opened copy is its own option, so duplicates get a unique value
-        # via their global pool index. The option list mirrors the pool (and in
-        # box mode, the grid images) exactly, so the copy limit is enforced at
-        # selection time rather than by pruning the pool.
+        # One option per opened copy (value ends in its pool index), mirroring the pool; the
+        # copy limit is enforced when selecting.
         self.value_order: list[str] = []
         self.value_to_card: dict[str, 'Card'] = {}
         for pool_index, card in enumerate(self.pool_cards):
@@ -302,12 +294,8 @@ class DraftCardPickerView(discord.ui.View):
 
 
 class DraftPackSelectionView(discord.ui.View):
-    """Sequential pack picker: choose the pack for each box, then open them.
-
-    A single select is reused once per box (rather than one select per box) so
-    the layout stays within Discord's five-row component limit for up to five
-    boxes plus the confirm and start-over buttons.
-    """
+    """Pick each box's pack in turn, then open them. One select is reused per box to
+    stay within Discord's five-row limit."""
 
     def __init__(
         self,

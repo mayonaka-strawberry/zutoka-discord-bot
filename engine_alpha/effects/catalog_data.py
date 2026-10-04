@@ -1,8 +1,5 @@
-"""The IR catalog: one entry per effect id in the card DB (253 total).
-
-Authored family-by-family from the old engine's per-card implementations
-(zutomayo/effects/cards/effect_XX_YYY.py) — the behavioral ground truth.
-Families follow the exploration catalog (A..AK). Sides: SELF=0, OPP=1.
+"""The IR catalog: one entry per effect id (253), grouped by family (A to AK).
+Sides: SELF = 0, OPP = 1.
 """
 
 from __future__ import annotations
@@ -69,9 +66,7 @@ _buff("02-095", "C", 30, ("time", "day"))
 _buff("03-029", "C", 50, ("time", "day"))
 
 # --- Family D: +attack when the turn crossed day/night ----------------------
-# Fires when the named crossing happened at least once this turn, read off the
-# per-step transition flags (Q&A No.17/18): a clock that wraps or is reverted
-# still counts, which comparing turn-start period against 'now' would miss.
+# Fires if the crossing happened at any step this turn (Q&A No.17, 18).
 _buff("01-061", "D", 30, ("turn_became", "night"))
 _buff("01-090", "D", 20, ("turn_became", "night"))
 _buff("01-096", "D", 10, ("turn_became", "night"))
@@ -126,7 +121,7 @@ ENTRIES.append(E("01-005", "J", None, (("reverse_day_night", OPP),)))
 ENTRIES.append(E("01-063", "J", None, (("reverse_day_night", SELF),)))
 
 # --- Family O: +10 attack, override enemy battle character's attribute -------
-# The +10 applies even when the enemy has no battle character (old code).
+# The +10 applies even when the enemy has no battle character.
 for _eid, _attr in (("02-084", ELEC), ("02-088", DARK), ("02-096", WIND), ("02-100", FLAME)):
     ENTRIES.append(E(_eid, "O", None,
                      (("atk_bonus", SELF, 10), ("attr_override_enemy", _attr))))
@@ -136,9 +131,7 @@ _buff("04-060", "V", 20, ("enemy_stp_eq", 2))
 _buff("04-066", "V", 30, ("enemy_stp_eq", 2))
 
 # --- Family W: +attack if enemy character's attack is 0 ----------------------
-# All four share one condition (Q&A No.60): 'the enemy's attack is 0' covers a
-# printed 0, no character set, and an unmet power cost alike. The old engine's
-# 04-084/04-101 variant that skipped the 04-099 set was an inlining artifact.
+# "The enemy's attack is 0" includes no character and an unmet power cost (Q&A No.60).
 _buff("04-034", "W", 30, ("enemy_atk_eq0",))
 _buff("04-039", "W", 40, ("enemy_atk_eq0",))
 _buff("04-084", "W", 50, ("enemy_atk_eq0",))
@@ -240,7 +233,7 @@ _buff("02-059", "AH", 30, ("and", ("time", "day"), ("own_battle_played",)))
 # --- Family K: chronos manipulation --------------------------------------------
 MIDNIGHT_POS, NOON_POS = 4, 13
 ENTRIES.append(E("01-008", "K", None, (("chronos_revert_turn_start",),),
-                 notes="raw assignment; no transition flags recorded (old code)"))
+                 notes="no day/night crossing recorded (Q&A No.17)"))
 ENTRIES.append(E("01-026", "K", None, (("chronos_back_opp_clock",),)))
 ENTRIES.append(E("02-036", "K", ("abyss_attr_count_ge", SELF, FLAME, 2),
                  (("set_chronos_to", MIDNIGHT_POS),)))
@@ -257,13 +250,8 @@ ENTRIES.append(E("02-011", "K", ("prev_char_attr", SELF, FLAME),
 ENTRIES.append(E("04-106", "K", None, (("adv_chronos", 9),)))
 
 # --- Family L: draw / hand-cycling ----------------------------------------------
-# 01-092 / 04-089: draw 1 + permanent pending hand bonus.
-# Neither card's text carries an "if you can draw" condition, so the old `deck_ge`
-# gate had no basis: it silently turned an impossible draw into a no-op, while an
-# identically-worded draw elsewhere (03-031) lost the game. Ground Rules 8.2.1 is that
-# a player who cannot draw the named number loses at that moment, and _op_draw_exact
-# now records it. (Q&A No.92 marks the boundary: a deck reaching 0 with no shortfall
-# is not a loss -- that waits for the end-of-turn draw.)
+# 01-092 / 04-089: draw 1 + permanent pending hand bonus. No deck-size gate: a
+# short deck loses (Ground Rules 8.2.1).
 ENTRIES.append(E("01-092", "L", None,
                  (("draw_exact", SELF, 1), ("hand_bonus", SELF))))
 ENTRIES.append(E("04-089", "L", ("battle_song", SELF, SONG("TAIDADA")),
@@ -300,7 +288,7 @@ ENTRIES.append(E("04-058", "L", None,
                  (("pick_card", 0, Sel(SELF, "hand", attribute=WIND)),
                   ("move_reg", 0, "abyss", SELF, "bottom"),
                   ("draw_exact", SELF, 1))))
-# 04-062/04-063: choose N filtered -> abyss -> draw min(N, deck)
+# 04-062/04-063: choose N filtered -> abyss -> draw min(N, deck); a short deck loses
 ENTRIES.append(E("04-062", "L", None,
                  (("multiselect", 0, Sel(SELF, "hand", attribute=DARK), 0),
                   ("if_reg_empty", 0, 3),
@@ -317,9 +305,7 @@ ENTRIES.append(E("01-086", "L", ("and", ("hand_count_ge", SELF, 1), ("abyss_coun
                   ("pick_card", 1, Sel(SELF, "abyss")),
                   ("move_reg", 0, "abyss", SELF, "bottom"),
                   ("move_reg", 1, "hand", SELF, "bottom"))))
-# 04-053: 'may' place a STUDY-ME character from hand -> own charger -> draw 1.
-# The pick is declinable (card text: "you may place... if you do, draw 1");
-# skipping (or no candidate) jumps past both the move and the draw.
+# 04-053: you may place a STUDY-ME character from hand on your charger; if you do, draw 1.
 ENTRIES.append(E("04-053", "L", None,
                  (("pick_card_opt", 0, Sel(SELF, "hand", card_type=TYPE_CHARACTER, song=SONG("STUDY_ME")), 3),
                   ("move_reg", 0, "charger", SELF, "bottom"),
@@ -356,25 +342,22 @@ ENTRIES.append(E("04-107", "U", None, (("opp_area_to_abyss",),),
 
 # --- 01-006: use an enchant effect from your own abyss (nested resolution) --------
 ENTRIES.append(E("01-006", "L", None, custom="use_abyss_enchant",
-                 notes="borrowed effect dispatched without cost check (old _dispatch)"))
+                 notes="borrowed effect skips the cost check"))
 
 # --- Family N: reveal / hand-information -------------------------------------------
 # 03-045: reveal opponent's hand, then shuffle it (chance event; skipped on empty hand)
 ENTRIES.append(E("03-045", "N", ("hand_count_ge", OPP, 1),
                  (("reveal_hand", OPP), ("shuffle_hand", OPP))))
-# Reveal own hand, then buff on distinct-attribute count. The JP text reads
-# 「手札を公開し、N属性以上あるなら、攻撃力+X」: only the bonus is conditional, the
-# reveal is not. Q&A No.89 is explicit that the reveal cannot be declined -- with
-# the power cost met the hand must be shown even when it holds fewer than N
-# attributes -- so the reveal runs first and only the atk_bonus sits behind if_not.
+# Reveal own hand, then +attack if it holds N attributes. The reveal is mandatory
+# (Q&A No.89).
 for _eid, _amount, _attrs in (("04-008", 80, 4), ("04-097", 50, 3), ("04-032", 50, 4)):
     ENTRIES.append(E(_eid, "N", None,
                      (("reveal_hand", SELF),
                       ("if_not", ("and", ("hand_count_ge", SELF, 1),
                                   ("hand_distinct_attr_ge", SELF, _attrs)), 3),
                       ("atk_bonus", SELF, _amount))))
-# Name-guess: SelectIdentity, then a 1-based number pick into the opponent's
-# hand (old prompts: text input then number selection); +N attack on match.
+# Name guess: an identity pick, then a 1-based position in the opponent's hand;
+# +N attack on a match.
 for _eid, _amount in (("03-047", 50), ("03-059", 100), ("03-094", 40), ("03-105", 100)):
     ENTRIES.append(E(_eid, "N", ("hand_count_ge", OPP, 1),
                      (("name_guess", 0),
@@ -382,15 +365,9 @@ for _eid, _amount in (("03-047", 50), ("03-059", 100), ("03-094", 40), ("03-105"
                       ("name_guess_bonus", 0, 1, _amount))))
 
 # --- Family AA: TAIDADA reveal-count buffs ------------------------------------------
-# multiselect = number prompt (0..len) then that many picks, matching both the
-# old _prompt_card_multiselect cards and 04-035's hand-rolled version.
-# The if_reg_empty guard falls through to the next op rather than skipping the
-# reveal: reveal_reg emits an empty-tailed EVENT_CARDS_REVEALED that the
-# narrator renders as "nothing revealed", and atk_bonus already adds
-# 0 * _per == 0 on that path. The now-vestigial op is kept rather than deleted
-# because features.py featurizes op verbs into EFFECT_FEATURES, a registered
-# buffer in the deployed alpha_zero / ppo_transformer checkpoints; jump targets
-# are not featurized, so retargeting it leaves those checkpoints untouched.
+# multiselect: a number prompt (0..len), then that many picks. The if_reg_empty
+# guard is vestigial (it falls through) but kept: removing an op would change the
+# effect features the deployed models were trained on.
 for _eid, _per in (("04-001", 30), ("04-007", 20), ("04-010", 20),
                    ("04-035", 10), ("04-091", 10)):
     ENTRIES.append(E(_eid, "AA", None,
@@ -427,18 +404,12 @@ ENTRIES.append(E("04-100", "AD", ("battle_song", SELF, SONG("NEKO_RESET")),
                  (("reflect", SELF),)))
 
 # --- Family AE: end-of-turn effects -----------------------------------------------------
-# 03-027 「相手のHPを50回復させ、ターン終了時に50ダメージを与える」. The pending damage is
-# recorded on the CASTER, not the victim: it is the caster's turn-end effect, so it
-# resolves in the caster's priority batch and the caster orders it among their own
-# (Q&A No.25 attributes the damage to this card; Q&A No.96 / GR 5.2.10.2 put a player's
-# turn-end effects in that player's batch). execute_turn_end_item deals it to the
-# opponent. Recording it on the victim also produced an unshowable -1 in the ordering
-# prompt, since the card sits in the caster's set zone.
+# 03-027: the pending damage is recorded on the caster, whose turn-end batch deals it
+# to the opponent (Q&A No.25, 96).
 ENTRIES.append(E("03-027", "AE", None, (("heal", OPP, 50), ("eot_damage", SELF, 50))))
-# 03-058 / 03-085: dispatchable no-ops — their healing/clock/removal behavior
-# lives in turn_end.py and removal.py (mirrors the old engine layout).
-ENTRIES.append(E("03-058", "AE", None, (), notes="behavior in process_end_of_turn_effects"))
-ENTRIES.append(E("03-085", "AE", None, (), notes="behavior in process_end_of_turn_effects"))
+# 03-058 / 03-085: no-op programs; their behavior is in turn_end.py and removal.py.
+ENTRIES.append(E("03-058", "AE", None, (), notes="behavior in turn_end.py and removal.py"))
+ENTRIES.append(E("03-085", "AE", None, (), notes="behavior in turn_end.py and removal.py"))
 
 # --- Family AF: CHAOS bank-or-lose bombs -------------------------------------------------
 ENTRIES.append(E("04-006", "AF", None, custom="chaos_04_006"))
@@ -463,9 +434,8 @@ ENTRIES.append(E("04-028", "AF", None, (
     ("lose_game",),
 )))
 ENTRIES.append(E("04-088", "AF", None, custom="chaos_04_088"))
-# 04-105: bank 8, then BOTH chargers empty into their own owners' abysses.
-# Falling short of 8 is an immediate self-defeat and nothing else resolves
-# (confirmed ruling) — so the wipe lives only on the success branch.
+# 04-105: bank 8, then both chargers empty into their owners' abysses.
+# Short of 8: self-defeat, and no wipe.
 ENTRIES.append(E("04-105", "AF", None, (
     ("if_not", ("abyss_count_ge", SELF, 8), 7),   # fewer than 8 -> lose, nothing else
     ("picks_exact", 0, Sel(SELF, "abyss"), 8),
@@ -492,14 +462,14 @@ ENTRIES.append(E("02-058", "AG", None,
 ENTRIES.append(E("03-097", "AJ", None, custom="reveal_top_03_097"))
 ENTRIES.append(E("03-103", "AJ", None, custom="reveal_top_03_103"))
 
-# --- Remaining area enchants with per-turn resolve bodies -----------------------------------
+# --- Remaining area enchants, then 02-015 --------------------------------------------------
 ENTRIES.append(E("02-064", "AK", None,
                  (("atk_bonus", SELF, ("mul", ("count", Sel(SELF, "charger", attribute=ELEC)), 20)),),
                  notes="area; removal when opponent HP <= 30"))
 _buff("02-086", "AK", 20, ("time", "night"))
 _buff("02-098", "AK", 20, ("time", "day"))
-# 03-055: bounce opponent's area to their deck bottom WITHOUT leave-play
-# cleanup (old code inline), then block their area-enchant placement.
+# 03-055: bounce the opponent's area to their deck bottom without leave-play
+# cleanup, then block their area placement.
 ENTRIES.append(E("03-055", "AK", None,
                  (("bounce_opp_area", "bottom", False), ("block_area", OPP))))
 ENTRIES.append(E("03-064", "AK", None,
@@ -510,13 +480,13 @@ for _eid, _attr in (("03-086", DARK), ("03-092", FLAME), ("03-098", ELEC), ("03-
                      (("atk_bonus", SELF, ("mul", ("count", Sel(SELF, "abyss", attribute=_attr)), 10)),),
                      notes="area; removal at >=4 abyss cards"))
 _buff("04-033", "AK", 20, ("abyss_all_attr", SELF, WIND))
-# 03-061: dispatchable no-op; clock override + removal live in the engine.
+# 03-061: no-op program; the engine applies it.
 ENTRIES.append(E("03-061", "AK", None, (), notes="all clocks 1 via battle.all_clocks_one"))
 # 02-015: additional enchant from hand + draw (custom; condition on entry)
 ENTRIES.append(E("02-015", "S", ("and", ("prev_char_attr", SELF, DARK), ("time", "day")),
                  custom="additional_enchant_02_015"))
 
-# --- Engine-inline passives (excluded from the old handler registry) ------------------------
+# --- Inline passives: featurized, never dispatched ---
 ENTRIES.append(E("02-005", "AK", None, (), inline=True,
                  notes="disables opponent CHARACTER clocks; battle.opponent_clock_disabled"))
 ENTRIES.append(E("02-007", "AK", None, (), inline=True,

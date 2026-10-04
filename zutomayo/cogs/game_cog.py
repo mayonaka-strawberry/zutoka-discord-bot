@@ -50,11 +50,7 @@ class GameCog(commands.Cog):
 
     @commands.Cog.listener('on_interaction')
     async def capture_interaction_user_name(self, interaction: discord.Interaction) -> None:
-        """
-        Record the acting user's name on every interaction. Interaction payloads
-        carry the user regardless of gateway intents, so this replaces the member
-        cache that the (removed) privileged members intent used to fill.
-        """
+        """Remember the acting user's name on every interaction (no members intent needed)."""
         if interaction.user is None or interaction.user.bot:
             return
         remember_user(interaction.user.id, interaction.user.global_name or interaction.user.name)
@@ -201,9 +197,7 @@ class GameCog(commands.Cog):
             )
             return
 
-        # Checked ahead of availability so model A gives its own message rather
-        # than the generic one, and starts working with no code change the
-        # moment a checkpoint is dropped into model/.
+        # Checked first so model A gets its own message.
         if model == SOLO_OPPONENT_ALPHA_ZERO:
             from alpha_zero.inference import find_checkpoint
 
@@ -241,9 +235,7 @@ class GameCog(commands.Cog):
 
         session.game_task = self.bot.loop.create_task(run_solo_game(self.bot, session, opponent))
 
-    # Disabled feature; re-enable by uncommenting (the command tree has free
-    # slots). The supporting code (RankSongsView, CheckpointChoiceView,
-    # get_checkpoint_path) is intact.
+    # Disabled; uncomment to re-enable. RankSongsView and its checkpoint helpers still exist.
     # @group.command(name='ranksongs', description='Rank your favourite ZUTOMAYO songs')
     # @app_commands.dm_only()
     # async def rank_songs(self, interaction: discord.Interaction):
@@ -755,10 +747,8 @@ class GameCog(commands.Cog):
     @group.command(name='resume', description='Resume one of your saved games')
     @app_commands.describe(game_id='The saved game to resume')
     async def resume_saved_game(self, interaction: discord.Interaction, game_id: str) -> None:
-        """Resume from a DM or a server channel. Every game already plays out in
-        DMs; the channel only carries public narration, so where the command is
-        used decides how a two-player confirmation is delivered, not whether the
-        game can run."""
+        """Resume from a DM or a server channel. For a two-player game, where it is used decides
+        how the confirmation is delivered, and a server channel becomes the game's channel."""
         from zutomayo.match.resume import load_saved_game_for_resume
 
         try:
@@ -775,8 +765,7 @@ class GameCog(commands.Cog):
     async def _resume_solo_game(
         self, interaction: discord.Interaction, game_id: str, row: dict,
     ) -> None:
-        """Solo games are played entirely over DM, so they resume from anywhere
-        and keep their recorded channel (0 - nothing is posted publicly)."""
+        """Solo games are DM-only, so they resume anywhere and keep channel 0 (nothing public)."""
         from zutomayo.engine.game_persistence import (
             STATUS_ACTIVE,
             STATUS_SAVED,
@@ -794,9 +783,7 @@ class GameCog(commands.Cog):
                 announcement='**Game resumed.**',
             )
         except ValueError as error:
-            # Usually the solo opponent's checkpoint is no longer deployed.
-            # Leave the game saved rather than starting a match whose bot seat
-            # nobody can answer for.
+            # Usually the model's checkpoint is gone: leave the game saved.
             log.warning('Solo resume of game %s failed: %s', game_id, error)
             await store.set_status(STATUS_SAVED)
             await interaction.followup.send(
@@ -1201,11 +1188,7 @@ class GameCog(commands.Cog):
         ranked_rows: list[dict],
         **embed_kwargs,
     ) -> None:
-        """
-        Render and send a leaderboard. Short leaderboards (<= one page) are sent as a
-        plain embed; longer ones get a paginated LeaderboardView. The same renderer
-        kwargs flow through to build_leaderboard_embed either way.
-        """
+        """Send a leaderboard: one page as a plain embed, more as a paginated LeaderboardView."""
         await ensure_display_names(
             self.bot,
             [row['user_id'] for row in ranked_rows[:LeaderboardView.PAGE_SIZE]]
@@ -1281,7 +1264,7 @@ class GameCog(commands.Cog):
 
     @staticmethod
     async def _record_forfeit_for_session(session, quitter_id: int) -> None:
-        """Record a forfeit_given for the quitter and forfeit_received for the human opponent (if any).
+        """Record forfeits_given for the quitter and forfeits_received for the human opponent (if any).
         Storage errors are logged and swallowed so the quit/end command stays responsive.
         """
         from zutomayo.data.player_storage import BOT_DISCORD_ID, record_forfeit

@@ -1,23 +1,14 @@
-"""Game state structs: __slots__, integers everywhere, fast hand-rolled clone.
+"""Game state: __slots__ structs of ints with a hand-written fast_clone.
 
-A card *definition* is an int index into cards.CARD_DB (immutable, shared).
-A card *instance* is an int index into the per-game parallel instance arrays
-held on GameState. Zone containers hold instance ids. No copy.deepcopy is
-used anywhere: fast_clone() hand-copies every mutable slot.
-
-Per-turn effect-modifier state (the old engine's TurnEffectState) lives in
-fixed-slot int arrays: one per player (PF_*) and one shared (GF_*), plus a
-couple of Python-int bitmask slots. All of it is real game state and is
-cloned and observed.
+Card definitions index cards.CARD_DB; card instances index the per-game `inst_*` arrays,
+and zones hold instance ids. Per-turn effect state lives in flag arrays: per player (PF_*)
+and shared (GF_*).
 """
 
 from __future__ import annotations
 
 from array import array
 
-# ---------------------------------------------------------------------------
-# Phases
-# ---------------------------------------------------------------------------
 PH_DRAFT = 0
 PH_MULLIGAN = 1
 PH_INITIAL_SET = 2
@@ -39,13 +30,11 @@ PHASE_NAMES = (
     "PROCESS_EFFECTS", "BATTLE", "TURN_END_EFFECTS", "END_TURN", "GAME_OVER",
 )
 
-# ---------------------------------------------------------------------------
-# Per-player turn-effect flags (PF_*): indices into PlayerState.flags
-# ---------------------------------------------------------------------------
+# Per-player turn flags: indices into PlayerState.flags.
 PF_ATTACK_BONUS = 0            # net attack bonus; derived summary, see attack_mods
 PF_DAMAGE_REDUCTION = 1        # summed damage reduction owned by this player
-PF_DAY_NIGHT_REVERSED = 2      # 01-005 applied against this player
-PF_POWER_BONUS = 3             # 02-058 style extra power (chars/enchants only)
+PF_DAY_NIGHT_REVERSED = 2      # day/night attack reversed (01-005 on the opponent, 01-063 on self)
+PF_POWER_BONUS = 3             # 02-058 style extra power (characters and enchants only)
 PF_CHAR_TO_POWER = 4           # owner placed own CHARACTER on own charger
 PF_END_OF_TURN_DAMAGE = 5      # 03-027 pending end-of-turn damage
 PF_OPP_CARD_TO_ABYSS = 6       # this player's opponent performed an abyss placement
@@ -53,7 +42,7 @@ PF_ABYSS_RECEIVED = 7          # this player's abyss received a card (any actor)
 PF_BATTLE_DAMAGE = 8           # battle damage taken this turn
 PF_DAMAGE_TAKEN = 9            # total damage taken this turn (battle + effect)
 PF_BATTLE_LOST = 10            # lost the battle this turn (even at 0 damage)
-PF_DAMAGE_NOT_REDUCIBLE = 11   # 04-024: this player's battle damage can't be reduced
+PF_DAMAGE_NOT_REDUCIBLE = 11   # 04-024: battle damage this player deals can't be reduced
 PF_CARD_TO_POWER = 12          # owner placed any card on own charger
 PF_ATTACK_OVERRIDE = 13        # last 04-099 set value, -1 = none; derived summary
 PF_REFLECT_REDUCTION = 14      # 04-100 active for this player
@@ -61,9 +50,7 @@ PF_DAMAGE_REDUCED = 15         # how much battle damage was reduced this turn
 PF_CHRONOS_ADVANCED = 16       # this player's clock contribution this turn
 N_PLAYER_FLAGS = 17
 
-# ---------------------------------------------------------------------------
-# Shared turn-effect flags (GF_*): indices into GameState.gflags
-# ---------------------------------------------------------------------------
+# Shared turn flags: indices into GameState.gflags.
 GF_MIDNIGHT_EXTENDED = 0       # 03-026 active this turn
 GF_DAY_TO_NIGHT = 1            # a day->night transition occurred this turn
 GF_NIGHT_TO_DAY = 2            # a night->day transition occurred this turn
@@ -76,23 +63,11 @@ def _fresh_player_flags() -> array:
     return flags
 
 
-# ---------------------------------------------------------------------------
-# Attack modifiers (PlayerState.attack_mods)
-# ---------------------------------------------------------------------------
-# Official Q&A No.54 and No.68: attack modifiers are neither collapsed into a
-# number when they resolve nor summed into one total. They are kept in
-# resolution order and folded onto the live base at battle time, clamped to >=0
-# after each step. 04-099's "set the opponent's attack to 100" is an
-# ATTACK_MOD_SET entry in the same list (Q&A No.82), so whether it wipes a bonus
-# or is added to depends purely on resolution order.
+# Attack modifier kinds (PlayerState.attack_mods): kept in resolution order and folded at
+# battle time (Q&A No.54, 68, 82). 04-099 is a SET in the same list. Not observed.
 ATTACK_MOD_ADD = 0
 ATTACK_MOD_SET = 1
-# 03-064 adds each side's REMAINING HP, read at attack determination rather than
-# when the area enchant resolves (Q&A No.33: 攻撃力の決定時). Stored as a deferred
-# entry so it keeps its place in the fold order; the amount is resolved in
-# battle.get_effective_attack. This list is runtime state only -- it is not
-# featurized, so the extra kind does not change the observation layout.
-ATTACK_MOD_ADD_OWN_HP = 2
+ATTACK_MOD_ADD_OWN_HP = 2      # 03-064: owner's HP as read at attack determination (Q&A No.33)
 
 
 def add_attack_modifier(player: "PlayerState", amount: int) -> None:
@@ -103,14 +78,8 @@ def add_attack_modifier(player: "PlayerState", amount: int) -> None:
 
 
 def add_own_hp_attack_modifier(player: "PlayerState") -> None:
-    """Record 03-064's "+= your remaining HP", resolved at battle time.
-
-    Deliberately does NOT touch PF_ATTACK_BONUS: the amount is only known at attack
-    determination (Q&A No.33), so anything written here goes stale the moment HP
-    changes. That flag is a live neural-network input (observation.py encodes every
-    player flag), and battle.get_effective_attack — which is also encoded — already
-    reports the true total, so a stale snapshot would be both wrong and redundant.
-    """
+    """Record 03-064's "+ your remaining HP", resolved at battle time. Leaves
+    PF_ATTACK_BONUS alone because the amount is unknown until then (Q&A No.33)."""
     player.attack_mods.append(ATTACK_MOD_ADD_OWN_HP)
     player.attack_mods.append(0)
 
@@ -154,9 +123,7 @@ class PlayerState:
         self.prev_battle_def = -1
         self.swapped_from_songs = 0
         self.flags = _fresh_player_flags()
-        # This turn's attack modifiers in resolution order. Authoritative for
-        # battle.get_effective_attack; PF_ATTACK_BONUS/PF_ATTACK_OVERRIDE are
-        # derived summaries kept only for the network observation.
+        # Authoritative; PF_ATTACK_BONUS and PF_ATTACK_OVERRIDE are summaries for the observation.
         self.attack_mods = array("h")
 
     def fast_clone(self) -> "PlayerState":
@@ -184,12 +151,8 @@ class PlayerState:
 
 
 class Frame:
-    """A paused effect resolution (explicit continuation, cloneable).
-
-    Interpreted effects run ops from EFFECT_TABLE[effect_index] starting at
-    `pc`; `regs` holds choice results (ints or int lists). Custom-coded
-    effects keep their continuation in `step`/`data` instead.
-    """
+    """A paused effect resolution. IR effects resume at `pc` in
+    interpreter.EFFECT_PROGRAMS with choices in `regs`; custom handlers use `step` and `data`."""
 
     __slots__ = ("effect_index", "source", "owner", "pc", "regs", "step", "data")
 
@@ -215,7 +178,7 @@ class Frame:
 
 
 class DraftState:
-    __slots__ = ("pick_number", "decks")  # decks: per player, list of def indices
+    __slots__ = ("pick_number", "decks")  # decks: definition indices per player
 
     def __init__(self) -> None:
         self.pick_number = 0               # 0..39; even -> first picker
@@ -234,16 +197,15 @@ class GameState:
         "players",
         "last_battle_winner",   # -1 none/draw, else winning player index
         "winner",               # -1 in progress, 0/1 winner index, 2 draw
-        # CHAOS bank-or-lose bookkeeping. Informational only: the win check and
-        # returns are unaffected, and these never enter the NN observation. The
-        # bot layer reads them to rate a thrown game differently.
+        # CHAOS self-defeat record. Does not affect the result and is not observed;
+        # read by the bot's Elo rules and the training stacks.
         "self_defeat_player",   # -1 none, else the player who self-defeated
         "self_defeat_turn",     # -1 none, else the turn it happened on
-        # Parallel per-instance arrays (index = instance id, append-only)
-        "inst_def",             # def index
-        "inst_played",          # played_this_turn 0/1
-        "inst_neg",             # effects_disabled 0/1
-        "inst_cost_red",        # power_cost_reduction
+        # Per-instance arrays, indexed by instance id (append-only)
+        "inst_def",             # definition index
+        "inst_played",          # played this turn, 0/1
+        "inst_neg",             # effect disabled, 0/1
+        "inst_cost_red",        # power cost reduction
         "inst_attr_ovr",        # attribute override, -1 = none
         "inst_face_up",         # 0/1
         # Decision plumbing

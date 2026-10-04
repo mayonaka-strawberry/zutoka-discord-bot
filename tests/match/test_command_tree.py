@@ -101,8 +101,7 @@ def test_play_uniguri_reports_model_a_untrained(monkeypatch):
 
 
 def test_play_uniguri_offers_only_the_letters():
-    """Players pick a model by letter; the stack behind each letter is an
-    implementation detail that must never reach the command picker."""
+    """Players pick a model by letter; stack names never reach the command picker."""
     command = next(
         command for command in GameCog.group.commands if command.name == 'playuniguri'
     )

@@ -1,9 +1,7 @@
-"""Condition-tree evaluation against the game state.
-
-All sides are relative to the effect owner (0 = owner, 1 = opponent).
-Attribute checks use the effective attribute (02-084 overrides).
-Cost checks on battle characters use the printed power_cost (matching the
-old effect implementations, which read card.power_cost directly).
+"""Condition-tree evaluation. Sides are relative to the owner (0 = owner,
+1 = opponent); attribute checks use the effective attribute (02-084), except
+prev_char_attr, which reads the printed one (Q&A No.81); cost checks use the
+printed power cost.
 """
 
 from __future__ import annotations
@@ -58,11 +56,8 @@ def eval_cond(state: GameState, owner_index: int, cond) -> bool:
     if kind == "enemy_stp_eq":
         return enemy.battle != -1 and SEND_TO_POWER_T[_battle_def(state, enemy)] == cond[1]
     if kind == "enemy_atk_eq0":
-        # Q&A No.60: covers a printed 0, no character set, and an unmet power
-        # cost alike -- anything that leaves the enemy unable to attack. All
-        # four cards with this text (04-034/04-039/04-084/04-101) use it; the
-        # old engine's 04-084/04-101 variant that skipped the 04-099 set was an
-        # inlining artifact with no basis in the rulings.
+        # True whenever the enemy cannot attack: printed 0, no character, or an
+        # unmet power cost (Q&A No.60). Used by 04-034, 04-039, 04-084, 04-101.
         from ..battle import get_effective_attack
         return get_effective_attack(state, enemy) == 0
     if kind == "time":
@@ -74,13 +69,8 @@ def eval_cond(state: GameState, owner_index: int, cond) -> bool:
         flag = GF_DAY_TO_NIGHT if cond[1] == "d2n" else GF_NIGHT_TO_DAY
         return bool(state.gflags[flag])
     if kind == "turn_became":
-        # Official Q&A No.17/No.18: the effect fires when the named crossing
-        # happened AT LEAST ONCE this turn, even if the clock ends the turn in
-        # the period it started in. Q&A No.18's example runs night -> day ->
-        # night in one turn and still activates a "day changes to night" card,
-        # so comparing chronos_at_turn_start against the current period (what
-        # the old code did) is wrong. advance_chronos_by records each crossing
-        # in the shared flags, which is exactly what this needs.
+        # The named crossing happened at least once this turn, even if the clock
+        # ended in the period it started in (Q&A No.17, 18).
         flag = GF_NIGHT_TO_DAY if cond[1] == "day" else GF_DAY_TO_NIGHT
         return bool(state.gflags[flag])
     if kind == "own_hp_le":
@@ -132,11 +122,8 @@ def eval_cond(state: GameState, owner_index: int, cond) -> bool:
         return enemy.set_c != -1
     if kind == "own_battle_played":
         return own.battle != -1 and bool(state.inst_played[own.battle])
-    # Currently used by ZERO catalog entries, and that is deliberate: the 2026-08
-    # audit stripped it off 01-092/04-089, where an "if you can draw" gate with no
-    # basis in the card text silently turned an impossible draw into a no-op
-    # instead of the Ground Rules 8.2.1 loss. Kept because the primitive itself is
-    # sound -- but a new entry using it needs the card text to actually say "if".
+    # Unused. Gate an entry on it only if the card text says "if": otherwise a
+    # short deck must lose the game (Ground Rules 8.2.1).
     if kind == "deck_ge":
         return len(_player(state, owner_index, cond[1]).deck) >= cond[2]
     if kind == "hand_count_ge":

@@ -1,8 +1,5 @@
-"""Long-running invariant fuzzer (M1 gate: 1M steps clean).
-
-Plays random games (mixing draft and fixed-deck modes) checking invariants
-at every decision. On violation, prints the seed and action trace for exact
-reproduction and exits non-zero.
+"""Invariant fuzzer: random draft and fixed-deck games, checking invariants at every
+decision. A violation prints the seed and action trace, then exits non-zero.
 
 Usage: python -m engine_alpha.scripts.fuzz [--steps N]
 """

@@ -1,12 +1,7 @@
 """
-Read-only projections of engine_alpha game state for the UI layer.
-
-CardView duck-types the two attributes the board renderer and embed helpers
-read from the old CardInstance (``face_up`` and ``card``), and PlayerView
-exposes the old Player zone attribute names (``battle_zone``, ``set_zone_a``,
-``set_zone_b``, ``set_zone_c``, ``power_charger``, ``abyss``, ``hand``,
-``deck``), so the PIL renderer and embed builders work on projections
-without changes to their drawing logic.
+Read-only views of engine state for the UI: CardView (`face_up`, `card`) and
+PlayerView (`battle_zone`, `set_zone_a/b/c`, `power_charger`, `abyss`, `hand`,
+`deck`), the attribute names the board renderer and embeds read.
 """
 
 from __future__ import annotations
@@ -97,7 +92,7 @@ class PlayerView:
 
     @property
     def side(self):
-        """Legacy Chronos side enum, read by the board renderer."""
+        """Chronos side enum, read by the board renderer."""
         from zutomayo.enums.chronos import Chronos
 
         return Chronos.NIGHT if self.side_is_night else Chronos.DAY

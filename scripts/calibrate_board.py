@@ -1,29 +1,20 @@
 """
-Calibration script: overlays the card rectangles the renderer actually uses onto the board
-image, together with the printed card slot outlines they are meant to be centred in, so any
-drift between the two is visible at a glance.
+Calibration: overlay the renderer's card rectangles on the board, with the printed
+slot outlines they should be centred in.
 
-Layers drawn:
-  white   printed card slot outlines measured from board.png (the reference)
+  white   printed slot outlines (the reference)
   green   DAY card rectangles, with a centre tick
   red     NIGHT card rectangles, with a centre tick
-  yellow  the board art's rotational centre crosshair and horizontal midline
+  yellow  the art's rotational centre crosshair and midline
 
-The two battle rectangles should sit centred on the vertical crosshair line, one on each
-side of the midline, and every card rectangle should sit centred inside its white slot.
-
-Run from project root:
-python scripts/calibrate_board.py
-
-Output:
-scripts/calibration_output.png
+Run from the project root: python scripts/calibrate_board.py
+Output: scripts/calibration_output.jpg
 """
 
 import sys
 from pathlib import Path
 
 
-# Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 

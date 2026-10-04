@@ -1,8 +1,6 @@
--- Zutoka Discord bot PostgreSQL schema.
--- Applied idempotently at bot startup (zutomayo.data.database.apply_schema)
--- and manually via scripts/apply_schema.py.
---
--- Card definitions stay in zutomayo/data/cards.json and are never stored here.
+-- Zutoka Discord bot schema. Idempotent: applied at startup
+-- (zutomayo.data.database.apply_schema) or by scripts/apply_schema.py.
+-- Card definitions stay in zutomayo/data/cards.json.
 
 CREATE TABLE IF NOT EXISTS schema_metadata (
     key   TEXT PRIMARY KEY,

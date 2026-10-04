@@ -1,21 +1,14 @@
-"""End-of-turn effect processing.
+"""Turn-end effects: what is eligible and what each item does.
+Game._ph_turn_end_effects runs the window: priority player first, and each
+player orders their own items.
 
-Ground Rules 5.2.10.2 and Q&A No.102: the turn-end window is its own timing, so
-the priority player is re-read from the Chronos medal when the window opens and
-resolves their whole batch first. Q&A No.96 adds that a player holding several
-turn-end effects chooses the order among their own. Both are driven by
-Game._ph_turn_end_effects, which collects the items below and dispatches them;
-this module only decides what is eligible and what each item does.
+Items:
+    ITEM_END_DAMAGE  03-027 pending damage (summed across copies)
+    ITEM_REFLECT     04-100 reflects the damage reduced this turn
+    ITEM_AREA_03_085 03-085 clock advance
+    ITEM_AREA_03_058 03-058 heal for both players
 
-Item kinds, one per distinct turn-end effect a player can hold:
-    ITEM_END_DAMAGE  03-027 pending damage (accumulated across copies)
-    ITEM_REFLECT     04-100 reflect of the damage reduced this turn
-    ITEM_AREA_03_085 03-085 turn-end clock advance
-    ITEM_AREA_03_058 03-058 turn-end heal for both players
-
-Self-removal of 03-058/03-085 at 30+ damage taken is NOT handled here: their
-text says すぐに, so removal.check_area_removal does it the moment the threshold
-is crossed (Q&A No.16).
+03-058 and 03-085 leave play at 30+ damage immediately, in removal.py (Q&A No.16).
 """
 
 from __future__ import annotations
@@ -41,8 +34,7 @@ ITEM_AREA_03_058 = 3
 
 
 def _find_set_instance(state: GameState, player: PlayerState, effect_index: int) -> int:
-    """A representative instance for the ordering prompt: the set-zone card
-    that produced this pending turn-end effect."""
+    """The set-zone card behind a turn-end item, shown in the ordering prompt."""
     for instance_id in (player.set_a, player.set_b):
         if instance_id != -1 and EFFECT_T[state.inst_def[instance_id]] == effect_index:
             return instance_id
@@ -50,9 +42,8 @@ def _find_set_instance(state: GameState, player: PlayerState, effect_index: int)
 
 
 def collect_turn_end_items(state: GameState, player: PlayerState) -> list[tuple[int, int]]:
-    """Eligible (kind, instance_id) items for one player, in a stable default
-    order. Whether an item still does anything is decided when it executes:
-    an earlier item can change HP, the clock, or remove an area enchant."""
+    """A player's eligible (kind, instance_id) items in default order. Each item
+    re-checks itself when it runs."""
     items: list[tuple[int, int]] = []
     if player.flags[PF_END_OF_TURN_DAMAGE] > 0:
         items.append((ITEM_END_DAMAGE, _find_set_instance(state, player, FX_03_027)))
@@ -69,13 +60,8 @@ def collect_turn_end_items(state: GameState, player: PlayerState) -> list[tuple[
 
 
 def process_end_of_turn_effects(state: GameState) -> None:
-    """Resolve the whole turn-end window without prompting for order.
-
-    Game._ph_turn_end_effects is the interactive path and is what real play
-    uses; this is the non-interactive equivalent for tests and headless callers.
-    It follows the same priority-player-first rule (Q&A No.102) and each
-    player's default item order.
-    """
+    """Resolve the turn-end window without ordering prompts, for tests and headless
+    callers: priority player first (Q&A No.102), default item order."""
     priority = state.priority_player
     for player_index in (priority, 1 - priority):
         player = state.players[player_index]
@@ -86,19 +72,9 @@ def process_end_of_turn_effects(state: GameState) -> None:
 
 
 def execute_turn_end_item(state: GameState, player: PlayerState, kind: int) -> None:
-    """Run one turn-end item.
-
-    Each 03-058 in play heals independently: two players each holding one heal both
-    players 10 twice, for +20 each. Q&A No.26 is the duplicate-copies ruling
-    (「はい、２枚のカードの効果は重なります」), and 「お互いの」 in the card text says who is
-    healed, not how often. (User-confirmed 2026-08-14; the engine previously capped
-    the heal at once per window with no source behind it.)
-    """
-    # Q&A No.96: end conditions stay live during this window, so a removal can fire
-    # between two items. No explicit check is needed here — both damaging items go
-    # through deal_damage, which runs check_damage_triggered_removal itself, and the
-    # remaining items only raise HP or move the clock, neither of which can newly
-    # satisfy a "damage taken >= 30" or "HP <= 50" condition.
+    """Run one turn-end item. Each copy of 03-058 heals separately (Q&A No.26)."""
+    # Removals can fire between items (Q&A No.96); deal_damage handles that for the
+    # two damaging items.
     from ..battle import (
         deal_damage, effective_power_cost, set_chronos, total_power,
     )
@@ -112,8 +88,8 @@ def execute_turn_end_item(state: GameState, player: PlayerState, kind: int) -> N
         deal_damage(state, 1 - player.index, player.flags[PF_DAMAGE_REDUCED])
         return
 
-    # Both area items are power-gated (Ground Rules 6.1.3.4) and re-checked here,
-    # because an earlier item in this window may have changed the power totals.
+    # Area items are power-gated (Ground Rules 6.1.3.4); re-checked because an earlier
+    # item can change power.
     area = player.set_c
     if area == -1:
         return

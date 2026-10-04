@@ -7,9 +7,7 @@ import random
 from engine_alpha import cards
 from engine_alpha.game import Game
 
-# All 172 effect-less cards are characters: every enchant and area enchant
-# in the card pool carries an effect. Vanilla decks are therefore
-# all-character, which suits M1 (effects are stubbed).
+# The 172 effect-less cards are all characters, so vanilla decks are all-character.
 VANILLA_DEFS = [d.index for d in cards.CARD_DB if d.effect_index == cards.NO_EFFECT]
 
 

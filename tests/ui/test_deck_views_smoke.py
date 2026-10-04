@@ -1,9 +1,6 @@
-"""Construction smoke tests for the deck management views.
-
-The mid-game saved-deck pickers stay paginated (regression cover for the
-mixin's `total_pages` property); the managedecks commands now use per-deck
-action views selected through autocomplete, and the edit modals are
-pre-filled with the deck's current card ids.
+"""Construction smoke tests for the deck management views: the game-start saved-deck
+pickers paginate, `/zutomayo deck manage` uses per-deck action views, and the edit
+modals are pre-filled with the deck's card ids.
 """
 
 from __future__ import annotations

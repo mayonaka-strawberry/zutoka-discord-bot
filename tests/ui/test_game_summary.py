@@ -42,8 +42,8 @@ def test_solo_overview_hides_the_stack_names():
 
 
 def test_legacy_difficulty_rows_still_read_sensibly():
-    """Solo games recorded before the model switch stored a difficulty rather
-    than a model identifier; those pass through unchanged."""
+    """Old solo rows store a difficulty ('normal') instead of a model id; it passes
+    through unchanged."""
     assert _mode_line(_solo_row('normal')) == '**Mode:** solo (normal)'
     assert _mode_line(_solo_row('easy')) == '**Mode:** solo (easy)'
 

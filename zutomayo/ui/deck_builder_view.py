@@ -58,7 +58,7 @@ class DeckInputModal(discord.ui.Modal):
 
 
 class DeckBuilderView(discord.ui.View):
-    """Simplified deck builder with two options: enter a deck list or get a random deck."""
+    """Simplified deck builder with two options: enter a deck list or go back."""
 
     def __init__(
         self,

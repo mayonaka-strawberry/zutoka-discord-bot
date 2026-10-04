@@ -96,10 +96,7 @@ def test_corner_arc_is_anti_aliased(image_path):
     'zutomayocard_4th_107',
 ])
 def test_set_4_se_cards_round_like_the_rest_of_the_pack(stem):
-    """Regression: these shipped as square-cornered synthetic placeholders and were later
-    replaced by real scans, which carry the same white dead space as every pack-4 card.
-    The exemption that survived that swap left them with a visible white corner fringe.
-    """
+    """The former placeholders (now real scans) round like every other pack-4 card."""
     image_path = f'zutomayo/images/4/{stem}.jpg'
     assert corner_radius_for(image_path, 700) == CORNER_RADIUS_BY_PACK_DIRECTORY['4']
 
@@ -116,12 +113,8 @@ def test_set_4_se_cards_round_like_the_rest_of_the_pack(stem):
 
 @pytest.mark.parametrize('stem', ['zutomayocard_2nd_36', 'zutomayocard_2nd_37'])
 def test_threshold_bug_cards_now_get_the_full_pack_radius(stem):
-    """Regression: these two shipped with a ~2 px radius and a visible off-white ring.
-
-    Their dead space sits at luminance ~219, one point under the retired offline script's
-    threshold of 220, so its detection walk stopped immediately. Per-pack constants are
-    immune to that.
-    """
+    """These two cards' dead space is unusually dark; the per-pack radius still rounds
+    them fully."""
     image_path = f'zutomayo/images/2/{stem}.jpg'
     assert corner_radius_for(image_path, 700) == CORNER_RADIUS_BY_PACK_DIRECTORY['2']
     assert load_card_image(image_path).getchannel('A').getpixel((0, 0)) == 0

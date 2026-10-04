@@ -1,15 +1,8 @@
-"""Draft phase: players open gacha boxes and build a deck from only the cards
-they open.
+"""Draft phase: players build decks only from the gacha boxes they open. The
+views live in zutomayo.ui.draft_views.
 
-This module holds the pure draft logic (opening boxes, page/label helpers,
-copy-limit enforcement) plus the orchestration that mirrors
-``GameFlow._do_deck_building_phase`` and ``TcgMatchFlow._do_tcg_deck_selection``.
-The interactive Discord views live in ``zutomayo.ui.draft_views``.
-
-The draft phase runs before persistence exists (records are created only after
-decks are final), so nothing here is part of deterministic replay. Box opening
-therefore uses the global ``random`` inside ``draw_gachabox``, exactly like the
-gacha commands, and never touches ``session.random_generator``.
+Drafting happens before the game record exists, so it is never replayed: boxes
+are opened with the global random (as in the gacha commands), not the session RNG.
 """
 
 from __future__ import annotations
@@ -92,12 +85,7 @@ def total_pages_for_pool(pool_size: int) -> int:
 
 
 def box_page_title(page: int) -> str:
-    """Title for a box-mode picker page, e.g. ``Box 1 (2/2)``.
-
-    Each 50-card box spans two pages, so page P belongs to box ``P // 2 + 1``
-    and is that box's ``P % 2 + 1``-th half. This aligns exactly with the two
-    25-card grid images produced for each opened box.
-    """
+    """Picker page title, e.g. ``Box 1 (2/2)``: each 50-card box spans two 25-card pages."""
     return f'Box {page // 2 + 1} ({page % 2 + 1}/2)'
 
 
@@ -110,18 +98,9 @@ async def send_box_reveal(
     pack_number: int,
     box_cards: list['Card'],
 ) -> None:
-    """Reveal one opened box as two messages, one per 25-card grid image.
-
-    The owning player always gets the images in their DM. When the draft is
-    public, the same images are also posted in the game channel. A fresh
-    ``discord.File`` is rendered per destination because a File cannot be
-    sent twice. The final deck a player builds is never revealed here.
-
-    One message per half rather than one message carrying both: a DM is capped at 10 MiB
-    however the guild is boosted, and two 25-card grids share that budget, which forces
-    both down to a visibly degraded quality. Split, each grid gets the whole allowance and
-    stays at full quality.
-    """
+    """Show one opened box as two messages, one 25-card grid each: to the owner by DM,
+    and to the channel when the draft is public. Split because two grids in one DM
+    would share its 10 MiB limit and lose quality. Each send gets a fresh discord.File."""
     header = f'**{player_name}** - Box {box_number} of {total_boxes} (Pack {pack_number})'
     halves = ((box_cards[:CARDS_PER_PAGE], '1'), (box_cards[CARDS_PER_PAGE:], '2'))
 
@@ -173,13 +152,8 @@ def _tcg_intro(session: 'GameSession') -> str:
 async def run_standard_draft_phase(
     game_flow: 'GameFlow', session: 'GameSession',
 ) -> tuple[list['Card'], list['Card']]:
-    """Run the standard draft phase for both players.
-
-    Returns ``(player_0_cards, player_1_cards)``, each a concrete 20-card list.
-    There is no timeout: the wait returns only once both players submit, so the
-    results are always concrete legal decks. If the game is cancelled (quit or
-    end), the wait is cancelled and this coroutine unwinds normally.
-    """
+    """Run the standard draft for both players: ``(player_0_cards, player_1_cards)``,
+    20 cards each. No timeout; quitting or ending the game cancels the wait."""
     from zutomayo.ui.draft_views import DraftPackSelectionView
 
     session.clear_pending()
@@ -206,11 +180,7 @@ async def run_standard_draft_phase(
 async def run_tcg_draft_phase(
     game_flow: 'GameFlow', session: 'GameSession',
 ) -> tuple[list['Card'], list['Card'], list['Card'], list['Card']]:
-    """Run the TCG draft phase for both players.
-
-    Returns ``(main_0, side_0, main_1, side_1)``. Like the standard phase there
-    is no timeout, so both submissions are always present when the wait returns.
-    """
+    """Run the TCG draft for both players: ``(main_0, side_0, main_1, side_1)``. No timeout."""
     from zutomayo.ui.draft_views import DraftPackSelectionView
 
     session.clear_pending()

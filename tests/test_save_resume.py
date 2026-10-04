@@ -1,8 +1,6 @@
-"""Save/resume eligibility and saved-game listing rules (storage level).
-
-The deterministic replay itself is covered by tests/test_resume.py — a save
-point is exactly a truncation point. These tests cover the rules around it:
-who may resume what, and what the resume/end autocompletes may suggest.
+"""Save and resume rules at the storage level: who may resume what, and what the
+resume and end autocompletes suggest. Replay itself is tested in
+tests/match/test_match_driver.py (a save point is a truncation point).
 """
 
 from __future__ import annotations

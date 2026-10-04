@@ -14,7 +14,7 @@ _SLOT_WEIGHTS: list[list[tuple[Rarity, float]]] = [
 
 
 def _pick_rarity(weights: list[tuple[Rarity, float]]) -> list[Rarity]:
-    """Return rarities ordered by weighted random selection."""
+    """Return a one-element list holding a weighted random rarity."""
     rarities = [r for r, _ in weights]
     w = [w for _, w in weights]
     return random.choices(rarities, weights=w, k=1)

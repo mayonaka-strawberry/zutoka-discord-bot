@@ -1,9 +1,6 @@
-"""Which adapter answers for which seat when a flow builds the decision runtime.
-
-run_solo_game installs its own broker up front, so this is the path a *resumed*
-solo game takes. Getting it wrong is silent: the bot seat would be prompted by
-DM at the sentinel id, transport.send_to_player would drop the message, and the
-bot would forfeit on consecutive timeouts rather than play.
+"""Which adapter answers for which seat when a flow builds the decision runtime. A
+resumed solo game depends on this: with the wrong adapter the bot seat silently
+forfeits on timeouts.
 """
 
 from __future__ import annotations
@@ -26,8 +23,7 @@ def build_runtime(*, solo: bool, difficulty: str = 'normal') -> FakeSession:
 
 
 def stub_model_adapter(monkeypatch) -> list[tuple]:
-    """Stand in for create_model_adapter: no checkpoint is deployed in CI, so
-    the real call would raise."""
+    """Stand-in for create_model_adapter, which raises without a deployed checkpoint."""
     calls: list[tuple] = []
 
     def fake_create_model_adapter(session, opponent):

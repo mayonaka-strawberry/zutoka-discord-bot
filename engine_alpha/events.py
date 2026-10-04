@@ -1,12 +1,9 @@
 """Observation-only engine events.
 
-A GameState may carry an `event_sink` (a plain list, default None). When the
-sink is attached, rule functions append small int tuples describing what
-happened so an external driver can narrate the game. Emissions never read the
-RNG and never mutate game state, and `fast_clone` always detaches the sink,
-so cloned states (search, training) emit nothing.
+When a GameState has an `event_sink` list, rule functions append int tuples for narration.
+Emitting never reads the RNG or changes state, and `fast_clone` detaches the sink.
 
-Tuple layouts (all ints):
+Tuple layouts:
   (EVENT_PHASE_CHANGED, new_phase, turn)
   (EVENT_DRAW, player_index, count)
   (EVENT_PLACED_IN_ABYSS, owner_index, actor_index, definition_index)
@@ -20,16 +17,14 @@ Tuple layouts (all ints):
   (EVENT_HP_CHANGED, player_index, delta, new_hp)
   (EVENT_BATTLE_RESULT, attack_0, attack_1, winner_index_or_minus_1, damage)
   (EVENT_MULLIGAN_DONE, player_index, redraw_count)
-  (EVENT_GAME_OVER, winner_index)
+  (EVENT_GAME_OVER, winner_index_or_2_for_draw)
   (EVENT_CARDS_REVEALED, owner_index, revealed_owner_index,
    source_definition_index, *revealed_definition_indices)
 
-EVENT_CARDS_REVEALED is the one variable-arity layout: the tail holds one
-definition index per revealed card, in zone order, and may be EMPTY when a
-player declined to reveal anything. `owner_index` resolves the effect,
-`revealed_owner_index` owns the exposed cards (they differ for 03-045, which
-reveals the opponent's hand), and `source_definition_index` is the card whose
-effect ran, so a driver can name the effect.
+EVENT_CARDS_REVEALED is the only variable-length layout. Its tail lists the revealed cards
+in zone order (pick order for chosen cards) and is empty when a player reveals nothing.
+`revealed_owner_index` differs from `owner_index` when the opponent's cards are revealed
+(03-045, 03-097, 03-103 and the 03-047 name-guess family).
 """
 
 (
@@ -47,9 +42,7 @@ effect ran, so a driver can name the effect.
     EVENT_BATTLE_RESULT,
     EVENT_MULLIGAN_DONE,
     EVENT_GAME_OVER,
-    # New types append here: the ints are transient (the persisted stream uses
-    # the string types in zutomayo/engine/game_events.py), but appending keeps
-    # any in-flight sink readable across a reload.
+    # Append new types last. The ints are never persisted (game_events.py stores names).
     EVENT_CARDS_REVEALED,
 ) = range(15)
 

@@ -1,22 +1,15 @@
 """
-One-time migration of the JSON storage into PostgreSQL.
+One-time migration (already run) of the JSON storage into PostgreSQL:
 
-Migrates:
 - zutomayo/decks/<user_id>.json      -> decks
 - zutomayo/decks_tcg/<user_id>.json  -> decks_tcg
 - zutomayo/players/usernames.json    -> display_names
 
-Player profiles (Elo, win/loss, matchup stats) are intentionally NOT
-migrated: the cutover is a fresh start for player statistics. The JSON files
-are left untouched; archive them manually after verifying the migration
-(see docs/postgresql_setup.md for the full cutover procedure, which starts
-with pulling the latest main so this data is current).
+Player profiles were deliberately not migrated, so statistics restarted. Idempotent:
+rows are upserted, and the JSON files are left untouched.
 
 Usage:
     python scripts/migrate_json_to_postgresql.py [--database-url ...] [--dry-run]
-
-The migration is idempotent: rows are upserted, so running it again after a
-partial failure (or with newer JSON data) is safe.
 """
 
 from __future__ import annotations

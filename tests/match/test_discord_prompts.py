@@ -135,15 +135,8 @@ def test_prompts_are_not_sent_to_a_seat_that_takes_no_dms():
 
 
 def test_set_slot_a_offers_no_pass_and_cannot_submit_an_empty_selection():
-    """Ground Rules 5.2.1.5 / Q&A No.4: a player holding cards must set at least one.
-
-    The single-slot view used to hardcode a 'Set nothing' button regardless of
-    `engine_request.allow_pass`. Pressing it was dropped by the broker as an
-    illegal action, the prompt then stalled for the full timeout, and the
-    fallback set the player's first hand card anyway -- three of those in a row
-    forfeited the match. There was never an exception; the symptom was a dead
-    button and a stall, which is what this pins.
-    """
+    """A player holding cards must set one (Ground Rules 5.2.1.5; Q&A No.4), so the
+    single-slot view has no 'Set nothing' and an empty pick cannot submit a PASS."""
     game = _play_until(7, PH_SET_CARDS)
     acting = game.state.acting
     engine_request = game.decision_context()
@@ -169,12 +162,8 @@ def test_set_slot_a_offers_no_pass_and_cannot_submit_an_empty_selection():
 
 
 # -- going live inside a compound family (resume) -------------------------
-#
-# A resume replays the decision log and then presents whatever request was
-# pending when the process stopped, through a fresh adapter -- replay never
-# populates the PendingSelection cache. So an adapter handed a mid-family
-# request is exactly what a go-live produces, and needs no resume machinery
-# to reproduce.
+# Replay never fills the PendingSelection cache, so a fresh adapter handed a
+# mid-family request reproduces a go-live.
 
 
 def _resumed_at_slot_b(seed: int = 1):
@@ -195,15 +184,8 @@ def _resumed_at_slot_b(seed: int = 1):
 
 
 def test_resuming_at_slot_b_asks_only_for_the_second_card(monkeypatch):
-    """A go-live between slot A and slot B used to re-present the whole family.
-
-    The view was sized from `min(maximum_cards_to_set, len(hand))`, a
-    whole-phase quantity, so a two-slot player got TwoStepCardSelectView and
-    'You may set up to 2 cards' for a turn where only slot B was still open.
-    `_compound_action` then read `chosen[1]`: one card plus 'None' submitted a
-    PASS and the card was never set, and two cards set the second and silently
-    discarded the first.
-    """
+    """After a go-live between slot A and slot B, only the second card is asked for,
+    and the single pick goes to slot B."""
     from zutomayo.ui import embeds
 
     async def fake_hand_image(hand):
@@ -252,10 +234,8 @@ def test_resuming_at_slot_b_can_still_decline_the_second_card(monkeypatch):
 
 
 def test_a_seat_that_already_set_its_cards_is_not_prompted_again():
-    """Pre-presentation is what sends both players their view at once. Live it
-    always runs before either has committed; a resume going live mid-phase is
-    the exception, and the seat ahead in the commit order answered during
-    replay. Its view would have no engine request behind it."""
+    """After a mid-phase go-live, a seat that already answered during replay is not
+    prompted again."""
     game = _play_until(3, PH_SET_CARDS)
     rng = random.Random(3)
     while game.state.phase_ctx[1] != 1:  # walk to the second committer

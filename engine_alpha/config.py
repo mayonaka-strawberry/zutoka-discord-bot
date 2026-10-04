@@ -1,9 +1,4 @@
-"""Engine-level constants as a dataclass, for reproducible run records.
-
-The engine itself uses inline constants for speed; this dataclass documents
-them and lets training stacks include the engine section in config dumps.
-Training hyperparameters live with their stacks (see alpha_zero/config.py).
-"""
+"""Engine constants, recorded in training run configs. The engine uses inline constants, so changing these does nothing."""
 
 from __future__ import annotations
 
@@ -20,4 +15,4 @@ class EngineConfig:
     midnight: int = 4
     night_end: int = 8
     noon: int = 13
-    max_turns: int = 200  # hard safety cap; a legal game always deck-outs long before this
+    max_turns: int = 200  # safety cap; real games deck out long before it

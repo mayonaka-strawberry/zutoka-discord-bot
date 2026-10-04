@@ -112,9 +112,7 @@ def test_event_stream_deterministic():
         assert first == second
 
 
-# ---------------------------------------------------------------------------
-# Reveal events: the driver's only view of what a reveal effect exposed.
-# ---------------------------------------------------------------------------
+# --- Reveal events: the driver's only view of what a reveal exposed ---
 
 TAIDADA_CHARACTER_DEFS = [
     d.index for d in cards.CARD_DB
@@ -171,8 +169,7 @@ def test_reveal_reg_reports_the_picked_cards():
 
 
 def test_reveal_reg_reports_an_empty_reveal():
-    """The empty tail is what lets a driver say "nothing revealed" - without
-    it the effect would resolve completely silently."""
+    """The empty tail is what lets a driver say "nothing revealed"."""
     game, state, owner = game_with_taidada_hand(0, 2)
     start_effect_on_battle_card(state, 0, "04-001")
     resolve_frame(state, "min")
@@ -201,8 +198,7 @@ def test_reveal_hand_reports_the_opponent_hand_before_the_shuffle():
 
 
 def test_reveal_events_are_silent_without_a_sink():
-    """Reveals are observation-only, so a detached sink must make both ops
-    behave exactly as they did before they emitted anything."""
+    """Without a sink, 04-001's reveal emits nothing and its attack bonus still applies."""
     game, state, owner = game_with_taidada_hand(0, 2)
     state.event_sink = None
     start_effect_on_battle_card(state, 0, "04-001")

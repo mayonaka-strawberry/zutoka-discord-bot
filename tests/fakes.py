@@ -1,10 +1,7 @@
 """
-In-memory storage backends for tests.
-
-The autouse fixture in tests/conftest.py installs these in place of the
-PostgreSQL backends so the whole suite runs without a database. They mirror
-the backend surfaces in zutomayo/data/player_storage.py and
-zutomayo/data/name_storage.py exactly.
+In-memory storage backends that tests/conftest.py installs in place of the
+PostgreSQL ones, so the suite runs without a database. Each mirrors its real
+backend's surface.
 """
 
 from __future__ import annotations
@@ -160,7 +157,7 @@ class InMemoryGameIdAllocator:
 
 
 class InMemoryGameRecordBackend:
-    """Mirrors PostgresGameRecordBackend: game rows, decision logs, statuses."""
+    """Mirrors PostgresGameRecordBackend: game rows, decision logs, events, statuses."""
 
     def __init__(self) -> None:
         self.games: dict[str, dict] = {}

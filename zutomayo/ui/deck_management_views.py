@@ -25,9 +25,7 @@ if TYPE_CHECKING:
 
 
 
-# ---------------------------------------------------------------------------
-# /zutomayo makedeck
-# ---------------------------------------------------------------------------
+# --- /zutomayo deck make ---
 
 
 class MakeDeckModal(discord.ui.Modal):
@@ -88,9 +86,7 @@ class MakeDeckModal(discord.ui.Modal):
             )
 
 
-# ---------------------------------------------------------------------------
-# /zutomayo managedecks
-# ---------------------------------------------------------------------------
+# --- /zutomayo deck manage ---
 
 
 def format_card_ids_line(cards: list[Card]) -> str:
@@ -236,9 +232,7 @@ class ManageDeckActionsView(discord.ui.View):
         )
 
 
-# ---------------------------------------------------------------------------
-# Game start: deck source choice
-# ---------------------------------------------------------------------------
+# --- Game start: deck source choice ---
 
 
 def _random_deck(all_cards: list[Card]) -> list[Card]:
@@ -256,7 +250,7 @@ def _random_deck(all_cards: list[Card]) -> list[Card]:
 
 
 class DeckSourceView(discord.ui.View):
-    """Pre-deck-building choice: build from scratch or pick a saved deck."""
+    """Deck choice at game start: build one, or pick a saved or default deck."""
 
     def __init__(
         self,

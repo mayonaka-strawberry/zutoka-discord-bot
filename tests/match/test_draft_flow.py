@@ -1,8 +1,5 @@
-"""Unit tests for the pure draft-phase logic.
-
-Covers box opening, the box/page slicing that lines picker pages up with the
-grid images, copy-limit enforcement (max two copies, never more than opened),
-and the selected-pick formatting.
+"""Pure draft-phase logic: box opening, the page slicing that matches the grid images,
+the two-copy limit (never more than opened), and pick formatting.
 """
 
 from __future__ import annotations

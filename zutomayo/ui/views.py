@@ -7,11 +7,9 @@ from zutomayo.ui.embeds import ATTRIBUTE_EN, ATTRIBUTE_JP, CARD_TYPE_LABEL
 if TYPE_CHECKING:
     from zutomayo.engine.game_session import GameSession
 
-# Views answer prompts either through a submit_callback (the decision broker
-# path: JSON-serializable payloads) or, when no callback is given, through the
-# session.submit_action mechanism with live objects. The submit_action path
-# remains for deck building and TCG deck selection, which run before match
-# persistence begins.
+# Views answer through submit_callback (broker decisions, JSON-serializable payloads) or,
+# without one, session.submit_action with live objects (deck building and TCG deck
+# selection, which happen before the game record exists).
 SubmitCallback = Callable[[str, object], None]
 
 PAYLOAD_INDICES = 'indices'
@@ -47,7 +45,7 @@ def _build_select_option(card_holder) -> tuple[str, str]:
 
 
 class CardSelectView(discord.ui.View):
-    """Dropdown to select card(s) from hand. Used for setting cards and choosing initial battle card."""
+    """Dropdown to select card(s) from hand."""
 
     def __init__(
         self,
@@ -142,13 +140,8 @@ class CardSelectView(discord.ui.View):
 
 
 class TwoStepCardSelectView(discord.ui.View):
-    """
-    Two-step sequential dropdown for selecting up to 2 cards.
-
-    Step 1: Single-select from all cards in hand.
-    Step 2: Single-select from remaining cards + a 'None' option.
-    Calls session.submit_action() only after step 2 completes.
-    """
+    """Two dropdowns for up to 2 cards: one from the hand, then one from the rest or 'None'.
+    Submits after step 2."""
 
     NONE_SENTINEL = '__NONE__'
 
@@ -674,12 +667,9 @@ class GameLobbyView(discord.ui.View):
 
 
 class ActionSelectView(discord.ui.View):
-    """Dropdown over card options that submits a single engine action int
-    (payload type 'action'). Options index into `cards`; when `allow_pass`
-    is set, an extra row submits the pass action (len(cards)). With
-    `confirm`, a confirm/reselect step precedes submission (the set-cards
-    and initial-card flows); without it the selection submits immediately
-    (effect prompts)."""
+    """Dropdown over `cards` that submits one engine action (payload 'action').
+    `allow_pass` adds a pass row (action len(cards)); `confirm` adds a confirm or
+    reselect step (set cards, initial card)."""
 
     PASS_SENTINEL = '__PASS__'
 
@@ -814,14 +804,9 @@ class BinaryChoiceView(discord.ui.View):
 
 
 class ConfirmableChoiceView(discord.ui.View):
-    """One button per option followed by a Confirm / Go Back step, submitting
-    the chosen option's action int (payload type 'action'). Same confirm flow
-    as ActionSelectView, driven by buttons instead of a dropdown, for choices
-    where a misclick should be recoverable (the TCG day/night side choice).
-
-    Options are anything with `label` and `action` attributes, which is what
-    MatchDecisionRequest.options already holds.
-    """
+    """One button per option, then Confirm or Go Back, submitting the option's action
+    (payload 'action'). For choices where a misclick should be recoverable (the TCG
+    side choice). Options need `label` and `action`."""
 
     def __init__(
         self,

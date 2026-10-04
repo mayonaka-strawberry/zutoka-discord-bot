@@ -213,18 +213,16 @@ zutomayo/.DS_Store
 
 zutomayo/bot_decks.json
 
-# Training deck pools exported from the database (scripts/export_training_decks.py).
-# A glob rather than one entry per stack, so the pre-split training_decks.json
-# stays ignored until it is deleted.
+# Training deck pools (scripts/export_training_decks.py); the glob also covers the
+# old single training_decks.json.
 data/training_decks*.json
 
 zutomayo/progress/*
 !zutomayo/progress/.gitkeep
 
 
-# Model training code and artifacts (tracked files are limited to what the
-# bot needs to play from a checkpoint: engine, model definitions, configs,
-# inference modules, device selection)
+# Training code and artifacts. Git tracks only what the bot needs to play from a checkpoint,
+# plus ppo_transformer/best_deck_ppo.py.
 engine_alpha/runs/
 engine_alpha/.env
 alpha_zero/train/
@@ -245,15 +243,11 @@ model_common/arena.py
 model_common/opponent_pool.py
 model_common/migrate_checkpoint.py
 
-# Deployment drop point for trained checkpoints, filled by hand (see the
-# Solo opponents section of README.md). A bare PPO state dict is ~129 MB,
-# over GitHub's per-file limit, so the weights never enter git.
+# Deployed checkpoints, copied in by hand (README: Solo opponents); too large for git.
 model/
 
-# Training-only support modules, plus the tests and script that exercise
-# them. Nothing on the inference path imports these: the live bot needs only
-# model_common/device.py (device selection) and env_config.py (read by the
-# two config.py modules).
+# Training-only modules and their tests. From model_common, the live bot needs only
+# device.py, env_config.py and deployed_model.py.
 model_common/checkpoint_retention.py
 model_common/deck_pool.py
 model_common/graceful_stop.py
@@ -268,10 +262,8 @@ scripts/export_training_decks.py
 .coverage
 tests/coverage_summary.json
 
-# Regenerable image output from the calibration and render-preview scripts. Both are
-# reproduced by running the script, so they do not belong in the repo -- the same reason the
-# card png derivatives were dropped in favour of rounding corners at render time.
-# Matched on extension, not just prefix, so the scripts that write them stay tracked.
+# Calibration and preview images (rerun the scripts to regenerate). Matched by extension,
+# so the scripts themselves stay tracked.
 scripts/calibration_output*.jpg
 scripts/calibration_output*.png
 scripts/preview_*.jpg

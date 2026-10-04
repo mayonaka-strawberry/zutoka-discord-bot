@@ -1,9 +1,5 @@
-"""The turn-1 self-defeat rule: a game the loser threw with a CHAOS bank-or-lose
-card pays the winner no Elo.
-
-The point of this file is the boundary. The rule is deliberately scoped to turn 1
-and to the standard ladder, so most of what is pinned here is what it must NOT
-touch: later turns, TCG matches, draws, and ordinary games.
+"""The turn-1 CHAOS self-defeat rule: the winner of a thrown game gains no Elo. Mostly
+pins the boundary: later turns, TCG matches, draws and ordinary games are untouched.
 """
 
 from __future__ import annotations

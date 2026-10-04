@@ -1,8 +1,6 @@
 """
-Builds MatchDecisionRequests from pending engine decisions: presentation
-kind, prompt text (with the resolving effect's card as context), selectable
-options with their engine actions, and the CardView list the Discord views
-render. Pure data - no discord imports.
+Builds MatchDecisionRequests from pending engine decisions: kind, prompt text,
+options with their engine actions, and the CardViews to render. No discord imports.
 """
 
 from __future__ import annotations
@@ -40,9 +38,7 @@ from zutomayo.match.state_view import card_view, definition_index_to_card
 EFFECT_PROMPT_TIMEOUT_SECONDS = 300.0
 FLOW_PROMPT_TIMEOUT_SECONDS = 300.0
 
-# Slot A is deliberately absent: Ground Rules 5.2.1.5 / Q&A No.4 make it
-# unpassable while the hand has cards, and a label here is what let a dead
-# "Set nothing" button reach the view once already.
+# No slot A entry: it cannot be passed while the hand has cards (Ground Rules 5.2.1.5; Q&A No.4).
 PASS_LABEL_BY_PURPOSE = {
     P_MULLIGAN: 'Keep hand',
     P_SET_SLOT_B: 'Set no second card',
@@ -72,9 +68,8 @@ def _effect_prefix(state) -> str:
 
 
 def _effect_order_prompt(state, engine_request) -> str:
-    """Numbered the way the pre-port engine numbered it: the step counts every
-    effect already placed in the resolution order, including the cost-reducing
-    ones the rules force to the front."""
+    """The step number counts every effect already ordered, including the
+    forced-first cost reducers."""
     card_names = ', '.join(
         definition_index_to_card(state.inst_def[instance_id]).name
         for instance_id in engine_request.candidates

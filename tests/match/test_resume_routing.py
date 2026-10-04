@@ -1,10 +1,6 @@
-"""Where /zutomayo resume may be used, and where its confirmation is delivered.
-
-Resume works from a DM or a server channel. The channel only carries public
-narration - play itself is always over DM - so the invoking context decides how
-a two-player confirmation reaches the opponent, and whether the game moves:
-resuming from a server channel relocates it there, resuming from a DM leaves it
-on its recorded channel (0 for solo games, meaning nothing is posted publicly).
+"""Where /zutomayo resume works and where its confirmation goes. Play is always over DM.
+A two-player game resumed from a server channel moves there; otherwise it keeps its recorded
+channel (0 for solo games).
 """
 
 from __future__ import annotations

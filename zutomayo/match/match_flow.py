@@ -1,11 +1,6 @@
 """
-SingleMatchFlow: one standard match run on the engine_alpha state machine.
-
-Owns everything around the engine: deck building, the opening hand DMs, the
-driver loop, result recording (Elo, game status), and forfeit handling. Phase
-gates - the board, zone strips and field embed posted at every phase boundary -
-belong to the narrator's GatePresenter, which this flow hands its renderers to.
-The engine owns every rule; this flow never mutates game state.
+SingleMatchFlow: everything around one match: deck building, opening-hand DMs, the
+driver loop, result recording (Elo, status) and forfeits. It never mutates game state.
 """
 
 from __future__ import annotations
@@ -39,28 +34,15 @@ def definition_indices_for_cards(cards: list['Card']) -> list[int]:
 def should_suppress_winner_elo_gain(
     state: Any, mode: str, winner_index_or_none: Optional[int],
 ) -> bool:
-    """
-    True when the loser threw the game with a turn-1 CHAOS self-defeat.
-
-    Playing a bank-or-lose card without the abyss cards to pay for it ends the game
-    immediately, which makes it the cheapest possible way for two colluding players to
-    pump one account's rating. Such a win pays the winner no Elo, and the loser pays a
-    punitive multiple of a normal loss (see _apply_one_sided_elo_loss).
-
-    Deliberately turn 1 only: a self-defeat on any later turn rates as an ordinary loss,
-    so a pair willing to spend an extra turn cycle can still trade. Every self-defeat is
-    written to games.result_summary regardless, so widening this is a data question.
-
-    That scoping is also why none of this is surfaced to players: the boundary is the
-    exploitable part, and a pair who can watch the rule fire can find its edge by
-    experiment. Nothing here or downstream reaches a channel or a DM.
-    """
+    """True when the loser threw a non-TCG game with a turn-1 CHAOS self-defeat: the winner
+    gains no Elo and the loser pays a penalty (_apply_one_sided_elo_loss). Anti-wintrading;
+    never announce it, or its edges get probed."""
     if mode != 'standard' or winner_index_or_none is None:
         return False
     if state.self_defeat_turn != 1:
         return False
-    # check_win awards a both-at-zero tie to player 0, so the player who self-defeated
-    # can in principle still be the winner. Only suppress when they actually lost.
+    # Defensive: record_hp_zero makes the self-defeater the loser, but only suppress
+    # when they actually lost.
     return state.self_defeat_player == 1 - winner_index_or_none
 
 
@@ -71,11 +53,8 @@ class SingleMatchFlow:
     # -- runtime -----------------------------------------------------------
 
     def _ensure_decision_runtime(self, session: 'GameSession') -> None:
-        """Install the transport and broker when the caller has not already.
-        Solo games seat a model on player 1; run_solo_game builds its own broker
-        up front, so this branch is what a resumed solo game relies on (without
-        it the bot seat would be prompted by DM at sentinel id 0, never answer,
-        and forfeit on consecutive timeouts)."""
+        """Install the transport and broker if missing. A resumed solo game relies on
+        this to seat the model on player 1."""
         if session.transport is None:
             session.transport = DiscordMatchTransport(self.bot)
         if session.broker is None:
@@ -173,13 +152,9 @@ class SingleMatchFlow:
         engine_seed: Optional[int] = None,
         night_player: Optional[int] = None,
     ) -> MatchOutcome:
-        """Run one match from engine construction through result recording
-        (game-over embed, Elo). Does NOT set the final game status and does
-        NOT remove the session - the caller owns the series/game lifecycle.
-
-        ``night_player`` overrides the engine's side coin flip (TCG series
-        games after the first, where the previous loser picks their side);
-        None keeps the flip."""
+        """Run one match through result recording (game-over embed, Elo). The caller sets
+        the final status and removes the session. ``night_player`` overrides the side
+        coin flip (TCG games after the first); None keeps it."""
         from engine_alpha.game import Game
         from zutomayo.data.deck_validator import get_card_index
         from zutomayo.match.agents import load_random_fallback_deck
@@ -343,8 +318,7 @@ class SingleMatchFlow:
         winner_index = winner if winner in (0, 1) else None
         result_name = ('PLAYER_1_WIN', 'PLAYER_2_WIN', 'DRAW')[winner] if winner in (0, 1, 2) else 'IN_PROGRESS'
         result_summary = {'result': result_name, 'turns': state.turn}
-        # Recorded for every self-defeat, not just the turn-1 ones the Elo rule acts on,
-        # so the question of whether that gate should widen can be answered from data.
+        # Every self-defeat is recorded, not only the turn-1 ones the Elo rule uses.
         if state.self_defeat_player != -1:
             result_summary['self_defeat_player'] = state.self_defeat_player
             result_summary['self_defeat_turn'] = state.self_defeat_turn

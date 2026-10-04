@@ -1,23 +1,17 @@
-"""UniguriNet: transformer over card tokens with pointer / identity / number
+"""UniguriNet: a transformer over card tokens with pointer, identity and number
 policy heads and a win/draw/loss value head.
 
-- Token embedding: summed categorical embeddings (identity, attribute, type,
-  song, rarity, zone-slot) + Linear(float features) + effect block. The
-  effect block fuses a fixed IR-derived feature vector (projected 128->64)
-  with a learned per-effect embedding (32) — the IR supplies structure, the
-  embedding absorbs whatever the IR misses.
-- The CLS token receives the global-feature MLP output additively.
-- The encoder layers are pre-LN, which leaves the residual stream
-  unnormalized; a final LayerNorm normalizes it before any head reads it.
-- Identity head weights are tied to the identity embedding matrix, so draft
-  picks and name-guesses share card knowledge.
-- Identity- and effect-indexed tables are allocated at configured capacities
-  above the current catalog size; the catalog's null indices are remapped to
-  the last row so future catalog rows slot into the reserved space without
-  changing tensor shapes.
-- Value is for the acting player (observations are acting-relative): a
-  3-way win/draw/loss distribution whose expectation serves as the scalar
-  value ([win, draw, loss] maps to [+1, 0, -1]).
+- Token embedding: categorical embeddings, the float features and an effect block
+  (the 160-dim IR features projected to 64, plus a learned 32-dim embedding),
+  concatenated and projected by Linear + LayerNorm.
+- The global-feature MLP output is added to the CLS token.
+- Pre-LN encoder, then a final LayerNorm before the heads.
+- The identity head is tied to the identity embedding, so draft picks and name
+  guesses share card knowledge.
+- Identity, effect and song tables are allocated at configured capacities, with null
+  indices mapped to the last row, so new catalog rows fit without shape changes.
+- Value is for the acting player: the expectation of [win, draw, loss] as
+  [+1, 0, -1].
 """
 
 from __future__ import annotations
@@ -177,14 +171,8 @@ class UniguriNet(nn.Module):
 
 
 def playing_state_dict(payload):
-    """The weights a loaded checkpoint should play with.
-
-    A training checkpoint carries the raw optimizer weights and their EMA
-    shadow; the shadow is what self-play is published from and what gets
-    deployed, so everything that plays games from a checkpoint uses it when
-    present. Anything that is not a training checkpoint is taken to be a bare
-    state dict and returned unchanged.
-    """
+    """The weights to play with: a training checkpoint's EMA weights when present, else
+    its model weights. Anything else is a bare state dict, returned unchanged."""
     if isinstance(payload, dict) and 'model_state_dict' in payload:
         return payload.get('ema_state_dict') or payload['model_state_dict']
     return payload

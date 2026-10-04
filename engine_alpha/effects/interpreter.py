@@ -1,21 +1,12 @@
 """Micro-step IR interpreter.
 
-Effect resolution is an explicit machine: a Frame holds (effect, source
-card, owner, program counter, registers, compound-op sub-state). Ops
-execute sequentially; choice ops return a DecisionRequest, pausing the
-frame with all sub-state stored ON the frame (never on the Python stack),
-so a paused game clones perfectly.
+A Frame holds an effect's whole resolution state (program counter, registers,
+compound-op sub-state), so a paused effect clones exactly. Choice ops return a
+DecisionRequest; Game._advance() later calls resume() with the answer, and the
+paused op re-runs to consume it.
 
-Answer routing: Game._advance() calls resume() with the (request, answer)
-pair whenever frames are active; the paused op re-runs, consumes the
-answer, and either finishes or pauses again (compound ops like multiselect
-issue several requests in sequence).
-
-Prompt-sequence fidelity: choice ops reproduce the legacy engine's exact
-prompt sequences (e.g. multiselect = one number prompt then k single-card
-prompts, matching its _prompt_card_multiselect), a contract established by
-the now-retired cross-engine equivalence harness and still relied on by the
-recorded decision logs and transcript baselines.
+Keep each choice op's prompt sequence (multiselect: one number prompt, then that
+many card prompts). Recorded decision logs and transcript baselines depend on it.
 """
 
 from __future__ import annotations
@@ -48,9 +39,7 @@ EFFECT_PROGRAMS: dict[int, tuple] = {}
 CUSTOM_HANDLERS: dict[str, callable] = {}
 
 
-# ---------------------------------------------------------------------------
-# Expressions
-# ---------------------------------------------------------------------------
+# --- Expressions ---
 
 def eval_expr(state: GameState, frame: Frame, expr) -> int:
     if isinstance(expr, int):
@@ -87,8 +76,8 @@ def _ensure_regs(frame: Frame, reg: int) -> None:
 
 
 def remove_from_current_zone(state: GameState, instance_id: int) -> int:
-    """Detach an instance from whatever container holds it. Returns the
-    holding player's index. Raises if the card is nowhere (a bug)."""
+    """Detach an instance from its zone; returns the holding player's index.
+    Raises if it is in no zone."""
     for player in state.players:
         for zone in (player.hand, player.charger, player.abyss, player.deck):
             if instance_id in zone:
@@ -109,14 +98,11 @@ def remove_from_current_zone(state: GameState, instance_id: int) -> int:
     raise AssertionError(f"instance {instance_id} not found in any zone")
 
 
-# ---------------------------------------------------------------------------
-# Frame execution
-# ---------------------------------------------------------------------------
+# --- Frame execution ---
 
 def start_effect(state: GameState, owner_index: int, instance_id: int, effect_index: int) -> None:
-    """Push a frame if the effect's gate condition holds at resolution time.
-    (Custom entries usually carry cond=None and evaluate conditions inside
-    the handler; a non-None cond gates customs too, e.g. 02-015.)"""
+    """Push a frame if the effect's condition holds. The condition gates custom
+    handlers too (02-015)."""
     cond, ops, custom = EFFECT_PROGRAMS[effect_index]
     if not eval_cond(state, owner_index, cond):
         return
@@ -132,10 +118,8 @@ def resume(state: GameState, request: DecisionRequest | None, answer: int | None
     while state.frame_stack:
         frame = state.frame_stack[-1]
         if state.winner != -1:
-            # The game ended mid-resolution (Q&A No.41): drop every pending
-            # frame instead of continuing to resolve effects into a finished
-            # game. Custom handlers are dropped here too, since their step
-            # machines would otherwise keep prompting for choices.
+            # The game ended mid-resolution: drop every frame, custom handlers
+            # included (Q&A No.41).
             state.frame_stack.clear()
             return None
         cond, ops, custom = EFFECT_PROGRAMS[frame.effect_index]
@@ -156,9 +140,7 @@ def resume(state: GameState, request: DecisionRequest | None, answer: int | None
 def _exec_ops(state: GameState, frame: Frame, ops: tuple, request, answer):
     while frame.pc < len(ops):
         if state.winner != -1:
-            # Q&A No.41 / Ground Rules 1.2.3: once a player's HP reaches 0 the
-            # game is over and no further card effect is processed. Abandon the
-            # rest of this program rather than resolving into a finished game.
+            # Game over: abandon the rest of the program (Ground Rules 1.2.3; Q&A No.41).
             frame.pc = len(ops)
             return None
         op = ops[frame.pc]
@@ -170,10 +152,9 @@ def _exec_ops(state: GameState, frame: Frame, ops: tuple, request, answer):
     return None
 
 
-# ---------------------------------------------------------------------------
-# Op handlers. Signature: (state, frame, op, request, answer)
-# -> DecisionRequest to pause, or None (op done; handler updated frame.pc).
-# ---------------------------------------------------------------------------
+# --- Op handlers ---
+# (state, frame, op, request, answer) -> a DecisionRequest to pause, or None after
+# advancing frame.pc.
 
 def _op_end(state, frame, op, request, answer):
     frame.pc = 10**6
@@ -221,16 +202,14 @@ def _op_pick_card(state, frame, op, request, answer):
         return None
     candidates = eval_selector(state, frame.owner, sel)
     if not candidates:
-        # Old engine: prompt on empty candidates returns None -> effect aborts.
+        # No candidates: the effect ends.
         frame.pc = 10**6
         return None
     return select_card(P_EFFECT_TARGET, candidates)
 
 
 def _op_pick_card_opt(state, frame, op, request, answer):
-    """Declinable single-card pick ('may' effects). Emits a SelectCard with
-    allow_pass; PASS (or no candidates) jumps to skip_target so dependent ops
-    are skipped. On a real pick, stores the instance and falls through."""
+    """Optional single-card pick ("may"). PASS or no candidates jumps to skip_target."""
     _, reg, sel, skip_target = op
     _ensure_regs(frame, reg)
     if answer is not None:
@@ -258,9 +237,8 @@ def _op_pick_number(state, frame, op, request, answer):
 
 
 def _op_multiselect(state, frame, op, request, answer):
-    """Old _prompt_card_multiselect: SelectNumber(min..len(candidates)),
-    then that many sequential SelectCards. Result list lands in `reg`.
-    Sub-state: frame.data = [stage, remaining_candidates, picked]."""
+    """A number prompt (min_cards..len(candidates)), then that many card picks into
+    `reg`. frame.data = [want, remaining, picked]; frame.step is the stage."""
     _, reg, sel, min_cards = op
     _ensure_regs(frame, reg)
     if frame.step == 0:
@@ -296,7 +274,7 @@ def _finish_multiselect(frame: Frame, reg: int):
 
 
 def _op_picks_exact(state, frame, op, request, answer):
-    """`count_expr` sequential single-card picks (no number prompt)."""
+    """Up to `count_expr` sequential single-card picks (no number prompt)."""
     _, reg, sel, count_expr = op
     _ensure_regs(frame, reg)
     if frame.step == 0:
@@ -334,9 +312,7 @@ def _op_name_guess(state, frame, op, request, answer):
 def _op_atk_bonus(state, frame, op, request, answer):
     player = _side_player(state, frame, op[1])
     amount_expr = op[2]
-    # 03-064 grants each side "+= your own remaining HP". Q&A No.33 fixes that
-    # reading at 攻撃力の決定時 -- attack determination -- not at the moment the
-    # area enchant resolves, so record it deferred instead of snapshotting.
+    # 03-064's "+ own HP" is deferred: HP is read at attack determination (Q&A No.33).
     if (isinstance(amount_expr, tuple) and amount_expr[0] == "hp"
             and _side_player(state, frame, amount_expr[1]) is player):
         add_own_hp_attack_modifier(player)
@@ -409,8 +385,8 @@ def _op_reflect(state, frame, op, request, answer):
 
 
 def _op_adv_chronos(state, frame, op, request, answer):
-    """Effect clock changes use single-compare transition tracking
-    (old engine.set_chronos), not the step-by-step turn-phase variant."""
+    """Effects move the clock with set_chronos (one before/after comparison), not
+    the turn's step-by-step advance."""
     from ..battle import set_chronos
     steps = eval_expr(state, frame, op[1])
     if steps:
@@ -433,11 +409,8 @@ def _op_midnight_extend(state, frame, op, request, answer):
 
 
 def _record_deck_shortfall(state, player_index: int) -> None:
-    """Ground Rules 8.2.1/8.2.2: when an effect cannot process the number of
-    cards it names because the deck runs out, the player who could not complete
-    the processing loses at that moment. Q&A No.70 confirms this for "put N
-    cards from the opponent's deck into their abyss" -- the milled player loses.
-    """
+    """The player whose deck cannot supply an effect's cards loses at once
+    (Ground Rules 8.2.1, 8.2.2; Q&A No.70)."""
     if state.winner == -1:
         state.winner = 1 - player_index
 
@@ -487,8 +460,7 @@ def _op_move_reg(state, frame, op, request, answer):
 
 
 def _op_draw_exact(state, frame, op, request, answer):
-    """All-or-nothing draw (draw n only if deck >= n). A short deck means the
-    player cannot carry out the instruction, which is a loss (GR 8.2.1)."""
+    """Draw n only if the deck holds n; a short deck loses instead (Ground Rules 8.2.1)."""
     player = _side_player(state, frame, op[1])
     count = eval_expr(state, frame, op[2])
     if count > 0:
@@ -501,21 +473,16 @@ def _op_draw_exact(state, frame, op, request, answer):
 
 
 def _op_chronos_revert_turn_start(state, frame, op, request, answer):
-    """01-008: raw assignment back to the turn-start time; the old code does
-    NOT route through set_chronos, so no transition flags are recorded."""
+    """01-008: reset the clock to the turn-start time. A rewind, so no crossing is
+    recorded (Q&A No.17)."""
     state.chronos = state.chronos_at_turn_start
     frame.pc += 1
     return None
 
 
 def _op_chronos_back_opp_clock(state, frame, op, request, answer):
-    """01-026: rewind to (turn_start - opponent's chronos contribution), only if
-    the opponent advanced the clock this turn.
-
-    Records no day/night crossing, matching 01-008's revert: per Q&A No.17 a rewind
-    undoes a change rather than creating one, so it must not hand family D a
-    crossing that never occurred.
-    """
+    """01-026: if the opponent advanced the clock this turn, rewind to the turn-start
+    time minus their advance. Records no crossing (Q&A No.17)."""
     from ..battle import set_chronos
     from ..state import PF_CHRONOS_ADVANCED
     opponent = state.players[1 - frame.owner]
@@ -528,9 +495,9 @@ def _op_chronos_back_opp_clock(state, frame, op, request, answer):
 
 
 def _op_bounce_opp_area(state, frame, op, request, answer):
-    """Move the opponent's area enchant to the top/bottom of their deck.
-    `cleanup` mirrors the old code: 02-055/03-014/03-021 fire the leave-play
-    cleanup (03-055 unblock); 03-055's own bounce does NOT."""
+    """Move the opponent's area enchant to the top or bottom of their deck. With
+    `cleanup` (02-055, 03-014, 03-021) the leave-play cleanup runs, clearing a 03-055
+    block; 03-055's own bounce skips it."""
     from .removal import on_area_enchant_leaves_play
     _, order, cleanup = op
     opponent = state.players[1 - frame.owner]
@@ -549,10 +516,8 @@ def _op_bounce_opp_area(state, frame, op, request, answer):
 
 
 def _op_opp_area_to_abyss(state, frame, op, request, answer):
-    """04-107: the opponent's area enchant goes to THEIR abyss. Forced to the
-    abyss even when the card has SEND TO POWER (card text; the same exception
-    removal.py makes for 04-030). Fires the leave-play cleanup, so a 03-055
-    area block clears — which a plain move_reg out of set_c would miss."""
+    """04-107: the opponent's area enchant goes to their abyss, even with SEND TO
+    POWER (card text). Runs the leave-play cleanup, which a plain move_reg skips."""
     from .removal import on_area_enchant_leaves_play
     opponent = state.players[1 - frame.owner]
     if opponent.set_c != -1:
@@ -565,12 +530,8 @@ def _op_opp_area_to_abyss(state, frame, op, request, answer):
 
 
 def _op_charger_to_abyss(state, frame, op, request, answer):
-    """04-105: empty a side's power charger into that side's OWN abyss.
-
-    The actor is the effect owner, so the charger owner's PF_CARD_TO_POWER
-    never fires and PF_OPP_CARD_TO_ABYSS fires for the side that did not act.
-    Cards are detached before placement so none is ever in two zones at once.
-    """
+    """04-105: empty a side's charger into that side's own abyss, with the effect
+    owner as the actor for placement flags."""
     player = _side_player(state, frame, op[1])
     emptied = list(player.charger)
     player.charger.clear()
@@ -581,14 +542,9 @@ def _op_charger_to_abyss(state, frame, op, request, answer):
 
 
 def _op_name_guess_bonus(state, frame, op, request, answer):
-    """03-047 family: +N attack when the guessed definition matches the
-    opponent's hand card at the 1-based index chosen earlier.
-
-    The card text is 「相手の手札から1枚を選んで公開し、そのカード名のカードなら攻撃力+N」:
-    the chosen card is REVEALED whether or not it matches. 公開 means both players
-    see it (GR 10.2.1/10.4.1, as opposed to 見る, which shows only the effect's
-    controller), so the reveal is emitted before the match test.
-    """
+    """03-047 family: +N attack if the guess names the chosen opponent hand card
+    (1-based index). The card is revealed to both players either way (Ground Rules
+    10.2.1)."""
     _, guess_reg, index_reg, amount = op
     opponent = state.players[1 - frame.owner]
     revealed = opponent.hand[frame.regs[index_reg] - 1]
@@ -621,13 +577,8 @@ def _op_shuffle_reg(state, frame, op, request, answer):
 
 
 def apply_self_defeat(state, player_index):
-    """CHAOS bomb failure: the old code sets the player's HP to 0.
-
-    Also records who did it and on which turn. That record is purely
-    informational — the HP win check, the winner, and Game.returns() are
-    identical with or without it, and it never enters the NN observation. The
-    bot layer reads it to rate a deliberately thrown game differently.
-    """
+    """CHAOS bank-or-lose failure: HP to 0. Also records the player and turn, which
+    only the bot (Elo rules, game records) and the training stacks read."""
     from ..battle import record_hp_zero
     player = state.players[player_index]
     old_hp = player.hp
@@ -641,35 +592,23 @@ def apply_self_defeat(state, player_index):
 
 
 def _op_lose_game(state, frame, op, request, answer):
-    """CHAOS bomb failure: the owner loses the game."""
+    """CHAOS bank-or-lose failure: the owner loses the game."""
     apply_self_defeat(state, frame.owner)
     frame.pc += 1
     return None
 
 
 def _op_deck_top_route(state, frame, op, request, answer):
-    """Top card of side's deck -> their charger (if SEND TO POWER) else
-    their abyss; the actor is the effect owner (02-041, self-placement).
-
-    An empty deck is a loss, not a no-op. 02-041 names one card out of a deck
-    (「デッキの一番上のカードを…置く」) exactly as 01-104 does for the opponent
-    (「相手のデッキの一番上のカードを…アビスに置く」), and 01-104 compiles to
-    `mill`, which loses. This op used to be the one deck-consuming op that
-    clamped silently, so the same instruction lost the game or fizzled purely
-    by which op it compiled to (Ground Rules 8.2.1/8.2.2).
-
-    The shortfall is recorded against the DECK OWNER, which for 02-041's SELF
-    target makes it self-inflicted.
-    """
+    """02-041: the top card of side's deck goes to their charger (SEND TO POWER) or
+    abyss, with the owner as actor. An empty deck loses the game for the deck's owner
+    (Ground Rules 8.2.1, 8.2.2)."""
     from ..zones import to_power_or_abyss
     player = _side_player(state, frame, op[1])
     if player.deck:
         instance_id = player.deck.pop(0)
         to_power_or_abyss(state, instance_id, player.index, frame.owner)
     else:
-        # The pc advance below is dead on this branch: the shortfall always sets a
-        # winner, and both _exec_ops and resume bail on `winner != -1` before the
-        # next op. Kept so the two branches stay symmetrical.
+        # Ends the game, so the pc advance below never matters.
         _record_deck_shortfall(state, player.index)
     frame.pc += 1
     return None
@@ -689,9 +628,7 @@ def _op_mill(state, frame, op, request, answer):
 
 
 def _emit_reveal(state, frame, revealed_owner_index: int, instance_ids) -> None:
-    """Announce a reveal on the event sink. Informational only: no zone
-    contents change, so a detached sink (search, training) makes both reveal
-    ops pure no-ops, exactly as they were before."""
+    """Emit EVENT_CARDS_REVEALED. Changes no state, so without a sink the reveal ops do nothing."""
     if state.event_sink is None:
         return
     state.event_sink.append(
@@ -701,18 +638,15 @@ def _emit_reveal(state, frame, revealed_owner_index: int, instance_ids) -> None:
 
 
 def _op_reveal_reg(state, frame, op, request, answer):
-    # Only used by the TAIDADA family, which always selects from the owner's
-    # own hand, so the revealed cards belong to the effect owner. Emitted even
-    # when the register is empty: that is what tells a driver the player chose
-    # to reveal nothing.
+    # TAIDADA family only, so the cards come from the owner's hand. Emitted even
+    # when empty: that tells the driver the player revealed nothing.
     _emit_reveal(state, frame, frame.owner, frame.regs[op[1]] or ())
     frame.pc += 1
     return None
 
 
 def _op_reveal_hand(state, frame, op, request, answer):
-    # Captured before any following shuffle_hand, so the reveal reports the
-    # order the revealing player actually saw.
+    # Emitted before any shuffle_hand, so it shows the order the player saw.
     player = _side_player(state, frame, op[1])
     _emit_reveal(state, frame, player.index, player.hand)
     frame.pc += 1

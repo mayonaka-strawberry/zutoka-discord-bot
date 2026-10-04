@@ -1,8 +1,5 @@
 """
-Pieces shared verbatim by the standard and TCG deck management views.
-
-The two view files are deliberate forks (the TCG variant renders dual embeds
-and side decks), so only code that is byte-identical between them lives here.
+Code shared verbatim by the standard and TCG deck views, which are deliberate forks.
 """
 
 from __future__ import annotations

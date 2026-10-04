@@ -1,25 +1,13 @@
 """
 Deck strength round robin under the deployed PPO checkpoint.
 
-Every deck in the training pool plays every other deck, with the same checkpoint
-on both seats, so the only variable in a game is the deck. Decks are ranked by
-win rate and the strongest are written to a JSON file as `{'guid', 'cards'}`
-entries, `cards` being the shape decks take everywhere else in the repository.
-Nothing of the run itself is written: the file is a deck source, and the full
-standings are printed instead.
+Every training-pool deck plays every other, with the same checkpoint on both seats,
+so only the deck varies. The strongest decks are written as {'guid', 'cards'} entries
+(nothing in the bot reads this file); the full standings are printed.
 
-Games are played to a real winner. Argmax play can livelock - a deterministic
-policy answers a repeatable position the same way forever - and the engine's
-max_turns cannot catch it, because that cap is only tested when a turn advances.
-A turn that issues too many decisions is broken out of by sampling; see
-`_play_resolved`.
-
-Parallelism is by process, not by thread: most of a game is the engine's step
-loop, which is pure Python and so GIL-bound, and a thread pool measured a 1.4x
-ceiling. Throughput is flat in the worker count past a handful - 10.3, 10.1 and
-9.7 games/s at 8, 16 and 24 workers - so the default is 8, which was fastest and
-is also cheapest in memory. Each worker loads the checkpoint once and runs torch
-single-threaded, without which the processes only contend.
+Argmax play can loop within a turn, where the engine's max_turns cap never fires, so
+a turn past TURN_DECISION_LIMIT decisions plays seeded random moves until it ends.
+Parallel by process (the engine is GIL-bound); throughput is flat past 8 workers.
 
 Usage:
     python -m ppo_transformer.best_deck_ppo
@@ -52,22 +40,14 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT_PATH = REPOSITORY_ROOT / 'data' / 'best_decks_ppo.json'
 PROGRESS_INTERVAL_PAIRS = 100
 
-# Decisions inside a single turn before the game is treated as livelocked.
-# A whole game averages about 29 decisions, so 300 in one turn is not a long
-# turn, it is a cycle. The engine's own max_turns cannot catch this: the cap is
-# only tested when a turn advances (engine_alpha/game.py), and a game stuck
-# within a turn never gets there.
+# Decisions in one turn before it counts as a loop (a whole game averages about 29).
 TURN_DECISION_LIMIT = 300
 
-# Backstop if sampling somehow fails to break a cycle. Never reached in
-# practice - one random action was enough for every livelock observed - so
-# hitting it means something is wrong enough that a recorded result would be
-# untrustworthy, and the run stops instead.
+# Backstop if sampling fails to break a loop. Never reached so far; hitting it stops the run.
 DECISION_HARD_LIMIT = 200_000
 
-# Set by _initialize_worker in each pool process, and by the driver itself when
-# running with a single worker. Module level because Windows spawns workers
-# rather than forking them, so nothing else survives into the child.
+# Set by _initialize_worker in each process (or the driver, with one worker). Module
+# level because Windows spawns workers, so nothing else reaches the child.
 _WORKER_POOL: list[list[int]] = []
 _WORKER_AGENT: PpoAgent | None = None
 _WORKER_GAMES_PER_PAIR = 0
@@ -77,13 +57,8 @@ _WORKER_PAIRS: list[tuple[int, int]] = []
 
 def _initialize_worker(pool: list[list[int]], pairs: list[tuple[int, int]],
                        games_per_pair: int, seed_base: int) -> None:
-    """Per-process setup: one checkpoint load, torch held to one thread.
-
-    Loading here rather than per task matters - the checkpoint takes ~2.6s to
-    read against roughly a second of work per pair. Pinning torch to a single
-    intra-op thread matters more: without it every worker defaults to one thread
-    per core and the processes spend their time fighting each other for cores.
-    """
+    """Per-process setup: load the checkpoint once, and hold torch to one thread so
+    workers do not fight over cores."""
     global _WORKER_POOL, _WORKER_AGENT, _WORKER_GAMES_PER_PAIR
     global _WORKER_SEED_BASE, _WORKER_PAIRS
 
@@ -99,22 +74,9 @@ def _initialize_worker(pool: list[list[int]], pairs: list[tuple[int, int]],
 
 
 def _play_resolved(decks: tuple[list[int], list[int]], seed: int) -> tuple[int, int]:
-    """One game to a real result. Returns (winner, perturbed decision count).
-
-    Argmax play can livelock. The policy is deterministic, so a position that
-    offers a repeatable option is answered the same way every time and the game
-    cycles forever - one matchup in the first full run span 20,000 decisions
-    inside a single turn without advancing it. A human or a sampling agent
-    escapes by eventually choosing differently.
-
-    So when a turn has issued `TURN_DECISION_LIMIT` decisions, this samples
-    uniformly from the legal actions until the turn moves on, then hands control
-    back to the policy. That is the smallest intervention that breaks a cycle:
-    the livelock observed needed exactly one sampled action, and healthy games
-    never reach the limit, so their play is bit-for-bit what argmax alone would
-    produce. The rng is seeded from the game seed, so a perturbed game still
-    replays identically.
-    """
+    """One game to a real result: (winner, perturbed decision count). Past
+    TURN_DECISION_LIMIT decisions in a turn, legal actions are sampled (seeded from the
+    game seed) until the turn advances; healthy games never get there."""
     game = Game(seed=seed, mode='fixed_decks', decks=decks)
     sampler = random.Random(seed)
     current_turn = -1
@@ -141,24 +103,9 @@ def _play_resolved(decks: tuple[list[int], list[int]], seed: int) -> tuple[int, 
 
 
 def _play_pair(pair_index: int) -> dict:
-    """Every game between one pair of decks, as seen from the pair's two decks.
-
-    The unit of work is a pair rather than a game so that the cost of handing
-    work to a process is amortised over several seconds of play, and so that all
-    of the seeding and seat logic stays on one side of the process boundary.
-
-    Seeds derive from `pair_index` alone, so a pair plays the same games no
-    matter which worker picks it up or in what order, and the whole tournament
-    reproduces from `--seed-base`. The policy is a plain argmax, so the seed is
-    the only thing that separates one game in a pair from the next.
-
-    Seats alternate on `(game_index + pair_index)`. An odd `games_per_pair`
-    hands one deck an extra game in seat 0; keying the parity on the pair index
-    as well as the game index alternates which deck that is from one opponent to
-    the next, so over the opponents a deck faces it comes out even. Which
-    seat is NIGHT is left to the engine's own seed-driven coin flip, as it is
-    for a real single match.
-    """
+    """Every game of one deck pair. Seeds derive from `pair_index` alone, so results do
+    not depend on worker order. Seats alternate on (game_index + pair_index), evening
+    out an odd games_per_pair across opponents; day/night is the engine's coin flip."""
     deck_i, deck_j = _WORKER_PAIRS[pair_index]
     cards_i = _WORKER_POOL[deck_i]
     cards_j = _WORKER_POOL[deck_j]
@@ -205,12 +152,7 @@ def _accumulate(records: list[dict], result: dict) -> None:
 
 def run_round_robin(pool: list[list[int]], games_per_pair: int, seed_base: int,
                     workers: int, executor_kind: str) -> list[dict]:
-    """Play every pair; return a tally record per deck.
-
-    Results are accumulated as they complete. Order does not matter: each result
-    names the two decks it belongs to and its seeds came from its pair index, so
-    the totals are the same whatever sequence the workers finish in.
-    """
+    """Play every pair; return a tally record per deck (independent of finish order)."""
     pairs = list(itertools.combinations(range(len(pool)), 2))
     records = [{'index': index, 'wins': 0, 'losses': 0, 'draws': 0}
                for index in range(len(pool))]
@@ -265,17 +207,8 @@ def run_round_robin(pool: list[list[int]], games_per_pair: int, seed_base: int,
 
 
 def rank_decks(pool: list[list[int]], records: list[dict]) -> list[dict]:
-    """Tally records as ranked output entries, strongest first.
-
-    Ranked on win rate, so a deck is not rewarded for drawing rather than
-    losing. Every deck plays the same number of games, so this only separates
-    decks that wins-minus-losses would tie, and only when their draw counts
-    differ. Wins and then guid break the remaining ties, keeping the order total
-    and stable between runs that score the same.
-
-    The tallies ride along on each entry for the sort and for the standings
-    table `main` prints; only `guid` and `cards` are written to the output file.
-    """
+    """Ranked entries, strongest first: win rate, then wins, then guid (stable). Only
+    `guid` and `cards` reach the output file."""
     entries = []
     for record in records:
         definitions = pool[record['index']]
@@ -362,24 +295,19 @@ def main(argv: list[str] | None = None) -> int:
     entries = rank_decks(pool, records)
     best = entries[:arguments.top]
 
-    # Every game should resolve to a winner. A draw here can only come from the
-    # engine's own turn cap, which a 20-turn game never approaches, so it is
-    # worth saying out loud rather than letting it sit in a column.
+    # A draw comes only from a mutual deck-out or the engine's turn cap, so report it.
     total_draws = sum(entry['draws'] for entry in entries) // 2
     if total_draws:
         print(f'\nwarning: {total_draws} drawn game(s) - expected none; '
               f'these hit the engine turn cap of 200')
 
-    # The output is a deck source and nothing else: whatever reads it resolves
-    # `cards` and ignores the rest, so the tallies and the run's own bookkeeping
-    # stay out of the file. The standings live in the table printed below.
+    # Only the decks go in the file; the standings are printed below.
     output_path = Path(arguments.output)
     write_output(output_path, {
         'decks': [{'guid': entry['guid'], 'cards': entry['cards']} for entry in best],
     })
 
-    # Every deck, not just the ones written out: the losing end of the table is
-    # where a pool problem shows up, and it is gone once the process exits.
+    # Print every deck: pool problems show at the bottom of the table.
     print(f'\nall {len(entries)} decks by win rate:')
     print(f'{"rank":>4}  {"win%":>6}  {"W":>5}  {"L":>5}  {"D":>5}  {"net":>5}  guid')
     for rank, entry in enumerate(entries, start=1):

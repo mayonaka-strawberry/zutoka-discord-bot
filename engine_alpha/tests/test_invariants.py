@@ -1,10 +1,11 @@
-"""M1 gate: property tests and invariant fuzzing over random playouts.
+"""Property tests over random playouts.
 
 Invariants checked at every decision point:
 - card conservation: each player's 20 instances are all in exactly one zone
 - chronos in [0, 18); HP in [0, 100]
 - a pending decision always has at least one legal action
-- clone independence: mutating the original never changes a clone
+
+Also clone independence: mutating the original never changes a clone.
 """
 
 from __future__ import annotations
@@ -19,7 +20,8 @@ from .conftest import make_vanilla_game, random_playout, random_vanilla_deck
 
 
 def snapshot(game: Game) -> tuple:
-    """Canonical value-snapshot of everything that defines the game state."""
+    """Canonical value-snapshot of the game state, excluding frames, the pending
+    request and the self-defeat slots."""
     state = game.state
     players = tuple(
         (p.index, p.side_is_night, p.hp, tuple(p.deck), tuple(p.hand),

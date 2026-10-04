@@ -1,11 +1,7 @@
 """
-MatchTransport: the output side of a match, behind one interface.
-
-A transport delivers game messages (text, embeds, board images) to players and
-the originating channel. Flow code and the effect engine send exclusively
-through the session's transport so the same game logic runs over Discord DMs,
-headless test recorders, or a muted replay (during resume after a restart,
-``muted`` is True and every send is a no-op).
+MatchTransport: every outgoing match message (text, embeds, board images) goes
+through the session's transport: Discord when live, a recorder in tests, muted
+(no-op) during replay.
 """
 
 from __future__ import annotations
@@ -57,9 +53,8 @@ class MatchTransport(Protocol):
 
 
 class DiscordMatchTransport:
-    """Sends over Discord DMs and the match's channel, exactly as the flows and
-    effect engine did before the transport existed (same retry helper and labels).
-    DMs addressed to the solo-mode bot player (sentinel Discord ID 0) are skipped."""
+    """Sends over Discord DMs and the match channel. DMs to the solo bot player
+    (Discord ID 0) are skipped."""
 
     def __init__(self, bot: 'discord.Client') -> None:
         self.bot = bot
@@ -101,9 +96,8 @@ class DiscordMatchTransport:
 
     @staticmethod
     def _record_narration(session: 'GameSession', kwargs: dict[str, Any]) -> None:
-        """Mirror channel narration into the game event stream. Runs before the
-        channel lookup so solo games (no guild channel) are recorded too;
-        muted sends never reach here, so replay stays silent."""
+        """Mirror channel narration into the event stream, before the channel lookup so
+        solo games are recorded too. Muted sends never get here."""
         if session.persistence is None:
             return
         embeds = list(kwargs.get('embeds') or [])

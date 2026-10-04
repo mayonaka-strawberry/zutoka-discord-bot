@@ -1,11 +1,6 @@
 """
-Persistence layer for user-saved TCG decks.
-
-Thin shim over the TCG deck repository (see deck_repository.py); TCG decks
-live in the PostgreSQL decks_tcg table keyed by Discord user id. TCG decks
-have 20 main deck cards and 8 side deck cards. The repository singleton is
-looked up through the module attribute on every call so tests can swap in an
-in-memory fake.
+TCG saved decks (20 main + 8 side): a thin facade over deck_repository (decks_tcg
+table). The repository is looked up on every call so tests can swap in a fake.
 """
 
 from __future__ import annotations
@@ -63,12 +58,8 @@ def resolve_tcg_deck_cards(
     deck_data: dict,
     card_index: dict[tuple[int, int], Card],
 ) -> tuple[list[Card], list[Card]]:
-    """
-    Convert a saved TCG deck's card references to Card objects.
-
-    Returns (main_deck, side_deck) as lists of Card objects.
-    Raises ValueError if any card reference is invalid.
-    """
+    """A saved TCG deck as (main_deck, side_deck) Card lists. Raises ValueError on an
+    invalid reference."""
     main_cards = resolve_card_list(deck_data, 'deck', card_index)
     side_cards = resolve_card_list(deck_data, 'side_deck', card_index)
     return main_cards, side_cards

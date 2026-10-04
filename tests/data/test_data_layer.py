@@ -1,5 +1,5 @@
 """Unit tests for the data layer: deck repository, validators, player storage
-(match recording and Elo), name storage, gacha, and the card cache."""
+(match recording and Elo), name storage, gacha, the card cache, and card art paths."""
 
 from __future__ import annotations
 
@@ -117,9 +117,8 @@ class TestDeckRepository:
 
 
 class TestStorageShims:
-    """The deck_storage / deck_storage_tcg modules delegate to the repository
-    singletons (swapped for in-memory fakes by the autouse fixture); exercise
-    every public shim once."""
+    """deck_storage and deck_storage_tcg delegate to the repository singletons (fakes
+    here); exercise every public function once."""
 
     def test_standard_shims_round_trip(self):
         import zutomayo.data.deck_storage as deck_storage_module
@@ -337,12 +336,8 @@ class TestPlayerStorage:
         assert 1000 - suppressed_elo == expected_drop, 'throwing costs far more than losing'
 
     def test_thrown_game_penalty_never_decays_to_nothing(self, install_in_memory_backends):
-        """The flat term is what stops a feeder account from eventually throwing for free.
-
-        Once the thrower is far enough below the winner the scaled part rounds away, so
-        without the flat penalty (or with the multiplier applied outside the round) the
-        rating would stop moving and the rule would quietly switch itself off.
-        """
+        """The flat term keeps a feeder account from ever throwing for free: at a wide
+        rating gap the scaled part rounds away."""
         from zutomayo.data.player_storage import (
             SELF_DEFEAT_ELO_LOSS_FLAT_PENALTY, load_profile, record_match_result,
             save_profile,
@@ -365,12 +360,8 @@ class TestPlayerStorage:
         assert 100 - loser['elo'] >= SELF_DEFEAT_ELO_LOSS_FLAT_PENALTY
 
     def test_thrown_game_floors_the_rating_at_zero(self, install_in_memory_backends):
-        """Both players are seeded low so the penalty exceeds the thrower's whole rating.
-
-        The penalty scales with the rating gap, so a thrower near zero facing a normal
-        opponent is charged only a few points and never reaches the clamp - it takes two
-        players who have both ground down to the floor to get there.
-        """
+        """Both players start low, so the penalty exceeds the thrower's rating and hits
+        the 0 floor."""
         from zutomayo.data.player_storage import (
             ELO_MINIMUM_RATING, load_profile, record_match_result, save_profile,
         )
@@ -605,12 +596,8 @@ class TestCardLoader:
 
 
 class TestCardArtPaths:
-    """The renderers assume every card resolves to a real jpg in its pack's directory.
-
-    create_deck_grid_image skips art it cannot open, which shifts the grid rather than
-    raising, and the board renderer substitutes the card back -- so a broken path is
-    invisible at runtime. These assertions are what make it visible.
-    """
+    """Every card must resolve to a real jpg in its pack directory: at runtime a broken
+    path is silently skipped (grids) or replaced by the card back (board)."""
 
     def test_every_card_image_exists_on_disk(self):
         missing = [

@@ -1,14 +1,10 @@
-"""All ppo_transformer hyperparameters as one dataclass tree.
-
-The defaults here are the tracked baseline; `ppo_transformer/.env` (or the
-process environment) layers per-machine overrides on top via `load_config()`:
+"""ppo_transformer hyperparameters as one dataclass tree. ppo_transformer/.env sets
+every key and is the source of truth; these defaults are the fallback.
 
     PPO_<SECTION>_<FIELD>=value    e.g. PPO_TRAIN_MINIBATCH_SIZE=2048
     PPO_<NAME>=value               run-level, read by the entry script
 
-To see every key with its current default:
-
-    python -m ppo_transformer.config
+`python -m ppo_transformer.config` prints every key, commented out.
 """
 
 from __future__ import annotations
@@ -35,9 +31,8 @@ class NetConfig:
     effect_feature_projection_dim: int = 64
     effect_embedding_dim: int = 32
     identity_embedding_dim: int = 96
-    # Identity-, effect- and song-indexed tables are sized to these capacities
-    # so new catalog rows slot into reserved space without shape changes (see
-    # model_common/migrate_checkpoint.py for growing past them).
+    # Table rows beyond the catalog size, so new cards keep checkpoints loadable
+    # (model_common/migrate_checkpoint.py grows past them).
     identity_capacity: int = 512
     effect_capacity: int = 320
     song_capacity: int = 64
@@ -51,87 +46,56 @@ class TrainConfig:
     ppo_epochs: int = 3
     clip_range: float = 0.2
     value_clip_range: float = 0.2
-    # Stop the epoch loop once an epoch's mean approx_kl exceeds this, so the
-    # later epochs do not train on data the policy has already left behind.
-    # 0.0 disables. Measured KL across all 3 epochs runs ~0.10-0.12 early in a
-    # run, so 0.05 keeps roughly the first epoch and a half. Self-regulating:
-    # as the per-step KL falls, all ppo_epochs run again with no config change.
+    # Stop the epochs once an epoch's mean approx_kl exceeds this; 0.0 disables.
+    # Self-regulating: all epochs run again once KL falls.
     target_kl: float = 0.05
     value_loss_weight: float = 0.5
     entropy_bonus_initial: float = 0.01
     entropy_bonus_final: float = 0.001
     entropy_anneal_iterations: int = 400
-    # The reward is terminal-only, so lambda controls how much of the actual
-    # game outcome reaches early decisions: at 0.95 a decision 50 steps from
-    # the end sees it at weight 0.08, at 0.98 it sees 0.36. 1.0 is pure Monte
-    # Carlo (unbiased, higher variance).
+    # The reward is terminal-only, so lambda sets how much of the outcome reaches
+    # early decisions. 1.0 is pure Monte Carlo.
     gae_lambda: float = 0.98
     discount: float = 1.0               # terminal-only reward
-    # CHAOS bank-or-lose cards end the game immediately when the Abyss
-    # minimum is not met. That is a self-inflicted blunder rather than a
-    # normal loss, so the terminal reward is shaped for both seats: the
-    # self-defeating player is punished harder than a normal loss, and the
-    # opponent is credited far less than an earned win so free wins are not
-    # something the policy learns to play for. Applies only to that specific
-    # termination (see model_common.termination.chaos_self_defeat_loser).
+    # CHAOS self-defeat terminal rewards: worse than a loss for the self-defeater,
+    # far less than a win for the opponent (model_common.termination).
     self_defeat_loss_reward: float = -4.0
     self_defeat_win_reward: float = 0.25
-    # 1e-4, not the 3e-4 this carried until 2026-08-19. At 3e-4 the first pilot
-    # collapsed: entropy 1.06 -> 0.26 by iteration 27 with the bonus still near
-    # its initial value, and the gate fell 1.000 -> 0.390 as the learner started
-    # losing to its own iteration-20 snapshot. `.env` is the source of truth for
-    # a real run; this is the fallback, so it should be a value known to work.
+    # 3e-4 collapsed entropy in a pilot run; this fallback must be a value known to work.
     learning_rate: float = 1e-4
     learning_rate_final: float = 1e-5
     warmup_iterations: int = 10
     learning_rate_decay_iterations: int = 1000  # cosine horizon; match planned iterations
     weight_decay: float = 1e-4
     gradient_clip: float = 1.0
-    # Normalize advantages once over the whole rollout rather than per
-    # minibatch, so the advantage scale is consistent across an epoch.
+    # Normalize advantages over the whole rollout, not per minibatch.
     normalize_advantage_per_batch: bool = True
     checkpoint_interval_iterations: int = 5
-    # Checkpoints kept on disk, newest first. Promoted snapshots are always
-    # retained regardless. 0 disables pruning.
+    # Newest checkpoints kept; promoted snapshots always stay. 0 keeps all.
     checkpoint_retention: int = 5
     # Master seed for deck draws, opponent choice and minibatch shuffling.
     seed: int = 19990929
     # Opponent mix per game.
     p_latest_vs_latest: float = 0.50
     p_vs_snapshot: float = 0.35
-    # Implicit remainder in RolloutCollector; validated to stay consistent.
+    # The remainder in RolloutCollector; validated with the others.
     p_vs_random: float = 0.15
     # Snapshot promotion gate.
     gating_games: int = 200
     gating_win_rate: float = 0.55
     snapshot_capacity: int = 30
-    # Absolute-strength benchmark against engine_alpha's 1-ply heuristic, run on
-    # the gating cadence. Observational only — it never gates promotion. The
-    # gate and the pool win rates are all relative to a past self, so a plateau
-    # there cannot be told apart from convergence, and win_rate_vs_random
-    # saturates once the policy is any good. 0 disables.
+    # Games against the greedy heuristic on gating iterations: the absolute strength
+    # signal. Never gates promotion; 0 disables.
     benchmark_games: int = 100
-    # Snapshot sampling: how fast the learner's per-snapshot win rate tracks
-    # results, the floor weight so no snapshot is starved, and the shift from
-    # variance weighting (0) toward preferring snapshots the learner loses to (1).
+    # Snapshot sampling: win-rate tracking speed, floor weight, and the bias from
+    # evenly matched snapshots (0) toward ones the learner loses to (1).
     snapshot_win_rate_smoothing: float = 0.02
     snapshot_minimum_weight: float = 0.05
     snapshot_hardness_bias: float = 0.0
-    # Deck source per game (scripts/export_training_decks.py). This stack reads
-    # its own pool, which leaves out every deck holding a CHAOS card, and the
-    # generated decks honour the same exclusion: ppo_transformer plays fixed decks
-    # only and never drafts, so a CHAOS self-defeat is a termination it can
-    # neither cause deliberately nor learn to avoid at deck-building time — only
-    # absorb as variance. alpha_zero keeps those decks, because most of its games
-    # draft from the whole catalog regardless. The path resolves against the
-    # working directory, the repository root for
-    # `python -m ppo_transformer.train.run_train`.
-    #
-    # probability_user_deck is 1.0: every game is a deck someone actually built.
-    # That costs the gradient on cards no pooled deck runs, which is the trade —
-    # the generated share existed to reach them. A pool that loads empty is fatal
-    # rather than a log line (train/rollout.py deck_sampler_for), because falling
-    # back to generated decks would be the exact opposite of what this asks for.
+    # Real player decks (scripts/export_training_decks.py) without CHAOS cards, as
+    # this stack never drafts. Resolved against the working directory (repo root).
+    # With probability_user_deck 1.0 every game uses a real deck, and an empty pool
+    # is fatal (train/rollout.py deck_sampler_for).
     deck_pool_path: str = 'data/training_decks_ppo.json'
     probability_user_deck: float = 1.0
 
@@ -145,8 +109,7 @@ class Config:
         return asdict(self)
 
     def validate(self) -> "Config":
-        """Fails loudly on inconsistent settings — see the alpha_zero
-        equivalent for why this runs at config load."""
+        """Fail at load on inconsistent settings, not with a shape error mid-run."""
         env_config.check_probabilities_sum(
             {"p_latest_vs_latest": self.train.p_latest_vs_latest,
              "p_vs_snapshot": self.train.p_vs_snapshot,
@@ -158,10 +121,7 @@ class Config:
                 "PPO_TRAIN_PROBABILITY_USER_DECK must be within [0, 1], got "
                 f"{self.train.probability_user_deck}")
         if not self.train.deck_pool_path:
-            # Not mere hygiene: there is no shared default left to fall through
-            # to, and Path('') is the working directory, which exists — so an
-            # empty value would reach open() and raise PermissionError deep in
-            # the loader rather than reporting a missing pool.
+            # An empty path is the working directory, which fails deep in the loader.
             raise ValueError(
                 "PPO_TRAIN_DECK_POOL_PATH must name a pool file; an empty value "
                 "reads as unset and resolves to the working directory")
@@ -235,7 +195,7 @@ def load_config() -> Config:
 
 
 def env_setting(name: str, default, target_type: type | None = None):
-    """Run-level setting: PPO_<NAME> from .env/environment, else default."""
+    """Run-level setting PPO_<NAME> from .env or the environment, else `default`."""
     return env_config.env_setting(name, default, PREFIX, ENV_FILE, target_type)
 
 

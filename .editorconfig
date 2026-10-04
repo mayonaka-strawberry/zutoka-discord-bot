@@ -1,7 +1,5 @@
-# Keeps editors from re-saving source as Windows ANSI, which silently rewrites
-# every multi-byte character (Japanese card and bot names, em dashes, curly
-# quotes) into mojibake that is still valid UTF-8. See tests/test_source_encoding.py
-# for the guard that catches it when this fails.
+# UTF-8 everywhere: re-saving as Windows ANSI turns Japanese text into mojibake that is
+# still valid UTF-8. tests/test_source_encoding.py catches it.
 
 root = true
 

@@ -1,8 +1,4 @@
-"""Print a human-readable transcript of one random game (M1 hand-verification).
-
-Every decision, phase transition, chronos movement, battle outcome and draw
-is printed so a full game can be checked line-by-line against the printed
-rules (start guide + rule guide).
+"""Readable transcript of one random game, for checking play against the rules.
 
 Usage: python -m engine_alpha.scripts.transcript [--seed N] [--draft]
 """

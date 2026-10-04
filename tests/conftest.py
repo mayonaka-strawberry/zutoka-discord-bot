@@ -9,10 +9,8 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def install_in_memory_backends(monkeypatch):
-    """
-    Swap every storage backend for an in-memory fake so tests never touch
-    PostgreSQL (or live data). The fakes are returned for assertions.
-    """
+    """Swap every storage backend for an in-memory fake (returned for assertions), so
+    tests never touch PostgreSQL."""
     import zutomayo.data.deck_repository as deck_repository_module
     import zutomayo.data.game_id_allocator as game_id_allocator_module
     import zutomayo.data.name_storage as name_storage_module
@@ -57,12 +55,9 @@ def install_in_memory_backends(monkeypatch):
 
 @pytest.fixture
 def integration_database_url() -> str:
-    """
-    Connection URL for the PostgreSQL integration-test database. Tests using
-    this fixture are skipped unless ZUTOKA_TEST_DATABASE_URL is set (see
-    docs/postgresql_setup.md). Use tests.support.database_support
-    .run_with_database to run a test coroutine against a clean database.
-    """
+    """The integration-test database URL; tests using it skip unless
+    ZUTOKA_TEST_DATABASE_URL is set in the shell. Run test coroutines against a clean
+    database with tests.support.database_support.run_with_database."""
     database_url = os.environ.get('ZUTOKA_TEST_DATABASE_URL')
     if not database_url:
         pytest.skip('ZUTOKA_TEST_DATABASE_URL is not set; PostgreSQL integration tests are disabled')

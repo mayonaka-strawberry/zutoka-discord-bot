@@ -1,7 +1,5 @@
-"""Engine microbenchmarks (M1/M2 performance gate).
-
-Targets (plan section 6): random-policy full game >= 150 games/s/core,
-Game.clone() <= 20 us at mid-game.
+"""Engine benchmark. Reports PASS or FAIL against two targets: >= 150 random
+fixed-deck games/s, and Game.clone() <= 20 us mid-game.
 
 Usage: python -m engine_alpha.scripts.bench_engine [--games N]
 """

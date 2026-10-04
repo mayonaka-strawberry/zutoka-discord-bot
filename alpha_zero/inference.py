@@ -1,40 +1,21 @@
 """
-Deployment inference for the AlphaZero opponent.
+Deployment inference for the AlphaZero opponent (model A).
 
-Loads the newest deployable checkpoint, selects the runtime device (CUDA,
-then Apple Silicon MPS, then CPU), and answers one decision at a time:
+Loads the deployed checkpoint (model/alpha_zero, then alpha_zero/deploy/model.pt,
+then the newest runs/checkpoints/step_*.pt) on CUDA, MPS or CPU, and answers one
+decision at a time:
+- ``search`` (default): batched-leaf MCTS at the live budget. Training and gating
+  select for strength with search, so raw policy play is much weaker.
+- ``policy``: one masked forward pass, for when latency matters more.
+ALPHA_LIVE_MODE and ALPHA_LIVE_SIMULATIONS override the default mode and budget.
 
-- ``search`` mode (default): batched-leaf MCTS with a reduced live simulation
-  budget, built fresh for every decision. Training and promotion gating
-  both measure strength *with* search, so this is the setting the checkpoint
-  was selected for; raw policy play is substantially weaker.
-- ``policy`` mode: a single forward pass, masked to the legal actions -
-  effectively instant on CPU, useful when latency matters more than strength.
+Each decision searches a fresh tree on a clone: the driver never reports the
+human's moves (it never calls ``observe``), so a kept tree would be stale. The
+network is cached per process, keyed by path, modification time and size, so a new
+file in model/ is used by the next game.
 
-Every decision works on a clone of the game and no search tree is carried
-from one decision to the next. The match driver applies the human's moves
-without telling the agent (nothing calls ``observe``), so a tree kept from the
-previous decision would describe a position that no longer exists; at the
-live budget a fresh search costs well under a second, which makes reuse not
-worth that risk. Working on a clone also means a search abandoned by the bot's
-watchdog can never read a position the event loop has since moved on from.
-
-The loaded network is cached per process and shared by every game, keyed by
-the checkpoint's path, modification time and size: concurrent solo games do
-not each load a copy, and a new file dropped into ``model/`` is picked up by
-the next game without a restart.
-
-Both the mode and the live budget are overridable from the environment
-(``ALPHA_LIVE_MODE``, ``ALPHA_LIVE_SIMULATIONS``), so a deployment can trade
-strength for latency without a code change.
-
-Checkpoint discovery looks in the repository-root ``model/`` directory first
-(``model/alpha_zero``, the untracked deployment drop point), then
-``alpha_zero/deploy/model.pt``, then falls back to the newest training
-checkpoint under ``alpha_zero/runs/checkpoints/``.
-
-Self-contained over the tracked modules (net/model.py, mcts/, config.py and
-the engine); it must keep working on a clone that carries no training code.
+Must run on a clone without training code: imports only net/model.py, mcts/,
+config.py, tracked model_common modules and the engine.
 """
 
 from __future__ import annotations
@@ -57,9 +38,8 @@ MODE_POLICY = 'policy'
 MODE_SEARCH = 'search'
 LIVE_SIMULATIONS = 64
 
-# Deployed model name -> (checkpoint fingerprint, evaluator). One entry per
-# deployed model: a changed checkpoint replaces its entry instead of adding
-# one, so a directory of checkpoints cannot grow the cache without bound.
+# Deployed model name -> (checkpoint fingerprint, evaluator); a changed checkpoint
+# replaces its entry, so the cache cannot grow without bound.
 _LOADED_MODELS: dict[str, tuple[tuple, '_Evaluator']] = {}
 _LOADED_MODELS_LOCK = threading.Lock()
 

@@ -16,8 +16,7 @@ SOLO_OPPONENT_MODULES = {
     SOLO_OPPONENT_PPO: 'ppo_transformer.inference',
 }
 
-# Players only ever see the letter. Which stack sits behind each letter is an
-# implementation detail and must not reach a Discord surface.
+# Players only ever see the letter; never show which stack is behind it.
 SOLO_OPPONENT_LABELS = {
     SOLO_OPPONENT_ALPHA_ZERO: 'A',
     SOLO_OPPONENT_PPO: 'B',
@@ -25,14 +24,14 @@ SOLO_OPPONENT_LABELS = {
 
 
 def solo_opponent_label(opponent: str) -> str:
-    """The player-facing letter for a solo opponent identifier. Unknown values
-    pass through unchanged, so legacy 'normal'/'easy' rows still read sensibly."""
+    """The player-facing letter for a solo opponent. Unknown values (old 'normal' or
+    'easy' rows) pass through unchanged."""
     return SOLO_OPPONENT_LABELS.get(opponent, opponent)
 
 
 def available_solo_opponents() -> list[str]:
     """Solo opponent identifiers whose inference module reports a usable
-    trained checkpoint. Empty until a model has been trained and deployed."""
+    trained checkpoint. Empty until a model has been trained."""
     available = []
     for opponent_name, module_name in SOLO_OPPONENT_MODULES.items():
         try:
@@ -45,9 +44,9 @@ def available_solo_opponents() -> list[str]:
 
 
 def load_random_fallback_deck(card_index: dict[tuple[int, int], Any]) -> list[Any]:
-    """A random pre-built deck as Card objects, used when a player never
-    finishes deck building. Prefers the generated bot deck pool, falling back
-    to the tracked default decks."""
+    """A random pre-built deck as Cards: the solo model's deck, and the fallback when
+    deck building times out. Drawn from zutomayo/bot_decks.json when it exists, else
+    default_decks.json."""
     import json
 
     from zutomayo.data.deck_storage import (

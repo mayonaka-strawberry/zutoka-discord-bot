@@ -1,22 +1,13 @@
 """
-Per-game record store: permanent game records, decision logs, and status.
+Permanent game records: the games row (created once decks are final), game_players
+rows, and the append-only game_decisions log written through the broker. The
+manifest holds session identity, mode, player ids, the RNG seed and the pre-shuffle
+decks; everything else is reproducible from the seed plus the decision log.
 
-Every game owns a row in the PostgreSQL games table (created once decks are
-final), player rows in game_players, and an append-only decision log in
-game_decisions written through the broker. The manifest JSONB column keeps
-the exact shape the file-based store used: session identity, mode, player
-ids, the RNG seed, and the pre-shuffle deck lists. Everything else about a
-game is reproducible from the seed plus the decision log.
-
-Records are permanent. Game lifecycle is tracked by games.status
-('active', 'saved', 'completed', 'quit', 'abandoned', 'divergence_failed');
-nothing is deleted when a game ends. On startup the resume manager replays
-every 'active' game: the game coroutine is re-run from move zero with logged
-decisions fed back instantly and the transport muted; when the log is
-exhausted the game goes live again.
-
-Storage access goes through the module-level `backend` attribute
-(PostgresGameRecordBackend in production); tests swap in an in-memory fake.
+Nothing is deleted: games.status tracks the lifecycle ('active', 'saved',
+'completed', 'quit', 'abandoned', 'divergence_failed'). On startup every 'active'
+game is replayed with the transport muted, then goes live. Storage goes through the
+module-level `backend` (PostgresGameRecordBackend; tests swap in a fake).
 """
 
 from __future__ import annotations
@@ -43,7 +34,7 @@ SUMMARY_ELIGIBLE_STATUSES = (STATUS_COMPLETED, STATUS_QUIT, STATUS_ABANDONED)
 
 
 def card_keys(cards: list[Any]) -> list[list[int]]:
-    """Serialize Card or CardInstance lists as [pack, id] pairs."""
+    """Serialize cards, or holders with `.card`, as [pack, id] pairs."""
     keys = []
     for card_or_instance in cards:
         card = getattr(card_or_instance, 'card', card_or_instance)
@@ -56,9 +47,7 @@ def resolve_card_keys(card_keys: list[list[int]], card_index: dict) -> list[Any]
     return [card_index[(pack, card_id)] for pack, card_id in card_keys]
 
 
-# ----------------------------------------------------------------------
-# PostgreSQL backend
-# ----------------------------------------------------------------------
+# --- PostgreSQL backend ---
 
 
 class PostgresGameRecordBackend:
@@ -288,9 +277,7 @@ class PostgresGameRecordBackend:
 backend = PostgresGameRecordBackend()
 
 
-# ----------------------------------------------------------------------
-# Per-game handle
-# ----------------------------------------------------------------------
+# --- Per-game handle ---
 
 
 class GameRecordStore:
@@ -300,10 +287,8 @@ class GameRecordStore:
         # portion was already recorded live before the crash or save).
         self.session = session
 
-        # Event stream state. emit_event is a synchronous enqueue; the buffer
-        # drains at every decision append and status transition, so a game
-        # always flushes at its end and at most the events since the last
-        # decision can be lost in a hard crash.
+        # Events are enqueued synchronously and flushed at every decision append and
+        # status change, so a hard crash loses at most the events since the last decision.
         self.event_buffer: list[dict[str, Any]] = []
         self.next_event_index = 0
         self.current_match_number: Optional[int] = 1
@@ -333,12 +318,8 @@ class GameRecordStore:
         turn: Optional[int] = None,
         phase: Optional[str] = None,
     ) -> None:
-        """
-        Enqueue one event. Observation-only and synchronous: never reads the
-        session RNG, never mutates game state, and is suppressed during
-        replay. Context columns default to the last seen values so mid-phase
-        emitters (the effect engine) need not thread them through.
-        """
+        """Enqueue one event (synchronous, observation-only, skipped during replay).
+        Context columns default to the last values seen."""
         if self._replaying():
             return
         if match_number is not None:
@@ -383,9 +364,7 @@ class GameRecordStore:
         )
 
 
-# ----------------------------------------------------------------------
-# Loading (resume path)
-# ----------------------------------------------------------------------
+# --- Loading (resume path and commands) ---
 
 
 async def load_manifest(game_id: str) -> Optional[dict[str, Any]]:

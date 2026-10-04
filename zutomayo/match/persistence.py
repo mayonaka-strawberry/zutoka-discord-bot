@@ -1,16 +1,10 @@
 """
-Game record store for engine_alpha-driven matches (manifest schema version 2).
+Game records for matches (manifest schema version 2), on the
+zutomayo.engine.game_persistence backend.
 
-Reuses the PostgreSQL backend and the event-stream machinery from
-``zutomayo.engine.game_persistence`` (the games / game_players /
-game_decisions / game_events tables are unchanged). Differences from the
-legacy store:
-
-- manifest carries ``schema_version`` 2, ``engine`` / ``engine_format_version``
-  markers, and the engine seed that ``Game(seed=...)`` consumes directly,
-- decision-log payloads are ``{'action': int, 'timed_out': bool}`` (engine
-  decisions) or ``{'card_keys': {...}, 'timed_out': bool}`` (TCG side-deck
-  switches), with fingerprints from ``zutomayo.match.decisions``.
+- The manifest carries schema_version 2, engine markers, and the engine seed.
+- Decision payloads are {'action': int, 'timed_out': bool}, or
+  {'card_keys': {...}, 'timed_out': bool} for TCG side-deck switches.
 """
 
 from __future__ import annotations
@@ -116,8 +110,7 @@ def describe_match_decision(
 
 
 class MatchRecordStore(GameRecordStore):
-    """Per-game record handle for schema-version-2 games. Event buffering,
-    flushing, and status transitions come from GameRecordStore unchanged."""
+    """Per-game record handle; buffering, flushing and status come from GameRecordStore."""
 
     @classmethod
     async def create_for_match(

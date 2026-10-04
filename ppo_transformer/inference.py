@@ -1,13 +1,8 @@
 """
-Deployment inference for the PPO opponent: one forward pass per decision,
-masked to the legal actions, on the runtime-selected device (CUDA, then
-Apple Silicon MPS, then CPU).
-
-Checkpoint discovery looks in the repository-root ``model/`` directory first
-(``model/ppo_transformer``, the untracked deployment drop point), then
-``ppo_transformer/deploy/model.pt``, then the newest training checkpoint under
-``ppo_transformer/runs``. Self-contained over the tracked modules; it must keep
-working on a clone that carries no training code.
+Deployment inference for the PPO opponent (model B): one masked forward pass per
+decision on CUDA, MPS or CPU. Checkpoint lookup: model/ppo_transformer, then
+ppo_transformer/deploy/model.pt, then runs/latest_weights.pt, then the newest
+runs/checkpoints/iteration_*.pt. Must run on a clone without training code.
 """
 
 from __future__ import annotations
@@ -68,13 +63,9 @@ class PpoAgent:
             state_dict = payload['model_state_dict']
             net_config = NetConfig(**payload['config']['net']) if 'config' in payload else NetConfig()
         else:
-            # A bare state dict carries no config, so this falls back to the
-            # NetConfig DEFAULTS — deliberately not ppo_transformer/.env, which
-            # this module must keep working without. `runs/latest_weights.pt`
-            # and everything under `runs/snapshots/` are bare, so any PPO_NET_*
-            # value pinned in .env must match its config.py default or a weights
-            # file deployed this way will not load. Prefer deploying a file from
-            # `runs/checkpoints/`, which carries its own config.
+            # Bare weights carry no config, so this uses the NetConfig defaults, not
+            # .env. Deploy from runs/checkpoints/ unless every PPO_NET_* value is
+            # at its default.
             state_dict = payload
             net_config = NetConfig()
 

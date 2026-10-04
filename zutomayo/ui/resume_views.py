@@ -1,11 +1,7 @@
-"""Confirmation view for resuming a saved PvP game: both players must agree
-before replay starts. The invoker asked via /zutomayo resume; the opponent
-accepts or declines here. On timeout or decline the game simply stays saved.
-
-Requests made from a server channel carry a Cancel button for the invoker, who
-can see the message. Requests made from a DM are delivered to the opponent's
-DM, where the invoker can never press anything, so Cancel is dropped
-(``allow_cancel=False``) and the request simply expires on timeout."""
+"""Confirmation view for resuming a saved two-player game: both players must agree,
+and on timeout or decline the game stays saved. In a channel the invoker also gets
+a Cancel button; a request sent to the opponent's DM has none (allow_cancel=False)
+and simply expires."""
 
 from __future__ import annotations
 

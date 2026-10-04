@@ -1,41 +1,18 @@
 """
-Calibration script: every coordinate the renderer uses, on one bare board -- the union of
-the two focused calibration overlays.
+Calibration: every renderer coordinate on one bare board (calibrate_board.py and
+calibrate_chronos.py combined), to show whether card rectangles and coin positions
+crowd each other. Only outlines are drawn, since art would hide what is being
+checked; the two scripts' own helpers draw them, so the views cannot drift.
 
-scripts/calibrate_board.py checks the card rectangles and scripts/calibrate_chronos.py checks
-the 18 chronos ring positions, each on its own image. This draws both at once, which is the
-only view that shows whether a card rectangle and a coin position crowd each other.
-
-Nothing is rendered into the slots: no card art, no card backs, no coin discs. A card fills
-and hides the very rectangle its alignment is being judged against, and an opaque coin hides
-the moon or sun glyph it is meant to sit concentric with, so the board is left bare and only
-outlines are drawn.
-
-Layers drawn:
-  white   printed card slot outlines measured from board.png (the reference)
-  green   DAY card rectangles, with a centre tick and zone label
-  red     NIGHT card rectangles, with a centre tick and zone label
-  cyan    each chronos coin's rim, a crosshair at its exact centre, and the slot index just
-          outside the ring
-  yellow  the board art's rotational centre crosshair, and the ring the 18 centres lie on
-
-The overlay is drawn by importing the helpers the two focused scripts already use, so this
-image cannot drift from the images it summarises.
-
-Run from project root:
-python scripts/calibrate_full.py
-
-Output:
-scripts/calibration_output_full.png
+Run from the project root: python scripts/calibrate_full.py
+Output: scripts/calibration_output_full.jpg
 """
 
 import sys
 from pathlib import Path
 
 
-# Add project root and this directory to path: the project root for the zutomayo and
-# engine_alpha packages, and scripts/ for the sibling calibration modules whose overlay
-# helpers are reused below.
+# The project root (packages) and scripts/ (the sibling calibration modules).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 

@@ -1,4 +1,4 @@
-"""Series-flow logic (pure parts) and summary rendering of v2 event streams."""
+"""Series-flow logic and summary rendering of v2 event streams."""
 
 from __future__ import annotations
 
@@ -69,13 +69,9 @@ def _run_scripted_series(
     seed: int = 5,
     replay_log: dict | None = None,
 ) -> tuple[list, object, object]:
-    """Drive run_tcg with stubbed matches so only the series loop runs.
-
-    Returns the night_player passed to each match, the record store, and the
-    transport. Real matches, the side-deck switch, and Elo recording are
-    stubbed out: this exercises the side-choice sequencing and its persistence,
-    which the stubs would otherwise bury under image rendering and DB writes.
-    """
+    """Drive run_tcg with matches, side-deck switches and Elo stubbed, so only the series
+    loop and its side-choice persistence run. Returns (night_player per match, record
+    store, transport)."""
     from zutomayo.match.broker import MatchDecisionBroker
     from zutomayo.match.match_driver import MatchOutcome
     from tests.match.support import (

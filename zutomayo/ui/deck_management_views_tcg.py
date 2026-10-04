@@ -24,9 +24,7 @@ if TYPE_CHECKING:
 
 
 
-# ---------------------------------------------------------------------------
-# /zutomayo makedecktcg
-# ---------------------------------------------------------------------------
+# --- /zutomayo deck make (TCG) ---
 
 
 class MakeDeckTcgModal(discord.ui.Modal):
@@ -110,9 +108,7 @@ class MakeDeckTcgModal(discord.ui.Modal):
             )
 
 
-# ---------------------------------------------------------------------------
-# /zutomayo managedeckstcg
-# ---------------------------------------------------------------------------
+# --- /zutomayo deck manage (TCG) ---
 
 
 class EditDeckTcgModal(discord.ui.Modal):
@@ -282,9 +278,7 @@ class ManageDeckTcgActionsView(discord.ui.View):
         )
 
 
-# ---------------------------------------------------------------------------
-# Game start: TCG deck source choice
-# ---------------------------------------------------------------------------
+# --- Game start: TCG deck source choice ---
 
 
 def _random_tcg_deck(all_cards: list[Card]) -> tuple[list[Card], list[Card]]:
@@ -413,7 +407,7 @@ class TcgDeckBuilderView(discord.ui.View):
 
 
 class TcgDeckSourceView(discord.ui.View):
-    """Pre-deck-building choice for TCG: build from scratch or pick a saved TCG deck."""
+    """TCG deck choice at game start: build one or pick a saved TCG deck."""
 
     def __init__(
         self,

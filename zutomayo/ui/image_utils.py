@@ -12,17 +12,11 @@ logger = logging.getLogger(__name__)
 
 DISCORD_UPLOAD_BYTE_LIMIT = 24 * 1024 * 1024  # 24 MB with safety margin
 
-# Discord's real per-attachment ceiling is 10 MiB unless the guild is Boost Level 2 or
-# higher, and DMs are capped at 10 MiB whatever the guild's tier. The limit above assumes
-# the boosted ceiling; this one is the retry budget used when Discord rejects an upload.
+# Retry budget after Discord rejects an upload: unboosted guilds and all DMs allow 10 MiB.
 FALLBACK_UPLOAD_BYTE_LIMIT = int(9.5 * 1024 * 1024)
 
-# Chroma subsampling, not the quality number, is what limits image fidelity here. Pillow
-# defaults JPEG to 4:2:0 at every quality including 100, which halves colour resolution and
-# smears the thin coloured glyph outlines and small text on this card art. Turning it off
-# (subsampling=0, i.e. 4:4:4) is worth about 10 dB PSNR and drops max channel error from
-# ~100 to ~30, for roughly 20% more bytes. q90 at 4:4:4 is both higher quality and smaller
-# than the q95 4:2:0 this replaced.
+# Chroma subsampling off (4:4:4): Pillow's default 4:2:0, at any quality, smears the thin
+# outlines and small text on card art.
 JPEG_QUALITY = 90
 JPEG_SUBSAMPLING = 0
 
@@ -39,22 +33,9 @@ def save_image_for_discord(
     byte_limit: int = DISCORD_UPLOAD_BYTE_LIMIT,
     background: tuple[int, int, int] = (255, 255, 255),
 ) -> discord.File:
-    """Save an image at the highest quality that fits under *byte_limit*.
-
-    The format is inferred from *filename*, which must end in ``.jpg`` or ``.jpeg``; any
-    other extension raises. The pipeline is JPEG-only on purpose, so that a filename which
-    was missed during a rename fails loudly instead of quietly shipping one format's bytes
-    under another format's extension.
-
-    JPEG cannot store transparency, so an image with an alpha channel is composited onto
-    *background* first. Grid images pass white; the board composites onto black itself,
-    before it reaches here, because its cards sit on board art.
-
-    Quality is the only size-reduction lever: the function starts at ``JPEG_QUALITY`` and,
-    if the result exceeds *byte_limit*, binary-searches for the highest quality that fits.
-    Image dimensions are never reduced -- card grids are what players open to read effect
-    text, so resolution is preserved even when quality is not.
-    """
+    """Save as JPEG at the highest quality, at most JPEG_QUALITY, under *byte_limit*;
+    dimensions are never reduced, so card text stays readable. *filename* must end in .jpg
+    or .jpeg. Transparency is composited onto *background*."""
     extension = PurePosixPath(filename).suffix.lower()
     if extension not in _FORMAT_BY_EXTENSION:
         raise ValueError(
@@ -103,18 +84,9 @@ def shrink_file_for_upload(
     file: discord.File,
     byte_limit: int = FALLBACK_UPLOAD_BYTE_LIMIT,
 ) -> Optional[discord.File]:
-    """Re-encode an already-encoded attachment to fit under *byte_limit*.
-
-    Used when Discord rejects an upload as too large, which means the guild (or DM) has a
-    lower ceiling than ``DISCORD_UPLOAD_BYTE_LIMIT`` assumed. Returns ``None`` if the file
-    is not a re-encodable image or already fits, so callers can tell "nothing to do" from
-    "here is a smaller one".
-
-    This re-encodes from the JPEG bytes rather than from the source image, which costs one
-    extra generation of loss. That is the right trade: it fires only for an image that
-    would otherwise not send at all, and the alternative is holding a decoded 50+ MB source
-    image alive for every send that might fail.
-    """
+    """Re-encode an attachment Discord rejected as too large, to fit *byte_limit*. None if
+    it is not a re-encodable image or already fits. Works from the JPEG bytes, so the
+    source image need not be kept around."""
     buffer = getattr(file, 'fp', None)
     if not isinstance(buffer, io.BytesIO):
         return None
@@ -176,12 +148,7 @@ def flatten_for_jpeg(
     image: Image.Image,
     background: tuple[int, int, int] = (255, 255, 255),
 ) -> Image.Image:
-    """Return image as RGB, compositing any transparency onto background.
-
-    Pillow raises ``OSError: cannot write mode RGBA as JPEG``, so this is required rather
-    than cosmetic. It runs once, before the quality search, because the search may re-encode
-    the same image several times.
-    """
+    """Return `image` as RGB, compositing transparency onto `background` (JPEG has no alpha)."""
     if image.mode == 'RGB':
         return image
 
@@ -199,17 +166,8 @@ def save_jpeg_file(
     path,
     background: tuple[int, int, int] = (0, 0, 0),
 ) -> int:
-    """Write *image* to *path* as JPEG at the pipeline's quality. Returns the byte size.
-
-    For local files written by the developer scripts (calibration overlays, render previews),
-    so they use the same quality and chroma settings as everything the bot uploads and cannot
-    drift from it.
-
-    Deliberately has no quality search: a local file has no upload budget, and quietly
-    degrading a diagnostic image to hit a byte target would defeat its purpose. The default
-    background is black to match ``compose_board_image``, whose board art carries a small
-    number of transparent pixels.
-    """
+    """Write *image* to *path* with the upload JPEG settings; returns the byte size. For the
+    developer scripts: no quality search, and a black default background like the board."""
     flatten_for_jpeg(image, background).save(
         path,
         JPEG_FORMAT,

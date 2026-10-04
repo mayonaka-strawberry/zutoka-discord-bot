@@ -5,7 +5,7 @@ Usage:
     python scripts/restore_database.py <dump file> [--database-url ...]
 
 Drops and recreates the dumped objects in the target database
-(--clean --if-exists), so the target ends up exactly matching the backup.
+(--clean --if-exists), so those objects end up matching the backup.
 The target database itself must already exist.
 """
 

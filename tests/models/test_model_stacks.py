@@ -110,7 +110,7 @@ def test_alpha_zero_forward_shapes_and_priors():
 
 def test_alpha_zero_gradient_checkpointing_matches_the_plain_forward():
     """Both encoder paths end in the final LayerNorm, so at dropout 0 the
-    recomputing path must reproduce the plain one exactly (padding included)."""
+    recomputing path must reproduce the plain one to within 1e-5 (padding included)."""
     from alpha_zero.config import NetConfig
     from alpha_zero.net.model import UniguriNet
 
@@ -309,9 +309,7 @@ def test_agent_adapter_falls_back_on_agent_failure():
     assert submissions == [(3, 'action', 2)], 'fallback is the PASS action'
 
 
-# ---------------------------------------------------------------------------
-# Live AlphaZero agent (alpha_zero/inference.py)
-# ---------------------------------------------------------------------------
+# --- Live AlphaZero agent (alpha_zero/inference.py) ---
 
 @pytest.fixture
 def live_alpha_zero(monkeypatch, tmp_path):

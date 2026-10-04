@@ -1,17 +1,10 @@
 """
-Game summary renderer and paginated view for /zutomayo summary.
+Renderer and paginated view for /zutomayo summary.
 
-The renderer first groups the recorded game_events into an intermediate
-per-match / per-turn structure, then renders embed pages from it:
-
-- page 0: overview (players, decks, mode, result, duration)
-- per match: an opening page (initial hands, redraws, initial battle cards)
-  followed by one page per turn (set cards, chronos and day/night, effect
-  priority, effect resolution order, battle outcome, HP after)
-- TCG: side-deck-swap pages between matches and the series score
-
-A Full Log button attaches the complete event log as a text file. Finished
-games are public replays: both players' hands are shown by design.
+Events are grouped per match and turn, then rendered as an overview page, an opening
+page plus one page per turn for each match, and side-deck pages between TCG
+matches. Full Log attaches the whole event log. Finished games are public replays,
+so both players' hands are shown.
 """
 
 from __future__ import annotations

@@ -1,9 +1,5 @@
-"""Effect dispatch surface used by the phase driver.
-
-Backed by the IR catalog: HANDLED_EFFECTS mirrors the old engine's handler
-registry (every effect id except the engine-inline passives), COST_REDUCING
-mirrors _COST_REDUCING_EFFECTS, and start_effect delegates to the IR
-interpreter, which pushes a Frame when the effect's gate condition holds.
+"""Effect dispatch for the phase driver: start_effect pushes an interpreter frame
+when the effect's condition holds.
 """
 
 from __future__ import annotations

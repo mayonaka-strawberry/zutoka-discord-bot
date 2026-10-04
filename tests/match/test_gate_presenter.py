@@ -1,7 +1,6 @@
-"""Phase-gate presentation: the sink captures the board at every phase
-boundary, gates are posted in the pre-port order, zone strips are re-sent only
-when they change, and nothing at all is posted between the two players'
-card placements."""
+"""Phase gates: the sink captures the board at every phase boundary, gates post in
+order, zone strips are re-sent only when they change, and nothing is posted between
+the two players' card placements."""
 
 from __future__ import annotations
 
@@ -61,9 +60,8 @@ def run_game(seed: int, wrap_adapter=None):
 
 
 def test_set_cards_are_face_down_at_the_reveal_boundary():
-    """The whole point of snapshotting mid-apply: at the moment the engine
-    enters PH_REVEAL both players have committed and neither card is face up
-    yet, which is the board the Set cards gate shows."""
+    """At PH_REVEAL both players have committed and neither set card is face up: the
+    board the Set cards gate shows."""
     game = Game(seed=7, mode='fixed_decks', decks=random_full_pool_decks(7))
     sink = SnapshottingEventSink(lambda: project_board_view(game, PLAYER_NAMES))
     game.state.event_sink = sink

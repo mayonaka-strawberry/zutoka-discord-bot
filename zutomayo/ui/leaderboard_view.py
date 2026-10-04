@@ -1,12 +1,7 @@
 """
-Pagination view for the leaderboard commands.
-
-Drives both /zutomayo leaderboard and /zutomayo leaderboardtcg: the cog passes the
-already filtered/sorted rows plus the renderer kwargs, and this view rebuilds any
-page on demand. Anyone in the channel may page; the buttons disable after the view
-times out.
-
-Style constraint: no emojis, no decorative symbols. Plain text only.
+Pagination for /zutomayo leaderboard (both formats): the cog passes sorted rows and
+renderer arguments, and pages are rebuilt on demand. Anyone may page; the buttons
+disable on timeout. Plain text only: no emojis or decorative symbols.
 """
 
 from __future__ import annotations

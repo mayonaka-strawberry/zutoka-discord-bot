@@ -1,15 +1,11 @@
-"""Decision requests: the complete typed action surface of the game.
+"""Decision requests. Every choice is one of four kinds, answered by a small int:
 
-Every point where a player chooses anything is expressed as one of four
-request kinds. Requests are treated as immutable once issued (clones share
-them). An *action* is always a small int whose meaning depends on the
-pending request:
-
-  SELECT_CARD:     index into `candidates`; `len(candidates)` means PASS
-                   (only legal when allow_pass)
-  SELECT_IDENTITY: card definition index (0..NUM_CARDS-1) from `legal`
-  SELECT_NUMBER:   the number itself (lo..hi inclusive)
+  SELECT_CARD:     index into `candidates`; `len(candidates)` is PASS (only if allow_pass)
+  SELECT_IDENTITY: a card definition index from `legal`
+  SELECT_NUMBER:   the number itself, lo..hi inclusive
   BINARY:          0 or 1
+
+Requests are immutable once issued; clones share them.
 """
 
 from __future__ import annotations
@@ -19,10 +15,9 @@ SELECT_IDENTITY = 1
 SELECT_NUMBER = 2
 BINARY = 3
 
-# Purpose tags: what the decision is for (encoded into observations so the
-# network knows the question, and used by drivers/tests for readability).
+# Purpose tags: what a decision is for. Encoded into observations.
 P_DRAFT_PICK = 0
-P_MULLIGAN = 1          # iterative mark-for-redraw; PASS finishes
+P_MULLIGAN = 1          # one card marked for redraw per request; PASS finishes
 P_INITIAL_CARD = 2
 P_SET_SLOT_A = 3
 P_SET_SLOT_B = 4
@@ -52,7 +47,7 @@ class DecisionRequest:
         self.purpose = purpose
         self.candidates = candidates    # SELECT_CARD: instance ids
         self.allow_pass = allow_pass
-        self.legal = legal              # SELECT_IDENTITY: def indices
+        self.legal = legal              # SELECT_IDENTITY: definition indices
         self.lo = lo                    # SELECT_NUMBER bounds, inclusive
         self.hi = hi
 

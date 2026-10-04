@@ -1,16 +1,7 @@
-"""Pins the batched MCTS search to a frozen copy of itself.
-
-`alpha_zero.mcts.mcts.run_search_batched` is on the live play path, and it is
-about to be restructured so self-play workers can step many games at once.
-That restructuring must not change what the search computes. The reference
-implementation below is a verbatim copy of the search as of 2026-09-23 (its
-node type, PUCT selection, Dirichlet noise and virtual loss included); every
-case runs both implementations on identical inputs and requires the whole
-search tree and the exact sequence of evaluator batches to match.
-
-The evaluator is a deterministic stand-in for the network: value and priors
-are pure functions of the evaluated position, so the comparison needs no
-torch and no checkpoint.
+"""Pins the batched MCTS search (alpha_zero.mcts.mcts.run_search_batched, on the live
+play path) to a frozen copy of itself: both run on identical inputs and must build the
+same tree from the same sequence of evaluator batches. The evaluator is a deterministic
+hash-based stand-in, so no torch or checkpoint is needed.
 """
 
 from __future__ import annotations
@@ -36,9 +27,7 @@ from engine_alpha.game import Game  # noqa: E402
 from tests.match.support import random_full_pool_decks  # noqa: E402
 
 
-# ---------------------------------------------------------------------------
-# Frozen reference: verbatim copy of alpha_zero/mcts/mcts.py (2026-09-23)
-# ---------------------------------------------------------------------------
+# --- Frozen reference: a copy of the batched search in alpha_zero/mcts/mcts.py ---
 
 class ReferenceNode:
     __slots__ = ("acting", "actions", "priors", "visit_counts", "value_sums",
@@ -167,9 +156,7 @@ def reference_run_search_batched(game, batch_evaluator, cfg: MCTSConfig, simulat
     return root
 
 
-# ---------------------------------------------------------------------------
-# Deterministic evaluator and tree comparison
-# ---------------------------------------------------------------------------
+# --- Deterministic evaluator and tree comparison ---
 
 def _position_digest(game) -> bytes:
     tokens_int, tokens_float, globals_row, _ = encode(game)
@@ -224,9 +211,7 @@ def _walk(node):
         yield from _walk(child)
 
 
-# ---------------------------------------------------------------------------
-# Positions
-# ---------------------------------------------------------------------------
+# --- Positions ---
 
 @lru_cache(maxsize=None)
 def _game_history(seed: int) -> tuple[int, ...]:
@@ -277,9 +262,7 @@ def _run_both(make_game, cfg: MCTSConfig, simulations: int, noise_seed: int | No
     return live_root, live_evaluator
 
 
-# ---------------------------------------------------------------------------
-# Cases
-# ---------------------------------------------------------------------------
+# --- Cases ---
 
 @pytest.mark.parametrize('seed, fraction', [(3, 0.3), (3, 0.6), (11, 0.4), (29, 0.8)])
 def test_in_game_search_matches_reference(seed, fraction):

@@ -1,15 +1,7 @@
 """
-One-command verification gate.
-
-Runs, in order:
-1. the full pytest suite (engine_alpha tests + bot tests) under coverage,
-2. the match transcript regression tier under appended coverage,
-3. per-area coverage gates,
-4. the match transcript compare (already executed in step 2; its exit code
-   gates the run).
-
-Thresholds are set from measured values minus a small flake margin; raise
-them when coverage improves, never lower them to pass.
+One-command verification gate: the full pytest suite (engine_alpha/tests and tests)
+under coverage, the 24-game match transcript compare, then per-area coverage gates.
+Gates sit just below measured coverage: raise them, never lower them to pass.
 
 Usage: python tests/run_all.py
 """

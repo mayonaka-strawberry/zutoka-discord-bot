@@ -1,12 +1,8 @@
-"""Config/env override layer and checkpoint discovery for both model stacks.
+"""Config and env overrides, and checkpoint discovery, for both model stacks.
 
-These tests cover tracked, torch-free modules (`model_common.env_config`,
-`model_common.deployed_model`, the two `config.py` files), so they run on a
-fresh clone that carries no training code and no checkpoints.
-
-Every test that touches `load_config()` monkeypatches the stack's `ENV_FILE` to
-a temp path. Without that, results would depend on whatever the developer
-happens to have in their real `alpha_zero/.env`.
+Torch-free, so these run on a clone without training code. Tests that call
+`load_config()` point the stack's `ENV_FILE` at a temp file, so a developer's real
+`.env` cannot leak in.
 """
 
 from __future__ import annotations
@@ -31,7 +27,7 @@ STACKS = pytest.mark.parametrize('stack', [alpha_config, ppo_config],
 
 @pytest.fixture
 def isolated_env(monkeypatch, tmp_path):
-    """Points both stacks at an empty env file and clears their variables, so
+    """Points both stacks at a missing temp env file and clears their variables, so
     a test sees only what it sets."""
     for stack in (alpha_config, ppo_config):
         monkeypatch.setattr(stack, 'ENV_FILE', tmp_path / f'{stack.PREFIX}.env')
@@ -41,9 +37,7 @@ def isolated_env(monkeypatch, tmp_path):
     return tmp_path
 
 
-# ---------------------------------------------------------------------------
-# coerce
-# ---------------------------------------------------------------------------
+# --- coerce ---
 
 @pytest.mark.parametrize('raw, target, expected', [
     ('42', int, 42),
@@ -57,15 +51,12 @@ def test_coerce_converts_supported_types(raw, target, expected):
 
 
 def test_coerce_error_names_the_offending_variable():
-    """A bad override should say which key was wrong — the whole point of
-    threading env_key through."""
+    """A bad override names the offending key."""
     with pytest.raises(ValueError, match=r'ALPHA_TRAIN_BATCH_SIZE=.not a number.'):
         env_config.coerce('not a number', int, 'ALPHA_TRAIN_BATCH_SIZE')
 
 
-# ---------------------------------------------------------------------------
-# deployed checkpoint discovery
-# ---------------------------------------------------------------------------
+# --- Deployed checkpoint discovery ---
 
 @pytest.fixture
 def model_directory(monkeypatch, tmp_path):
@@ -118,9 +109,7 @@ def test_coerce_rejects_ambiguous_boolean():
         env_config.coerce('maybe', bool, 'ALPHA_TRAIN_GRADIENT_CHECKPOINTING')
 
 
-# ---------------------------------------------------------------------------
-# env file loading and precedence
-# ---------------------------------------------------------------------------
+# --- Env file loading and precedence ---
 
 def test_env_file_is_parsed_with_comments_stripped(isolated_env, monkeypatch):
     env_file = isolated_env / 'ALPHA.env'
@@ -170,9 +159,7 @@ def test_env_setting_infers_type_from_default(isolated_env, monkeypatch):
     assert alpha_config.env_setting('gating_games', None, int) == 50
 
 
-# ---------------------------------------------------------------------------
-# Every key round-trips
-# ---------------------------------------------------------------------------
+# --- Every key round-trips ---
 
 def _distinct_value(current):
     """A value guaranteed to differ from `current`, of the same type."""
@@ -188,13 +175,7 @@ def _distinct_value(current):
 @STACKS
 def test_every_field_is_reachable_from_the_environment(isolated_env, monkeypatch,
                                                        stack):
-    """The regression test for config drift.
-
-    A field with no working env key, or a key whose name no longer matches its
-    field, is exactly the failure that let `ALPHA_LEAGUE_P_RANDOM_DECKS` sit in
-    the env file doing nothing. Asserting the override *takes effect* catches
-    both directions.
-    """
+    """Every field's env key takes effect, so keys cannot drift from field names."""
     baseline = stack.Config()
     expected = {}
     for section_name in stack.SECTIONS:
@@ -232,16 +213,13 @@ def test_generated_template_covers_every_field(stack):
 
 @STACKS
 def test_generated_template_is_inert(isolated_env, stack):
-    """Redirecting the dump into `.env` must reproduce the defaults, not
-    change them — every line is commented."""
+    """The template, saved as `.env`, changes nothing: every line is commented out."""
     env_file = isolated_env / f'{stack.PREFIX}.env'
     env_file.write_text(stack.format_template(), encoding='utf-8')
     assert stack.load_config().to_dict() == stack.Config().to_dict()
 
 
-# ---------------------------------------------------------------------------
-# validate()
-# ---------------------------------------------------------------------------
+# --- validate() ---
 
 @STACKS
 def test_default_config_is_valid(stack):
@@ -293,9 +271,7 @@ def test_probability_group_helper_reports_the_breakdown():
         env_config.check_probabilities_sum({'a': 0.5, 'b': 0.2}, 'label')
 
 
-# ---------------------------------------------------------------------------
-# Fields removed on purpose
-# ---------------------------------------------------------------------------
+# --- Fields removed on purpose ---
 
 def test_unimplemented_and_dead_fields_are_gone():
     """`gumbel_root_top_k` was never implemented and the baseline-eval fields

@@ -1,11 +1,8 @@
 """
-Match transcript regression harness for the engine_alpha bot stack.
-
-Drives full headless games through the REAL match runtime (MatchDecisionBroker,
-presentation, MatchNarrator, EngineMatchDriver) with scripted adapters, a
-recording transport, and an in-memory record store, and compares against
-golden transcripts. Records per decision: the fingerprint and chosen action;
-per apply: narration lines; per game: the final state digest and winner.
+Match transcript regression: 24 seeded headless games through the real match runtime
+(broker, presentation, narrator, driver) with scripted players, a recording transport
+and an in-memory record store, compared against golden transcripts (decision
+fingerprints and actions, events, narration, final state digest, winner).
 
 Usage:
     python tests/run_match_regression.py write      # regenerate baselines

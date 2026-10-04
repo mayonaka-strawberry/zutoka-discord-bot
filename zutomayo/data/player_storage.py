@@ -1,18 +1,9 @@
 """
-Persistence layer for per-user player profiles (Elo rating, win/loss records,
-per-deck stats, per-opponent stats, forfeits).
-
-Profiles live in the PostgreSQL player_profiles table, keyed by Discord user
-id. Leaderboard-sorted fields (elo, tcg_elo, peaks, game counts) are columns;
-the evolving stats / deck_stats / opponent_stats buckets are JSONB and are
-run through _migrate_profile on every load so older payload shapes stay
-readable.
-
-All storage access goes through the module-level `backend` attribute
-(PostgresProfileBackend in production); tests swap in an in-memory fake.
-Result-recording functions run in a single transaction with the profile rows
-locked (SELECT ... FOR UPDATE) and write elo_history rows for every rating
-change when a game_id is supplied.
+Player profiles (Elo, win/loss, per-deck, per-opponent and forfeit stats) in the
+player_profiles table. Sortable fields are columns; the stats buckets are JSONB,
+filled in by _migrate_profile on load. Storage goes through the module-level
+`backend` (tests use a fake). Result recording runs in one transaction with the rows
+locked and writes elo_history rows for rating changes when a game_id is given.
 """
 
 from __future__ import annotations
@@ -95,9 +86,7 @@ def _migrate_profile(profile: dict, user_id: int) -> dict:
     return profile
 
 
-# ----------------------------------------------------------------------
-# PostgreSQL backend
-# ----------------------------------------------------------------------
+# --- PostgreSQL backend ---
 
 
 def _profile_from_row(row) -> dict:
@@ -216,9 +205,7 @@ class PostgresProfileBackend:
 backend = PostgresProfileBackend()
 
 
-# ----------------------------------------------------------------------
-# Module API (same call surface as the old JSON layer, now async)
-# ----------------------------------------------------------------------
+# --- Module API ---
 
 
 async def load_profile(user_id: int) -> dict:
@@ -245,7 +232,7 @@ async def list_ranked_profiles(
 
 
 async def list_all_profiles() -> list[dict]:
-    """Every stored profile. Used by the maintenance reset scripts."""
+    """Every stored profile. Used by scripts/reset_elo.py."""
     return await backend.list_all_profiles()
 
 
@@ -262,14 +249,8 @@ def _apply_elo_update(
     peak_field: str = 'elo_peak',
     games_field: str = 'elo_games',
 ) -> None:
-    """
-    Update Elo on both profiles. score_a is 1.0 (a wins), 0.5 (draw), or 0.0 (b wins).
-    Standard Elo formula: bigger rating gaps already produce asymmetric swings (small for
-    favourites, large for upsets) without any custom K-factor tweaks.
-
-    The rating_field / peak_field / games_field parameters let the same updater drive
-    both standard PvP Elo and the parallel TCG-series Elo against different profile keys.
-    """
+    """Standard Elo update for both profiles; score_a is 1.0 (a wins), 0.5 (draw) or 0.0.
+    The field parameters let it serve both the standard and TCG ladders."""
     rating_a = profile_a.get(rating_field, ELO_STARTING_RATING)
     rating_b = profile_b.get(rating_field, ELO_STARTING_RATING)
     expected_a = _expected_score(rating_a, rating_b)
@@ -291,36 +272,13 @@ def _apply_one_sided_elo_loss(
     peak_field: str = 'elo_peak',
     games_field: str = 'elo_games',
 ) -> tuple[int, int]:
-    """
-    Charge the loser a punitive Elo penalty and give the winner nothing.
+    """Charge the thrower of a turn-1 CHAOS self-defeat; the winner gets nothing.
 
-    Used when the loser threw the game (a turn-1 CHAOS self-defeat): a wintrade must not
-    pay out, or two colluding players can pump one account's rating for free. Paying the
-    winner nothing removes the payout, but on its own it leaves the throw free — the
-    thrower was heading for that loss anyway. So the thrower is charged
-    SELF_DEFEAT_ELO_LOSS_FLAT_PENALTY plus SELF_DEFEAT_ELO_LOSS_MULTIPLIER times the loss
-    they would normally take.
-
-    Both terms are load-bearing. The scaled term shrinks as the thrower's rating falls
-    (their expected score against the winner drops with it), so a pure multiplier
-    asymptotes and a dedicated feeder account eventually throws for nothing. The flat term
-    ignores the rating gap and keeps landing, so the rating keeps descending. The
-    multiplier is applied inside the round for the same reason: rounding the base loss
-    first would let the scaled part collapse to exactly zero once the gap is wide enough.
-
-    ELO_MINIMUM_RATING is clamped here and nowhere else. The ordinary Elo path does not
-    need a floor — near zero a player's expected score against any live opponent is also
-    near zero, so its delta rounds away to nothing on its own. Only the flat term can push
-    a rating negative, so only this path guards against it.
-
-    Nothing about this is announced to the player. Keep it that way: the boundaries of the
-    rule (see should_suppress_winner_elo_gain) must not be probeable from bot output, or
-    the next wintrade just moves to a variant the rule does not cover.
-
-    The winner's rating, peak, and games_field are all left untouched — no rating event
-    happened for them. Returns (rating_before, rating_after) for the loser so the caller
-    can build the elo_history row; rating_after is post-clamp, so a floored throw records
-    the smaller real drop rather than the notional penalty.
+    Penalty = SELF_DEFEAT_ELO_LOSS_FLAT_PENALTY + SELF_DEFEAT_ELO_LOSS_MULTIPLIER x the
+    normal loss. Both terms matter: the scaled one shrinks as the thrower's rating falls,
+    and the flat one does not. Only this path can go negative, so only it clamps to
+    ELO_MINIMUM_RATING. Never announce it (see should_suppress_winner_elo_gain).
+    Returns the loser's (rating_before, rating_after), after the clamp.
     """
     rating_loser = loser_profile.get(rating_field, ELO_STARTING_RATING)
     rating_winner = winner_profile.get(rating_field, ELO_STARTING_RATING)
@@ -418,20 +376,13 @@ async def record_match_result(
     game_id: Optional[str] = None,
     suppress_winner_elo_gain: bool = False,
 ) -> None:
-    """
-    Record one match's result.
+    """Record one match. `mode` is 'standard' (non-TCG PvP, or solo) or 'tcg_match'.
 
-    mode is 'standard' (PvP non-TCG, or solo) or 'tcg_match' (one game inside a TCG series).
-    For solo, only the human player's profile is updated and only solo_* counters change.
-    For PvP, both profiles are updated: top-level stats, opponent_stats, deck_stats, and Elo
-    (standard mode only, with an elo_history row per player when game_id is known).
-
-    suppress_winner_elo_gain marks a game the loser deliberately threw (a turn-1 CHAOS
-    self-defeat). The winner gains nothing and the loser pays a punitive multiple of a
-    normal loss (see _apply_one_sided_elo_loss), which is what makes abyss-bomb
-    wintrading pointless rather than merely unprofitable. Win/loss counters, deck_stats
-    and opponent_stats are unaffected and record the game normally for both players.
-    Ignored outside standard mode and on draws.
+    Solo updates only the human's solo counters. PvP updates both players' stats,
+    opponent and deck stats, and (standard only) Elo with elo_history rows.
+    `suppress_winner_elo_gain` (turn-1 CHAOS self-defeat): no Elo for the winner and the
+    penalty for the loser; all other stats still count. Ignored outside standard mode
+    and on draws.
     """
     if is_solo:
         human_id = player_zero_id if player_zero_id != BOT_DISCORD_ID else player_one_id
@@ -481,8 +432,7 @@ async def record_match_result(
             entry[outcome_key] += 1
             entry['last_played'] = timestamp
 
-        # Elo is intentionally scoped to standard PvP only — TCG matches are tracked but do
-        # not move the rating used by the leaderboard.
+        # Per-match Elo is standard only; TCG Elo moves once per series (record_tcg_series).
         if mode != 'standard':
             return []
 
@@ -519,13 +469,8 @@ async def record_tcg_series(
     *,
     game_id: Optional[str] = None,
 ) -> None:
-    """
-    Record series-level TCG result. Per-match stats were handled during the series.
-
-    The TCG Elo ladder updates here (and only here): one Elo move per completed
-    best-of-N, regardless of whether it was a sweep or a grind. The standard Elo
-    rating is left untouched — TCG has its own parallel rating stored in tcg_elo.
-    """
+    """Record a finished TCG series: the only place the TCG Elo ladder (tcg_elo) moves,
+    once per series. Per-match stats were recorded during the series."""
     if BOT_DISCORD_ID in (player_zero_id, player_one_id):
         return  # series-level recording is PvP only
 
@@ -557,10 +502,7 @@ async def record_tcg_series(
 
 
 async def record_forfeit(quitter_id: int, opponent_id_or_none: Optional[int]) -> None:
-    """
-    Forfeit counter only. Does NOT affect Elo or win/loss columns.
-    opponent_id_or_none is None for solo (bot opponent) — only the quitter's profile updates.
-    """
+    """Forfeit counters only; no Elo or win/loss change. `opponent_id_or_none` is None for solo."""
     if quitter_id == BOT_DISCORD_ID:
         return
     involved_ids = [quitter_id]

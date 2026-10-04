@@ -1,11 +1,7 @@
 """
-Support helpers for PostgreSQL integration tests.
-
-Integration tests are skipped unless ZUTOKA_TEST_DATABASE_URL is set (see the
-integration_database_url fixture in tests/conftest.py). Each test runs inside
-its own event loop via run_with_database, which initializes the pool against
-the test database, applies the schema, truncates all data tables, runs the
-test coroutine, and closes the pool.
+PostgreSQL integration-test helpers. Tests skip unless ZUTOKA_TEST_DATABASE_URL is
+set; run_with_database runs one test coroutine in its own event loop after applying the
+schema and truncating its data tables.
 """
 
 from __future__ import annotations

@@ -1,7 +1,5 @@
-"""Breadth playouts: several hundred seeded random full-pool games, plus a
-batch of draft-mode games. Exists to exercise the long tail of effect IR
-programs and custom handlers on every run (the engine plays thousands of
-games per second, so this stays fast)."""
+"""Breadth playouts: hundreds of seeded random full-pool games plus draft games, so
+rare effect programs and custom handlers run on every test run."""
 
 from __future__ import annotations
 
@@ -15,9 +13,8 @@ from .test_events import random_full_pool_deck
 FULL_POOL_GAMES = 300
 DRAFT_GAMES = 15
 FORCED_EFFECT_GAMES = 40
-# Effects worth guaranteeing coverage for rather than waiting on a lucky
-# full-pool sample: the ones whose programs branch into a self-defeat or
-# empty a zone wholesale.
+# The Set 4 SE effects: coverage guaranteed rather than left to a lucky
+# full-pool sample.
 FORCED_EFFECT_IDS = ('04-105', '04-106', '04-107')
 
 
@@ -52,9 +49,7 @@ def _deck_containing(forced_defs: list[int], rng: random.Random) -> list[int]:
 
 
 def test_forced_new_effect_random_playouts():
-    """Both decks are guaranteed to hold 04-105 / 04-106 / 04-107, so their
-    programs run under uniform-random play on every test run instead of
-    waiting for a lucky full-pool draw."""
+    """Both decks hold 04-105, 04-106 and 04-107, so their programs run on every test run."""
     forced = [cards.EFFECT_TO_CARD[cards.EFFECT_TO_INDEX[effect_id]]
               for effect_id in FORCED_EFFECT_IDS]
     for seed in range(FORCED_EFFECT_GAMES):

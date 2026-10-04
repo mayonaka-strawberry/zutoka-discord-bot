@@ -1,51 +1,18 @@
 """
-Measurement script: recovers the 18 chronos ring centres from the printed board art and
-reports how far CHRONOS_CENTERS sits from them.
+Measure the 18 chronos ring centres from the board art and report how far
+CHRONOS_CENTERS (zutomayo/ui/board_renderer.py) is from them.
 
-This is where the constants in zutomayo/ui/board_renderer.py come from. The calibration
-scripts show you whether the coin looks right; this one tells you by how much, so the
-constants can be re-derived rather than trusted.
+  day suns          disc centroid (the rays are separate components)
+  night moons       a circle of known radius fitted to the outer limb (a free radius
+                    latches onto a gibbous terminator)
+  new moons (0, 8)  least-squares circle through the dash centroids
 
-Two glyph kinds need two different fits:
+The gibbous slots fit almost equally well with the disc on either side, so when the
+runner-up is within AMBIGUOUS_MARGIN, the candidate closer to the angle interpolated
+from neighbouring slots wins; both are printed. Day slots score 33-36 of 36 sectors;
+night slots score lower by nature, and the check there is the disc radius agreeing.
 
-  day suns          A solid disc surrounded by detached ray triangles, so the disc is its
-                    own connected component and is symmetric. Its centroid is its centre.
-
-  night moons       A phase, so the lit pixels are not symmetric about the slot and the
-                    centroid sits wherever the terminator leaves it. What is measured
-                    instead is the moon's disc, by fitting a circle of KNOWN radius to the
-                    glyph's outer limb. Holding the radius fixed is the point: a gibbous
-                    moon's terminator is an ellipse arc of similar curvature, and a
-                    free-radius fit happily lands on it instead of on the limb.
-
-  night new moons   Slots 0 and 8 are dashed rings with no disc at all, so those two are a
-                    least-squares circle through the dash centroids.
-
-There is a second trap on top of the fixed radius, and it is the one that actually shipped a
-wrong answer. On the two gibbous phases the terminator is close enough to a circle of the
-disc's own radius that placing the disc on EITHER side of the glyph scores almost the same:
-142 inliers against 141 on slot 3. The winner there is decided by noise, so the score cannot
-be trusted to choose. Where the runner-up comes within AMBIGUOUS_MARGIN of the winner, this
-script ignores the score and asks the ring instead -- it interpolates the slot's angle about
-the rotational centre from its nearest unambiguous neighbours and keeps whichever candidate
-is closer. That separates them cleanly, 0.4 degrees against 3.9. Both candidates are printed
-whenever this happens, so the choice is visible rather than silent.
-
-Scoring. For a candidate centre, take the outermost glyph pixel in each 10-degree sector.
-On a correct centre those outer radii form a flat plateau at the disc radius over the whole
-limb. The score is how many sectors sit on that plateau. The reference radius is the 90th
-percentile of the sector radii, NOT the median -- on a gibbous phase the terminator drags
-the median well off the limb and a median-based score rates a correct centre as a failure.
-
-Expect the day slots to score 33-36 out of 36. The night slots score lower, and legitimately
-so: a crescent has no glyph pixels at all across a third of its sectors, and a gibbous
-terminator occupies half of them. For the night half the discriminator is the fitted disc
-radius agreeing across all seven moons, not the raw sector count.
-
-Run from project root:
-python scripts/measure_chronos_centers.py
-
-Prints only; writes no files.
+Run from the project root: python scripts/measure_chronos_centers.py (prints only)
 """
 
 import sys
@@ -53,7 +20,6 @@ from collections import deque
 from pathlib import Path
 
 
-# Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 

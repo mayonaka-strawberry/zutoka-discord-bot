@@ -1,34 +1,19 @@
-"""Deck-forced sweep for the defect classes the rest of the suite cannot see.
+"""Deck-forced sweep for defect classes the rest of the suite cannot see.
 
-Three things make this different from `test_coverage_playouts`, and each of them
-was needed to catch a real bug that shipped green:
+Unlike test_coverage_playouts, it:
+1. forces decks per defect group (a random deck gives any one card about 2.4% exposure);
+2. encodes the observation at every decision, catching encoder crashes;
+3. audits area-enchant end conditions at the turn-end phase boundary, where the
+   end-of-turn cleanup would otherwise hide a violation;
+4. caps frame depth and decision count, so a runaway chain fails instead of hanging.
 
-1. **Decks are forced, not random.** Unbiased full-pool decks draw 10 of 425
-   definitions, so any one card gets ~2.4% exposure per deck. 150 unbiased games
-   found none of the defects below; the same count with forced decks finds them
-   immediately.
-2. **The observation is encoded at every decision.** Nothing else in the repo does
-   this in a loop, which is exactly why a `KeyError` in the encoder survived a full
-   green suite and a 24-game replay baseline.
-3. **A phase-boundary hook checks area-enchant end conditions.** Some rules bugs are
-   behavioural rather than crashes and are invisible at decision points, because the
-   end-of-turn cleanup tidies up before the next prompt.
-
-Caps make a hang a failure instead of a hang: without them a runaway effect chain
-never returns and the test never reports.
-
-What each group is and is not evidence for, measured rather than assumed:
-
-- `immediate_removal` genuinely gates the area-removal timing rule. With the
-  damage-triggered hook disabled it fails 65/150; with it enabled, 0/150.
-- `shade_nesting` does **not** reproduce the 04-002 chain and must not be cited as
-  its gate. 04-002 has SEND TO POWER 0, so it only reaches a charger via 03-097
-  revealing a cost-6+ card while 03-097 is in play -- a setup random play does not
-  produce (0/150 games here). The real gate for that defect is the deterministic
-  `test_qa_79_83_shade_chain_terminates_without_blocking_legal_nesting`. The group
-  and the frame-depth cap remain useful as a backstop for *unknown* runaway chains.
-- `turn_end_owner` and `baseline` exist for breadth: encoder coverage, invariants and
-  clean termination across many states.
+What each group proves:
+- `immediate_removal` gates the area-removal timing rule (61/150 failures with the
+  damage-triggered hook disabled).
+- `shade_nesting` does NOT reproduce the 04-002 chain (0/150); its real gate is
+  test_qa_79_83_shade_chain_terminates_without_blocking_legal_nesting. It backstops
+  unknown runaway chains.
+- `turn_end_owner` and `baseline` are for breadth.
 """
 
 from __future__ import annotations
@@ -55,44 +40,26 @@ FX_03_058 = EFFECT_TO_INDEX['03-058']
 FX_03_085 = EFFECT_TO_INDEX['03-085']
 FX_04_091 = EFFECT_TO_INDEX['04-091']
 
-#: One group per defect cluster. `shade_nesting` needs all three cards: 04-002 has
-#: SEND TO POWER 0 so it never reaches a charger by leaving play, 03-097 is the only
-#: practical way to seed one there, and 04-094 resolves it without a power gate --
-#: measured individually, no pair reproduces the chain.
-#: Each group carries a fixed deck-seed base. It must be a literal, not `hash(group)`:
-#: string hashing is randomised per process, which would make this sweep
-#: non-deterministic and a failure impossible to reproduce from the printed seed.
+#: One group per defect cluster; `shade_nesting` needs all three cards. Seed bases are
+#: literals because hash() is randomized per process, which would make failures
+#: unreproducible.
 GROUPS = {
     'turn_end_owner': (10000, ('03-027', '04-100', '03-058')),
     'immediate_removal': (20000, ('03-058', '03-085', '04-091')),
     'shade_nesting': (30000, ('04-002', '04-094', '03-097')),
     'deck_shortfall': (40000, ('01-092', '04-089', '02-015', '04-057')),
     'baseline': (50000, ()),
-    # Breadth only -- this group does NOT gate the 02-041 deck-shortfall fix and
-    # must not be cited as its evidence. Measured over its own 150 games:
-    # `deck_top_route` fires 20 times and the empty-deck branch 0 times, so
-    # trajectories are bit-identical with the fix reverted. The deterministic
-    # tests in test_rulings.py (test_gr_8_2_1_02_041_*, the two accepted-
-    # consequence tests) are the real gate. What this buys is exercising 02-041
-    # and 01-006 -- which nests effects without a cost check -- inside full random
-    # games, alongside the encoder and invariant checks every group runs.
-    # It is a SEPARATE group rather than more cards in `deck_shortfall` because
-    # _deck_containing samples `10 + len(distinct)`, so growing that tuple
-    # re-rolls its RNG stream and replaces its 150 games instead of adding to them.
+    # Breadth only: it does NOT gate the 02-041 shortfall fix (the empty-deck branch
+    # never fires here); test_rulings.py does. A separate group because adding cards
+    # to `deck_shortfall` would re-roll that group's games.
     'deck_top_route': (60000, ('02-041', '01-006')),
 }
 
 
 class _AreaEndConditionSink(list):
-    """Event sink that audits area-enchant end conditions as the turn-end window
-    closes.
-
-    Cards whose text says 「すぐに」 must already be gone by then: Q&A No.16 for
-    03-058/03-085 at 30+ damage taken, Q&A No.80 for 04-091 at HP 50 or less. This
-    has to run on the phase transition rather than at a decision point, because
-    `check_area_removal(end_of_turn=True)` clears them up before the next prompt --
-    a decision-point assertion sees nothing.
-    """
+    """Event sink auditing area-enchant end conditions as the turn-end window closes:
+    03-058/03-085 at 30+ damage and 04-091 at HP <= 50 must already be gone (Q&A No.16,
+    80). Runs on the phase transition because cleanup hides them by the next decision."""
 
     def __init__(self, state) -> None:
         super().__init__()
@@ -106,8 +73,7 @@ class _AreaEndConditionSink(list):
             area = player.set_c
             if area == -1:
                 continue
-            # An area enchant whose power cost is unmet is never removed
-            # (GR 6.1.3.4), so it is allowed to still be here.
+            # An area with an unmet power cost is never removed (Ground Rules 6.1.3.4).
             if total_power(self.state, player) < effective_power_cost(self.state, area):
                 continue
             effect = EFFECT_T[self.state.inst_def[area]]
@@ -145,8 +111,7 @@ def _play_one(group: str, seed: int) -> None:
             raise AssertionError(
                 f'{group} seed {seed}: frame stack reached {depth} '
                 '(runaway effect chain)')
-        # The encoder is the only thing that catches an instance id the
-        # observation cannot map.
+        # Only the encoder catches an instance id the observation cannot map.
         observation.encode(game)
         check_invariants(game)
         legal = game.legal_actions()

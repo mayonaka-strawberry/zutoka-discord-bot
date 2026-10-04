@@ -1,13 +1,8 @@
-"""PUCT search over the resumable game.
+"""PUCT search over the game.
 
-Values are stored in the fixed player-0 frame and converted to the acting
-player's perspective at selection time — required because consecutive nodes
-frequently belong to the SAME player (micro-decision chains: mulligan marks,
-set A then B, effect ordering, multi-op effects), so a naive
-sign-flip-per-ply would be wrong.
-
-No chance nodes: shuffles are deterministic functions of the state's RNG
-counter, so every branch through a state agrees on their outcomes.
+Values are stored in the player-0 frame and converted at selection time, because
+consecutive nodes often belong to the same player (micro-decision chains). No chance
+nodes: shuffles are deterministic in the state's RNG counter.
 """
 
 from __future__ import annotations
@@ -218,12 +213,8 @@ def run_search_batched(game, batch_evaluator, cfg: MCTSConfig, simulations: int,
 
 def select_action(root: Node, temperature: float, rng: random.Random,
                   use_gumbel: bool = False) -> int:
-    """Samples an action from the root visit distribution.
-
-    With use_gumbel (small simulation budgets), ties and near-ties among
-    visit counts are broken by prior-plus-Gumbel scores instead of index
-    order, which improves the played move when visits are too sparse to
-    discriminate. Wired from MCTSConfig.use_gumbel_root."""
+    """Sample an action from the root visits. With use_gumbel
+    (MCTSConfig.use_gumbel_root), near-ties are broken by prior plus Gumbel noise."""
     counts = root.visit_counts.astype(np.float64)
     if temperature <= 0.01:
         if use_gumbel:

@@ -8,9 +8,8 @@ from zutomayo.enums.song import Song
 from zutomayo.models.card import Card
 
 
-# cards.json only changes with a deploy, so parse it once per process. Card is
-# a frozen dataclass, so sharing instances between callers is safe; the cache
-# hands out a fresh list each call because callers slice and reorder it.
+# Parsed once per process. Cards are frozen and shared; each call gets a fresh list
+# so callers may reorder it.
 _CARD_CACHE: Optional[list[Card]] = None
 
 

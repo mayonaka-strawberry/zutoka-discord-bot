@@ -22,14 +22,10 @@ async def send_with_retry(
     attachment_kwargs: dict[str, Any] | None = None,
     byte_limit: int | None = None,
 ) -> T:
-    """Call coroutine_factory() and retry up to MAX_SEND_ATTEMPTS times on 5xx errors.
+    """Call coroutine_factory() up to MAX_SEND_ATTEMPTS times, retrying 5xx errors.
 
-    If *attachment_kwargs* is given, it must be the very dict the factory unpacks into its
-    send call. A 413 (attachment too large, meaning this guild or DM has a lower upload
-    ceiling than we assumed) then re-encodes the images in that dict to *byte_limit* and
-    retries once, so the message goes out at reduced quality instead of failing outright.
-    Shrinking happens at most once: if the smaller image is rejected too, the error is
-    raised rather than shrinking repeatedly toward nothing.
+    On a 413 (attachment too large), re-encode the images in *attachment_kwargs* (the
+    very dict the factory sends) to *byte_limit* and retry, at most once.
     """
     shrunk_attachments = False
 
@@ -82,14 +78,8 @@ async def send_images_with_retry(
     byte_limit: int | None = None,
     **send_kwargs: Any,
 ) -> T:
-    """Send a message carrying rendered images, shrinking them if Discord rejects the size.
-
-    Wraps the send sites that talk to an interaction or channel directly, rather than
-    through a match transport. Everything in *send_kwargs* is forwarded verbatim to
-    *send_callable*, and that same dict is handed to send_with_retry so the 413 path can
-    rewrite the attachments in place and retry the identical call. ``byte_limit`` is named
-    explicitly so it is consumed here rather than forwarded to Discord.
-    """
+    """Send a message with rendered images, shrinking them once if Discord rejects the
+    size. For sends outside a match transport; *send_kwargs* goes to *send_callable*."""
     return await send_with_retry(
         lambda: send_callable(**send_kwargs),
         label=label,

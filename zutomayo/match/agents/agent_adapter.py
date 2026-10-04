@@ -1,8 +1,7 @@
 """
-ModelDecisionAdapter: lets a trained model answer broker decisions in solo
-games. The agent computes an engine action off the event loop (bounded by a
-watchdog timeout); on any failure a legal fallback action is submitted so a
-model bug can never hang a game.
+ModelDecisionAdapter: a trained model answers broker decisions in solo games, off
+the event loop behind a watchdog. An exception or timeout submits a legal fallback
+action, so a model bug cannot hang a game.
 """
 
 from __future__ import annotations

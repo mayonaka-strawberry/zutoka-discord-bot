@@ -14,8 +14,7 @@ class GameSession:
         self.channel_id = channel_id
         self.player_discord_ids: dict[int, int] = {}  # discord user ID -> player index
 
-        # Engine seed: Game(seed=...) consumes it directly, and it is persisted
-        # in the game manifest so a logged game replays deterministically.
+        # Engine seed, persisted in the manifest for deterministic replay.
         self.random_seed: int = random.SystemRandom().getrandbits(64)
 
         # Decision-broker runtime, installed by the flow that runs this game.
@@ -25,11 +24,9 @@ class GameSession:
         # engine_alpha game, set by the match flow.
         self.game: Any = None
 
-        # Permanent game record store, created when the match is initialized.
-        # Records are never deleted; game lifecycle is tracked by games.status.
+        # Game record store. Records are permanent; games.status tracks the lifecycle.
         self.persistence: Optional['GameRecordStore'] = None
 
-        # Track both players' Discord IDs
         self.player_discord_ids[creator_id] = 0
 
         # Synchronization for pre-match flows (deck building, draft) whose
@@ -40,7 +37,6 @@ class GameSession:
             1: asyncio.Event(),
         }
 
-        # Game flow task
         self.game_task: Optional[asyncio.Task] = None
 
         # TCG mode attributes
@@ -49,17 +45,17 @@ class GameSession:
 
         # Solo mode (player vs bot)
         self.is_solo: bool = False
-        self.solo_difficulty: str = 'normal'  # 'normal' | 'easy', only meaningful when is_solo
+        self.solo_difficulty: str = 'normal'  # solo opponent id ('alphazero' or 'ppo') when is_solo
 
-        # Draft mode: each player opens gacha boxes and builds a deck only from
-        # the cards they open. These flags are consumed by the draft phase,
-        # which runs before persistence exists, so nothing in resume needs them.
+        # Draft mode: decks come only from opened gacha boxes. Used before the game
+        # record exists, so resume never needs these.
         self.is_draft: bool = False
         self.draft_boxes: int = 0
         self.draft_visibility: str = 'public'  # 'public' | 'private'
 
-        # Deck name chosen by each player (populated by deck-selection views).
-        # None means the player used a random/manual/no-saved-deck path.
+        # Deck name chosen by each player (populated by deck-selection views): a saved
+        # deck's name or a '<random>', '<manual>', '<draft>' or '<default>NAME' marker.
+        # None means the timeout fallback deck or the solo model's deck.
         self.player_deck_names: dict[int, str | None] = {0: None, 1: None}
 
     def add_player(self, discord_id: int) -> int:
@@ -138,11 +134,7 @@ class GameSessionManager:
         return session
 
     async def create_solo_game(self, channel_id: int, creator_id: int) -> GameSession:
-        """
-        Create a solo game where the creator plays against the bot.
-
-        The bot is added as player 1 with a sentinel Discord ID (0).
-        """
+        """Create a solo game; the bot is player 1 with sentinel Discord ID 0."""
         if creator_id in self.player_to_game:
             raise ValueError('You are already in a game.')
 
@@ -181,11 +173,8 @@ class GameSessionManager:
         return self.active_games.get(game_id)
 
     def detach_game(self, game_id: str) -> None:
-        """
-        Drop the session from the in-memory maps, freeing its players for new
-        games. The permanent game record is untouched; status transitions are
-        the responsibility of the caller (game end, save, quit, abandon).
-        """
+        """Remove the session from memory, freeing its players. The game record is
+        untouched; callers set its status."""
         session = self.active_games.pop(game_id, None)
         if session:
             for discord_id in session.player_discord_ids:
@@ -195,5 +184,4 @@ class GameSessionManager:
         self.detach_game(game_id)
 
 
-# Singleton instance
 session_manager = GameSessionManager()

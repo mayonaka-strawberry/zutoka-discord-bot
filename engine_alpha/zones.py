@@ -1,19 +1,11 @@
-"""Zone-manipulation helpers with placement-trigger semantics.
+"""Abyss and power-charger placement. Route every placement through here so the turn flags fire:
 
-Every Abyss / Power Charger placement must route through these functions so
-the turn flags that card effects and removal conditions read fire exactly
-like the old engine:
+- PF_ABYSS_RECEIVED: set on the abyss owner, whoever placed the card (04-030).
+- PF_OPP_CARD_TO_ABYSS: set on the placer's opponent (03-055, 03-091).
+- PF_CARD_TO_POWER / PF_CHAR_TO_POWER: set only when owners place into their own
+  charger (04-033, 02-058). 04-006's forced placement does not count.
 
-- PF_ABYSS_RECEIVED is location-based (JP passive voice, 04-030): keyed by
-  the abyss owner, set no matter who caused the placement.
-- PF_OPP_CARD_TO_ABYSS is agent-based (03-055/03-091): keyed by the watcher,
-  set when the watcher's *opponent* performed the placement.
-- PF_CARD_TO_POWER / PF_CHAR_TO_POWER are agent-based (04-033/02-058): set
-  only when the charger owner themselves placed the card; opponent-forced
-  placements (04-006 — the only one in the engine) do not count.
-
-These functions append to the destination zone; removing the card from its
-source container is the caller's responsibility (matching the old engine).
+These append to the destination; the caller removes the card from its source.
 """
 
 from __future__ import annotations
@@ -61,11 +53,7 @@ def to_power_or_abyss(state: GameState, instance_id: int, owner_index: int,
 
 
 def draw_cards(state: GameState, player_index: int, count: int) -> int:
-    """Draw `count` cards from the deck top into the hand. Returns cards drawn.
-
-    Mirrors the old Player.draw: drawn cards become face-down and lose any
-    lingering effect negation (a re-drawn card behaves as a fresh copy).
-    """
+    """Draw up to `count` cards; returns how many. Drawn cards turn face down and lose effect negation."""
     player = state.players[player_index]
     drawn = player.deck[:count]
     del player.deck[:count]

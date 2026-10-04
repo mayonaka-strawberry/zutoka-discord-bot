@@ -1,25 +1,17 @@
 """
-MatchDecisionBroker: the single choke point for every interactive decision in
-an engine_alpha-driven match.
+MatchDecisionBroker: the single choke point for every decision in a match.
 
-The driver calls ``await broker.request(match_request)`` and gets back a
-MatchDecisionResponse. The broker:
+`await broker.request(request)` returns a MatchDecisionResponse. The broker:
+- numbers requests deterministically, in code order, even when both players are
+  prompted at once;
+- during replay, answers from the decision log, checking each request's fingerprint;
+- live, presents through the player's adapter (Discord view, model, or test script)
+  and waits up to the request's timeout;
+- on timeout applies the fallback (PASS if allowed, else the lowest legal action),
+  logged as `timed_out`, and counts consecutive timeouts for the forfeit rule;
+- appends every live response to the persistence log, if one is attached.
 
-- assigns deterministic sequence numbers (incremented at request() entry, in
-  code order, so numbering is stable even when both players are prompted
-  concurrently),
-- during replay (after a bot restart or /resume) answers requests instantly
-  from the loaded decision log, verifying each request's fingerprint,
-- live, presents the decision through the requesting player's adapter
-  (Discord views, a model agent, or a scripted test adapter) and awaits the
-  answer with the request's timeout,
-- resolves timeouts to a deterministic fallback action (PASS when the
-  decision allows passing, otherwise the lowest legal action), logs it as a
-  normal action flagged ``timed_out``, and tracks consecutive timeouts per
-  player so the driver can forfeit a player who stopped answering,
-- appends every response to the game's persistence log when one is attached.
-
-This module must stay import-light: no discord, no views, no engine imports.
+Keep this module import-light: no discord, views, or engine imports.
 """
 
 from __future__ import annotations
@@ -62,11 +54,8 @@ class MatchResumeDivergenceError(Exception):
 
 
 def fallback_response_payload(request: MatchDecisionRequest) -> tuple[str, Any]:
-    """Deterministic payload applied when a player times out: PASS when the
-    engine decision allows passing, otherwise the lowest legal action; an
-    empty switch for the TCG side-deck decision, and the first listed option
-    for bot-layer decisions that carry options (the TCG side choice falls back
-    to Day, the side that does not commit set cards first)."""
+    """The timeout answer: PASS if allowed, else the lowest legal action. Bot-layer
+    kinds: an empty side-deck switch, or the first option (Day for the side choice)."""
     engine_request = request.engine_request
     if engine_request is None:
         if request.kind == KIND_SIDE_DECK_SWITCH:
@@ -95,9 +84,8 @@ class MatchDecisionBroker:
         self.replaying = False
         self.pending_futures: dict[int, tuple[MatchDecisionRequest, asyncio.Future]] = {}
         self.consecutive_timeouts: dict[int, int] = {0: 0, 1: 0}
-        # Called once when the replay log is exhausted and the game goes live
-        # (unmute transport, announce the resume). Installed by the resume
-        # manager; a no-op for games that never restarted.
+        # Called once when replay runs out and the game goes live (unmute, announce).
+        # Set by resume; None for games that never restarted.
         self.on_go_live: Any = None
 
     async def request(self, request: MatchDecisionRequest) -> MatchDecisionResponse:
@@ -141,13 +129,8 @@ class MatchDecisionBroker:
         return response
 
     def submit(self, sequence_number: int, payload_type: str, payload: Any) -> None:
-        """
-        Deliver a player's answer. Called by Discord views and model agent
-        adapters. Answers for unknown or already-resolved sequence numbers
-        (for example a button pressed after the prompt timed out) are
-        ignored, as are actions the pending engine decision considers
-        illegal - the log must never contain an unapplyable action.
-        """
+        """Deliver an answer. Ignored if the request is unknown or already resolved, or
+        the action is illegal: the log must never hold an unappliable action."""
         pending = self.pending_futures.get(sequence_number)
         if pending is None:
             return

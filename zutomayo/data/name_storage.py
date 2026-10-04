@@ -1,18 +1,12 @@
 """
-Persistence for Discord user display names, keyed by user ID.
+Display names keyed by Discord user id (display_names table).
 
-Interactions always include the acting user's name regardless of gateway
-intents, so the bot captures names there (see GameCog.capture_interaction_user_name)
-instead of relying on the member cache, which is empty now that the privileged
-members intent is no longer requested.
-
-Names live in the PostgreSQL display_names table. Because resolve_display_name
-is called from synchronous rendering code (transports, embed builders), the
-module keeps a write-through in-memory cache: load_display_name_cache() fills
-it at startup, reads are cache-only and synchronous, and writes update the
-cache immediately and persist through the module-level `backend` (upserts are
-fire-and-forget when no await point is available). Entries with custom=True
-were set via /zutomayo editname and are never overwritten by automatic capture.
+Names are captured from interactions (GameCog.capture_interaction_user_name), since
+the bot has no members intent. resolve_display_name is called from synchronous
+rendering code, so reads come from an in-memory cache filled at startup; writes
+update the cache and persist through the module-level `backend` (fire-and-forget
+when there is no await point). custom=True entries come from /zutomayo editname and
+are never overwritten by automatic capture.
 """
 
 from __future__ import annotations
@@ -61,11 +55,8 @@ class PostgresNameBackend:
             await connection.execute('DELETE FROM display_names WHERE user_id = $1', user_id)
 
     async def search_known_players(self, prefix: str, limit: int = 25) -> list[tuple[int, str]]:
-        """
-        Known players whose display name starts with the prefix (case
-        insensitive), restricted to users that actually have a profile so the
-        profilestats / history autocomplete only offers real players.
-        """
+        """Players with a profile whose name starts with `prefix` (case insensitive),
+        for the profilestats and history autocomplete."""
         from zutomayo.data.database import get_pool
 
         async with get_pool().acquire() as connection:
@@ -105,8 +96,8 @@ def _cache() -> dict[str, dict]:
 def _schedule_persist(user_id: int, name: str, custom: bool) -> None:
     """
     Persist a cache write without an await point (used by synchronous capture
-    paths). Outside a running event loop the write stays cache-only; the next
-    interaction re-captures and persists it.
+    paths). Outside a running event loop the write stays cache-only, and
+    same-name recaptures are no-ops until the name changes or the bot restarts.
     """
     async def persist() -> None:
         try:

@@ -1,16 +1,5 @@
-"""Attack computation, battle resolution, win checks, and the engine-inline
-passive effects that modify them (02-005, 02-007, 03-061, 03-026, 01-005 flag).
-
-get_effective_attack builds a starting value, then folds this turn's attack
-modifiers onto it in resolution order:
-  an unmet power cost means the final attack is 0 outright -- the whole fold is
-    skipped, including a 04-099 set (GR 2.3.6 and 5.1.3.2; Q&A No.73/No.40/No.55);
-  otherwise the starting value is 02-007 force-day > 01-005 day/night reversal >
-    day/night base;
-  each modifier is an add, a 04-099 set, or 03-064's deferred "+= your own HP"
-    (read live at attack determination, Q&A No.33), applied in the order the
-    effects resolved and clamped to >=0 after every step (Q&A No.54, No.68, No.82).
-"""
+"""Attack, battle resolution, win checks, and the passives read here
+(02-005, 02-007, 03-061, 03-026, and the 01-005 flag)."""
 
 from __future__ import annotations
 
@@ -36,7 +25,7 @@ MIDNIGHT = 4
 NIGHT_END = 8
 NOON = 13
 
-# Engine-inline passive effect ids (dense effect indices).
+# Passive effects checked here (dense effect indices).
 FX_01_005 = EFFECT_TO_INDEX["01-005"]  # reverse opponent's day/night (sets flag)
 FX_02_005 = EFFECT_TO_INDEX["02-005"]  # area: disable opponent's CHARACTER clock
 FX_02_007 = EFFECT_TO_INDEX["02-007"]  # area: own attack always uses day value
@@ -54,8 +43,8 @@ def effective_power_cost(state: GameState, instance_id: int) -> int:
 
 
 def area_enchant_active(state: GameState, player: PlayerState, effect_index: int) -> bool:
-    """True when `player`'s set-zone-C area enchant is `effect_index` and its
-    power cost is met (area enchants use total_power only, no power bonus)."""
+    """Whether `player`'s area enchant (set zone C) is `effect_index` with its cost met.
+    Area enchants ignore the power bonus."""
     area = player.set_c
     if area == -1 or EFFECT_T[state.inst_def[area]] != effect_index:
         return False
@@ -84,14 +73,8 @@ def is_effectively_midnight(state: GameState) -> bool:
 
 def set_chronos(state: GameState, new_value: int, *,
                 record_transition: bool = True) -> None:
-    """Set chronos directly, tracking any day/night transition.
-
-    `record_transition=False` is for effects that REWIND the clock. Q&A No.17 treats a
-    rewind as undoing a change rather than making one — a card that moves the clock
-    back does not thereby cause a "day became night" crossing — and since family D now
-    reads these flags, recording one there would hand out attack bonuses that never
-    happened.
-    """
+    """Set chronos, recording any day/night crossing. Pass `record_transition=False`
+    for rewinds, which are not crossings (Q&A No.17)."""
     old_is_night = state.chronos <= NIGHT_END
     new_is_night = new_value <= NIGHT_END
     if record_transition:
@@ -105,7 +88,7 @@ def set_chronos(state: GameState, new_value: int, *,
 
 
 def advance_chronos_by(state: GameState, steps: int) -> None:
-    """Advance chronos by `steps`, tracking transitions step-by-step."""
+    """Advance chronos, recording every day/night crossing on the way."""
     chronos = state.chronos
     for _ in range(steps):
         old_is_night = chronos <= NIGHT_END
@@ -121,9 +104,8 @@ def advance_chronos_by(state: GameState, steps: int) -> None:
 
 
 def base_attack(state: GameState, player: PlayerState) -> int:
-    """The battle character's printed attack for the current half of the clock,
-    after 02-007 force-day and 01-005 day/night reversal. Ignores the power gate
-    and every attack modifier."""
+    """Printed attack for the current half of the clock, after 02-007 and day/night
+    reversal (01-005, 01-063). Ignores the power gate and modifiers."""
     def_index = state.inst_def[player.battle]
     if force_day_active(state, player.index):
         return ATK_DAY_T[def_index]
@@ -133,27 +115,11 @@ def base_attack(state: GameState, player: PlayerState) -> int:
 
 
 def get_effective_attack(state: GameState, player: PlayerState) -> int:
-    """Fold this turn's attack modifiers onto the live base, in the order they
-    resolved (Q&A No.54, No.68, No.82).
+    """Final attack: this turn's modifiers folded onto the base in resolution order,
+    clamped to >= 0 after each step (Q&A No.54, 68, 82).
 
-    An unmet power cost on the battle character means the player cannot attack
-    at all, and the final attack is 0 no matter what modified it. The categorical
-    statements are Ground Rules 2.3.6 (「パワーコストが足りないキャラクターの攻撃力は
-    ０になり」) and 5.1.3.2 (「攻撃力は０として扱われます」); Q&A No.73 is the worked
-    example, where the cost is lost *after* effects have resolved and the attack is
-    still 0, with No.40 and No.55 restating it.
-
-    Note GR 7.1.2 is NOT the authority here despite being the obvious candidate: it
-    is scoped to attack that was *added* (「『攻撃力＋〇〇』などの効果によって攻撃力が
-    追加されていたとしても」), and 04-099 sets rather than adds. Q&A No.82 is not the
-    authority either -- it settles resolution ORDER and never mentions power cost.
-    The counter-argument is GR 1.3.1 (card text outranks the rules), which is what
-    the engine's earlier set-beats-the-gate behaviour rested on; it was considered
-    and rejected when the user confirmed this ruling on 2026-08-13.
-
-    With the cost met, the running value is clamped to >=0 after every step
-    rather than once at the end: Q&A No.54 has 30 -40 -> 0, then +80 -> 80,
-    not 70.
+    An unmet power cost makes it 0, even after a 04-099 set: Ground Rules 2.3.6 and
+    5.1.3.2, Q&A No.73. (Not Ground Rules 7.1.2, which covers added attack only.)
     """
     if player.battle == -1:
         return 0
@@ -176,26 +142,15 @@ def get_effective_attack(state: GameState, player: PlayerState) -> int:
 
 
 def record_hp_zero(state: GameState, player_index: int) -> None:
-    """Ground Rules 1.2.3/5.4.1: the game ends the instant a player's HP reaches
-    0, and the player still holding HP wins. Q&A No.41 spells out the
-    consequence -- no further card effect is processed once HP hits 0, so a
-    turn-end heal cannot revive a player who is already dead. Recording the
-    winner here (rather than at the next phase boundary) also settles a
-    simultaneous double knock-out: whoever reaches 0 first loses, because the
-    first call wins and later calls see `winner` already set."""
+    """End the game the instant HP reaches 0 (Ground Rules 1.2.3, 5.4.1; Q&A No.41).
+    The first call wins, so in a double knock-out whoever reached 0 first loses."""
     if state.winner == -1 and state.players[player_index].hp <= 0:
         state.winner = 1 - player_index
 
 
 def check_damage_triggered_removal(state: GameState) -> None:
-    """Fire the HP/damage-triggered area-enchant end conditions immediately.
-
-    Ground Rules 8.1.2: rule processing happens the moment the event occurs, even in
-    the middle of another action. Q&A No.16 makes it concrete -- 03-058 wearing 30+
-    damage reaches the abyss 「ダメージを受けてからターン終了時の処理を行うまでの間に」, so
-    its turn-end block never runs -- and Q&A No.80 says the same for 04-091. Skipped
-    once the game is over, since no further processing happens then (Q&A No.41).
-    """
+    """Remove damage-triggered area enchants immediately (Ground Rules 6.1.3.5;
+    Q&A No.12, 16, 80). Skipped once the game is over (Q&A No.41)."""
     if state.winner != -1:
         return
     from .effects.removal import check_area_removal
@@ -203,7 +158,7 @@ def check_damage_triggered_removal(state: GameState) -> None:
 
 
 def deal_damage(state: GameState, player_index: int, amount: int) -> None:
-    """Effect damage to a player's HP; counts toward damage_taken_this_turn."""
+    """Effect damage to a player; counts toward PF_DAMAGE_TAKEN."""
     if amount <= 0:
         return
     player = state.players[player_index]
@@ -252,11 +207,8 @@ def resolve_battle(state: GameState) -> None:
 
 
 def check_win(state: GameState) -> None:
-    """HP-based win check (old check_win_condition). Deck-out is handled in
-    end_turn. Only a player who reaches 0 first loses (see record_hp_zero),
-    so the both-at-zero branch below is a defensive fallback for states built
-    directly by tests or effects that write HP without going through
-    deal_damage."""
+    """HP win check; deck-out is handled by the end-turn phase. The both-at-zero
+    branch only matters for states that set HP without going through record_hp_zero."""
     if state.winner != -1:
         return
     hp_0 = state.players[0].hp

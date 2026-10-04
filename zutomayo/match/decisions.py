@@ -1,14 +1,10 @@
 """
-Decision requests for matches driven by the engine_alpha state machine.
+Match decision requests: one pending engine decision (or a bot-layer one, such as
+the TCG side-deck switch) plus what the presentation layer needs to show it. Engine
+answers are single ints, so the decision log is ints except for side-deck switches.
 
-A MatchDecisionRequest wraps one pending engine decision (or one bot-layer
-decision such as the TCG side-deck switch) with everything the presentation
-layer needs to render it. Responses are always a single int action applied
-with ``Game.apply(action)``, so the persisted decision log is a pure int
-stream and replay is trivial.
-
-This module must stay import-light: no discord, no views, no engine imports
-at module level beyond engine_alpha.actions constants.
+Keep this module import-light: no discord, views, or engine imports beyond
+engine_alpha.actions constants.
 """
 
 from __future__ import annotations
@@ -37,9 +33,7 @@ KIND_SIDE_CHOICE = 'side_choice'                  # bot-layer, TCG: loser picks 
 PAYLOAD_ACTION = 'action'          # engine decisions: a single int
 PAYLOAD_CARD_KEYS = 'card_keys'    # side-deck switch: {'removed': [...], 'added': [...]}
 
-# KIND_SIDE_CHOICE actions, listed in option order so the broker's
-# lowest-action timeout fallback resolves to DAY. The labels are shared by the
-# prompt, the announcement and the summary view.
+# KIND_SIDE_CHOICE actions in option order: the timeout fallback takes the first, DAY.
 SIDE_ACTION_DAY = 0
 SIDE_ACTION_NIGHT = 1
 SIDE_LABEL_DAY = 'Day (昼)'
@@ -50,7 +44,7 @@ ENGINE_PURPOSE_NONE = -1
 
 @dataclass(frozen=True)
 class MatchDecisionOption:
-    """One selectable option, identified by the engine action it submits."""
+    """One selectable option, identified by the action it submits."""
     label: str
     description: str
     action: int
@@ -84,12 +78,8 @@ class MatchDecisionRequest:
 
 
 def request_fingerprint(request: MatchDecisionRequest) -> dict[str, Any]:
-    """
-    The shape of a request that must match between the logged game and a
-    replayed game for a log entry to be trusted. Deliberately coarse: it
-    detects structural divergence (a different decision sequence after a
-    code change) without being brittle about display text.
-    """
+    """What must match between a logged and a replayed request. Coarse on purpose:
+    it catches a changed decision sequence and ignores display text."""
     return {
         'kind': request.kind,
         'purpose': request.purpose,

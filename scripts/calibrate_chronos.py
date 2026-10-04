@@ -1,43 +1,26 @@
 """
-Calibration script: draws the chronos coin marker on all 18 slots at once, so every
-position on the printed chronos ring can be checked in a single image.
+Calibration: draw the chronos coin on all 18 ring slots at once, semi-transparent so
+the glyph underneath stays visible.
 
-The live board only ever shows one coin. Here all 18 are drawn semi-transparent, which
-keeps the moon or sun underneath visible -- an opaque coin would hide the very glyph its
-alignment is being judged against.
+  coin    the real marker at COIN_DIAMETER, 45 percent alpha
+  cyan    each coin's rim, a centre crosshair, and the slot index
+  yellow  the rotational centre crosshair and the ring of slot centres
 
-Layers drawn:
-  coin    the real marker at COIN_DIAMETER, at 45 percent alpha
-  cyan    each coin's rim, a crosshair at its exact centre, and the slot index just
-          outside the ring
-  yellow  the board art's rotational centre crosshair, and the ring the 18 centres lie on
+Each coin should sit concentric with its glyph (slot 4: full moon at top centre;
+slot 13: sun at bottom centre). Judge alignment on the per-slot montage, which
+stretches the glyphs' faint brightness band; for offsets in pixels, run
+scripts/measure_chronos_centers.py.
 
-Each coin should sit concentric with its glyph: slot 4 on the four-pointed-star full moon
-at top centre, slot 13 on the eight-pointed sun at bottom centre, night on the top half and
-day on the bottom half. All 18 centres are measured from the art by
-scripts/measure_chronos_centers.py, which is the script to run for how far off they are in
-pixels rather than by eye.
-
-Two images come out of this. The full-board composite is the honest view of what a player
-sees, but it is a poor alignment check: the printed glyphs sit at brightness 75-79 against
-a mat at 53, so at 45 percent coin opacity even a 20 px offset is hard to see, which is how
-the night half stayed misaligned through earlier rounds of this script. The per-slot montage
-exists for that job -- it stretches the board's narrow brightness band to full range and
-draws the coin rim as an outline, so any offset reads off immediately.
-
-Run from project root:
-python scripts/calibrate_chronos.py
-
+Run from the project root: python scripts/calibrate_chronos.py
 Outputs:
-scripts/calibration_output_chronos.png         whole board, coins composited
-scripts/calibration_output_chronos_glyphs.png  one high-contrast window per slot
+  scripts/calibration_output_chronos.jpg         whole board, coins composited
+  scripts/calibration_output_chronos_glyphs.png  one high-contrast window per slot
 """
 
 import sys
 from pathlib import Path
 
 
-# Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
@@ -151,7 +134,7 @@ def _glyph_contrast_board() -> Image.Image:
     """The board art with only its glyph brightness band kept, stretched to full range."""
     low, high = GLYPH_BAND
     source = Image.open(PROJECT_ROOT / 'zutomayo/images/board.png').convert('L')
-    # point() over 0..255 rather than numpy, so this script stays a Pillow-only tool.
+    # point() evaluates the stretch once per grey level, not per pixel.
     stretched = source.point(
         lambda value: 0 if value <= low else 255 if value >= high
         else round((value - low) * 255 / (high - low))
@@ -220,10 +203,7 @@ def main() -> None:
     out_path = PROJECT_ROOT / 'scripts' / 'calibration_output_chronos.jpg'
     save_jpeg_file(board, out_path)
 
-    # The montage stays PNG, deliberately. It works by stretching the board's narrow glyph
-    # brightness band to full range, so JPEG's ringing would land at the same amplitude as
-    # the faint detail the montage exists to reveal -- and it is the image the docstring
-    # above calls the actual alignment check. Compressing it saves under 0.2 MB.
+    # The montage stays PNG: JPEG ringing would match the faint detail it amplifies.
     montage_path = PROJECT_ROOT / 'scripts' / 'calibration_output_chronos_glyphs.png'
     montage = _draw_glyph_montage(_load_label_font(22))
     montage.save(montage_path)

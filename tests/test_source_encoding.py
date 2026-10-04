@@ -1,19 +1,9 @@
-"""Guard against source files being saved in the wrong text encoding.
+"""Guard against text files saved in the wrong encoding: a UTF-8 byte order mark, or
+mojibake from a Windows ANSI round trip. Mojibake is still valid UTF-8, so only a
+content match catches it (it once mangled the bot name 'メカうにぐり').
 
-A file that has been round-tripped through Windows ANSI (read as cp1252, written
-back out as UTF-8) is still *valid* UTF-8 afterwards - it simply encodes the wrong
-characters. No encoding-level check can catch that, and neither can git, so this
-test looks for the resulting character sequences directly.
-
-That is exactly how the bot name 'メカうにぐり' was mangled in the solo-game
-acceptance message: the UTF-8 bytes e3 83 a1 of its first character were read as
-three separate cp1252 characters and then re-encoded as three characters. The same
-round-trip also left a UTF-8 byte order mark behind, which breaks ast.parse() and
-therefore silently excludes the file from any AST-based tooling.
-
-The regular expression below is written with \\u escapes on purpose, and no damaged
-text is quoted anywhere in this file: both keep the source pure ASCII apart from
-the one correct name above, so the guard can never match itself.
+The pattern uses \\u escapes and no damaged text appears in this file, so the guard
+cannot match itself.
 """
 
 from __future__ import annotations
@@ -24,9 +14,8 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 
-# '.gz' covers the golden match baseline, which carries narration text with player
-# names in it; it is decompressed before being scanned. The IDE files under
-# .idea/, along with .env and .gitignore, are deliberately left out as noise.
+# .gz covers the golden match baseline (decompressed first). Files under .idea/,
+# .env and .gitignore are left out by suffix.
 SCANNED_SUFFIXES = {'.py', '.md', '.json', '.jsonl', '.sql', '.txt', '.gz'}
 COMPRESSED_SUFFIXES = {'.gz'}
 SKIPPED_DIRECTORY_NAMES = {
@@ -54,11 +43,7 @@ MOJIBAKE_PATTERN = re.compile(
 
 
 def _scanned_files() -> list[Path]:
-    """Every text file in the repository worth checking.
-
-    Directories are filtered as the walk proceeds so the virtual environment and
-    the git object store are never descended into.
-    """
+    """Every text file worth checking; .venv and .git are never walked."""
     found: list[Path] = []
     pending = [REPOSITORY_ROOT]
     while pending:
@@ -81,14 +66,8 @@ def _relative(path: Path) -> str:
 
 
 def _file_contents(path: Path) -> tuple[str, bytes | None, str | None]:
-    """Raw bytes for one file, transparently decompressing a compressed one.
-
-    Returns (label, raw_bytes, error). The label names the decompressed form so a
-    reported line number is not mistaken for an offset into the archive. A file
-    that cannot be read or decompressed comes back with raw_bytes None and an
-    error describing it, so a damaged archive is reported as a finding rather
-    than erroring the whole test out.
-    """
+    """(label, raw bytes, error) for one file, decompressing .gz. On failure the bytes
+    are None and `error` explains, so a damaged archive is a finding, not a crash."""
     label = _relative(path)
     try:
         raw = path.read_bytes()

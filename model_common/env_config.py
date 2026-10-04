@@ -1,24 +1,11 @@
-"""Shared `.env` override machinery for the model stacks.
-
-Both `alpha_zero` and `ppo_transformer` keep their hyperparameters in a tree of
-dataclasses whose defaults are the tracked, reproducible baseline. This module
-layers per-machine overrides on top of that tree:
+"""Shared .env overrides for the model stacks' dataclass configs:
 
     <PREFIX>_<SECTION>_<FIELD>   -> Config.<section>.<field>
     <PREFIX>_<NAME>              -> run-level setting (workers, iterations, ...)
 
-Precedence is CLI flag > process environment > the stack's `.env` file >
-dataclass default. Values already present in the process environment always win
-over the file, so a one-off `ALPHA_WORKERS=4 python -m ...` works without
-editing anything.
-
-`format_env_template` renders the whole surface back out from the dataclasses,
-which is what `python -m alpha_zero.config` prints. Generating it from the
-fields rather than maintaining a checked-in template is deliberate: the previous
-hand-written `.env` had drifted to document a key that no longer existed.
-
-Stdlib only, and no torch — the live Discord bot imports this path through
-`alpha_zero.inference` on machines that carry no training code.
+Precedence: CLI flag > process environment > the stack's .env > dataclass default.
+format_env_template renders the section keys from the dataclasses, so they cannot
+drift. Stdlib only, so the live bot can import it without torch.
 """
 
 from __future__ import annotations
@@ -34,12 +21,8 @@ RunSetting = tuple[str, Any, str]
 
 
 def load_env_file(env_file: Path) -> None:
-    """Loads `env_file` into os.environ. Existing variables are never replaced.
-
-    Uses python-dotenv when importable; otherwise a minimal KEY=VALUE parser so
-    dotenv stays a soft dependency. A missing file is not an error — production
-    has no per-stack `.env` and relies on the process environment alone.
-    """
+    """Load `env_file` into os.environ without replacing existing variables. Uses
+    python-dotenv when available, else a minimal parser. A missing file is fine."""
     if not env_file.exists():
         return
     try:
@@ -60,12 +43,7 @@ def load_env_file(env_file: Path) -> None:
 
 
 def coerce(raw: str, target_type: type, env_key: str = "value") -> Any:
-    """Converts a raw env string to `target_type`.
-
-    `env_key` is only used to name the offending variable in the error, which
-    is the difference between a usable message and a bare ValueError from deep
-    inside config loading.
-    """
+    """Convert a raw env string to `target_type`; `env_key` names the variable in errors."""
     if target_type is bool:
         text = raw.strip().lower()
         if text in ("1", "true", "yes", "on"):
@@ -84,12 +62,9 @@ def coerce(raw: str, target_type: type, env_key: str = "value") -> Any:
 
 def apply_env_overrides(config: Any, prefix: str, sections: Sequence[str],
                         env_file: Path) -> Any:
-    """Applies `<PREFIX>_<SECTION>_<FIELD>` overrides onto `config` in place.
-
-    The target type comes from the field's current value, so a field defaulting
-    to `''` reads as a string and one defaulting to `0` reads as an int. An
-    empty override is treated as unset.
-    """
+    """Apply `<PREFIX>_<SECTION>_<FIELD>` overrides to `config` in place. Each value's
+    type comes from the field's current value; an empty value counts as unset, but an
+    empty process variable still hides the .env value."""
     load_env_file(env_file)
     for section_name in sections:
         section = getattr(config, section_name)
@@ -115,14 +90,12 @@ def env_setting(name: str, default: Any, prefix: str, env_file: Path,
     return coerce(raw, resolved, env_key)
 
 
-# ---------------------------------------------------------------------------
-# Validation helpers
-# ---------------------------------------------------------------------------
+# --- Validation helpers ---
 
 def check_probabilities_sum(values: dict[str, float], label: str,
                             tolerance: float = 1e-6) -> None:
-    """Raises unless `values` sums to 1.0. Used for opponent-sampling mixes,
-    where a silent desync just quietly retunes training."""
+    """Raise unless each value is in [0, 1] and they sum to 1.0 (opponent-sampling
+    mixes)."""
     for name, value in values.items():
         if not 0.0 <= value <= 1.0:
             raise ValueError(f"{label}: {name}={value} is outside [0, 1]")
@@ -133,18 +106,11 @@ def check_probabilities_sum(values: dict[str, float], label: str,
             f"{label}: probabilities must sum to 1.0, got {total:.6f} ({breakdown})")
 
 
-# ---------------------------------------------------------------------------
-# Template rendering
-# ---------------------------------------------------------------------------
+# --- Template rendering ---
 
 def _field_comments(section_class: type) -> dict[str, list[str]]:
-    """Field name -> its documentation lines, recovered from the source.
-
-    Picks up both the comment block above a field and any trailing comment on
-    its own line, so the notes already written in config.py become the notes in
-    the generated template. Degrades to no comments if the source is
-    unavailable (frozen builds, exec'd modules).
-    """
+    """Field name -> its comment lines from the source: the block directly above the
+    field (no blank line between) plus any trailing comment. Empty without source."""
     try:
         source_lines = inspect.getsource(section_class).splitlines()
     except (OSError, TypeError):
@@ -179,15 +145,8 @@ def format_env_template(config: Any, prefix: str, sections: Sequence[str],
                         header: str, module_name: str,
                         run_settings: Iterable[RunSetting] = (),
                         section_notes: dict[str, str] | None = None) -> str:
-    """Renders every override key with its current value, as a `.env` body.
-
-    Every line is commented out, so redirecting the output to the stack's
-    `.env` produces a file that documents the full surface while changing
-    nothing. Uncomment what you want to override.
-
-    `module_name` is passed in rather than read off the config class, which
-    reports `__main__` when the module is run directly.
-    """
+    """Every override key with its current value, as a fully commented `.env` body.
+    `module_name` is passed in because the class reports `__main__` when run directly."""
     section_notes = section_notes or {}
     env_path = module_name.split(".")[0] + "/.env"
     rule = "# " + "=" * 75

@@ -1,11 +1,6 @@
-"""Card database loader.
+"""Card database: cards.json as CardDef tuples plus flat lookup arrays.
 
-Loads zutomayo/data/cards.json (read purely as data) into immutable CardDef
-NamedTuples plus flat numpy arrays for hot-path lookups. A card *definition*
-is identified everywhere in engine_alpha by its dense index 0..NUM_CARDS-1.
-
-Categorical vocabularies (song, rarity, effect id) are derived from the data
-so a new card set extends them automatically.
+Card definitions are dense indices 0..NUM_CARDS-1. Song and effect vocabularies come from the data.
 """
 
 from __future__ import annotations
@@ -18,14 +13,12 @@ import numpy as np
 
 _CARDS_JSON_PATH = Path(__file__).resolve().parent.parent / "zutomayo" / "data" / "cards.json"
 
-# Card types
 TYPE_CHARACTER = 0
 TYPE_ENCHANT = 1
 TYPE_AREA_ENCHANT = 2
 CARD_TYPE_NAMES = ("CHARACTER", "ENCHANT", "AREA_ENCHANT")
 CARD_TYPE_TO_INDEX = {name: i for i, name in enumerate(CARD_TYPE_NAMES)}
 
-# Attributes
 ATTR_DARKNESS = 0
 ATTR_FLAME = 1
 ATTR_ELECTRICITY = 2
@@ -37,12 +30,8 @@ ATTRIBUTE_TO_INDEX = {name: i for i, name in enumerate(ATTRIBUTE_NAMES)}
 RARITY_NAMES = ("N", "R", "SR", "UR", "SE")
 RARITY_TO_INDEX = {name: i for i, name in enumerate(RARITY_NAMES)}
 
-# Field bounds, asserted at load so a malformed card set fails loudly.
-# MAX_CLOCK / MAX_POWER_COST / MAX_SEND_TO_POWER double as the observation
-# normalizers. MAX_ATTACK does NOT: the encoder divides attack by a fixed
-# 200.0 scale (encoding/observation.py), which effective attack already
-# exceeds whenever buffs apply, so 04-105's 250 is simply an outlier value
-# above 1.0 rather than a reason to rescale every other card.
+# Field bounds, asserted at load. encoding/observation.py divides by the same values
+# as literals; attack uses 200, so 04-105's 250 encodes above 1.0.
 MAX_CLOCK = 6
 MAX_POWER_COST = 8
 MAX_ATTACK = 250
@@ -121,7 +110,7 @@ NUM_EFFECTS = len(EFFECT_IDS)
 CARD_INDEX = {(d.pack, d.number): d.index for d in CARD_DB}
 KEY_TO_INDEX = {d.key: d.index for d in CARD_DB}
 EFFECT_TO_INDEX = {eid: i for i, eid in enumerate(EFFECT_IDS)}
-# Card def index that carries each effect (effects are unique per card).
+# Definition index of the card carrying each effect (one card per effect).
 EFFECT_TO_CARD = {d.effect_index: d.index for d in CARD_DB if d.effect_index != NO_EFFECT}
 
 # Flat arrays for hot-path lookups: X[def_index].
@@ -136,8 +125,7 @@ SONG = np.array([d.song for d in CARD_DB], dtype=np.int16)
 RARITY = np.array([d.rarity for d in CARD_DB], dtype=np.int16)
 EFFECT = np.array([d.effect_index for d in CARD_DB], dtype=np.int16)
 
-# Plain-int tuples: faster than numpy scalar extraction for single lookups
-# in the pure-Python hot path (numpy scalars carry heavy overhead).
+# Plain-int tuples: faster than numpy scalars for single lookups.
 CLOCK_T = tuple(int(x) for x in CLOCK)
 ATK_DAY_T = tuple(int(x) for x in ATK_DAY)
 ATK_NIGHT_T = tuple(int(x) for x in ATK_NIGHT)

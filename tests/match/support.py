@@ -56,13 +56,10 @@ class RecordingTransport:
 
 
 class ScriptedActionAdapter:
-    """Answers every request with a legal action that is a pure function of
-    (seed, sequence_number, action_count) - stateless, so a replay truncated
-    at any point produces identical live answers for the remainder.
-
-    Bot-layer requests (no engine request) answer from their options with the
-    same mixing; the TCG side-deck switch, which carries no options, answers
-    with an empty swap."""
+    """Answers each request with a legal action that is a pure function of (seed,
+    sequence_number, action_count), so a truncated replay continues identically.
+    Bot-layer requests pick an option the same way; the side-deck switch gets an
+    empty swap."""
 
     def __init__(self, broker_getter, seed: int = 0) -> None:
         self.broker_getter = broker_getter

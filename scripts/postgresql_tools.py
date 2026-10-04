@@ -2,10 +2,12 @@
 Locate PostgreSQL client binaries (pg_dump, pg_restore) across platforms.
 
 Search order:
-1. The PGBIN environment variable (a directory containing the binaries).
+1. The PGBIN environment variable (a directory containing the binaries); if set,
+   the only place searched.
 2. The system PATH.
 3. Platform-default install locations, newest version first:
-   - Windows: C:\\Program Files\\PostgreSQL\\<version>\\bin
+   - Windows: C:\\Program Files\\PostgreSQL\\<version>\\bin and
+     C:\\Program Files (x86)\\PostgreSQL\\<version>\\bin
    - macOS (Homebrew): /opt/homebrew/opt/postgresql@<version>/bin and
      /usr/local/opt/postgresql@<version>/bin
    - Linux (Debian/Ubuntu): /usr/lib/postgresql/<version>/bin

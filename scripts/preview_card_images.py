@@ -1,20 +1,8 @@
 """
-Render the images the bot uploads, to disk, so they can be inspected by eye.
-
-The test suite asserts that every upload is a JPEG in RGB mode with chroma subsampling off,
-but no assertion tells you whether the result actually *looks* right. This writes the real
-thing: each file here is the exact byte stream the production renderer hands to Discord,
-pulled straight out of the returned discord.File rather than re-encoded, so what you open is
-what a player would see.
-
-Outputs land in scripts/ as preview_*.jpg and are gitignored -- regenerate them whenever the
-render path changes.
-
-The crop sheet is the one that answers the quality question. A 3540x4930 grid is downscaled
-four or five times over by any image viewer, which hides every compression artifact there is,
-so judging quality from the full-size grid really means judging your viewer's downscaler.
-preview_detail_crops.jpg assembles unscaled 1:1 regions, decoded back out of the saved JPEG,
-of the four things worth checking.
+Write the images the bot uploads to scripts/preview_*.jpg (gitignored) for a visual
+check: the exact bytes the renderer hands Discord. Judge quality on
+preview_detail_crops.jpg (1:1 crops decoded from the saved JPEG), because image
+viewers downscale the full grids enough to hide artifacts.
 
 Usage: python scripts/preview_card_images.py
 """
@@ -39,8 +27,7 @@ from zutomayo.match.state_view import project_board_view  # noqa: E402
 from zutomayo.ui.board_renderer import render_board_image, render_zone_strip  # noqa: E402
 from zutomayo.ui.embeds import create_deck_grid_image  # noqa: E402
 
-# Reused rather than reimplemented: the same helper tests/ui/test_view_embeds_smoke.py uses
-# to stand up a real playable board. It is the reason this dev script imports from tests/.
+# The helper tests/ui/test_view_embeds_smoke.py uses to build a playable board.
 from tests.match.support import random_full_pool_decks  # noqa: E402
 
 OUTPUT_DIRECTORY = PROJECT_ROOT / 'scripts'
@@ -58,7 +45,7 @@ PLAYER_NAMES = {0: 'Alpha', 1: 'Beta'}
 
 # Cards chosen for what each one proves, not for looks.
 REGRESSION_CARD = '2-036'   # shipped with a 2 px radius and a visible white ring
-EXEMPT_CARD = '4-105'       # placeholder, must still have square corners
+EXEMPT_CARD = '4-105'       # once a square placeholder; now rounded like the rest of pack 4
 DENSE_TEXT_CARD = '4-093'   # small Japanese effect text: what 4:4:4 chroma is for
 ROUNDED_CARD = '1-032'      # pack 1, the largest corner radius at 24 px
 

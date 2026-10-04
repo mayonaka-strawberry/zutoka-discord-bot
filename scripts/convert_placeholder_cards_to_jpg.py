@@ -1,19 +1,7 @@
 """
-Convert the three pack-4 placeholder cards from png to jpg.
-
-Cards 105, 106 and 107 are synthetic dark-background text placeholders rather than
-scans, so unlike every other card they were never shipped as a jpg. The renderer now
-loads card art exclusively from the jpg sources, so these three need a jpg of their own
-before the png derivatives are removed.
-
-Written at a higher quality than the render pipeline uses: these are source assets that
-every render re-encodes downstream, so they sit above the output quality to avoid
-stacking generation loss. The placeholders were exempt from corner rounding while they
-shipped, because the placeholder art had no white dead space to remove; they have since
-been replaced by real scans and now round with the normal pack-4 radius.
-
-This is a one-off. It touches only the three named files and never reads or rewrites the
-422 real card scans.
+One-off, already run: convert the three pack-4 placeholder cards (105-107) from png to
+jpg, the only cards never shipped as jpg. Saved above the render quality, since every
+render re-encodes them. Touches only those three files.
 """
 
 from pathlib import Path

@@ -1,13 +1,6 @@
-"""IR catalog loader: validates every entry and compiles the interpreter
-program table.
-
-The entries themselves live in catalog_data.py (authored family-by-family
-from the old engine's per-card implementations). This module:
-- checks exactly one entry per effect id in the card DB,
-- validates op/condition names and jump targets,
-- registers programs with the interpreter,
-- exposes DISPATCHABLE_EFFECTS (old handler registry minus inline passives)
-  and COST_REDUCING_EFFECTS (old _COST_REDUCING_EFFECTS).
+"""Loads catalog_data.ENTRIES: one entry per effect id, with names and jump targets
+validated, and registers the programs with the interpreter. Exposes
+DISPATCHABLE_EFFECTS (all but inline passives) and COST_REDUCING_EFFECTS.
 """
 
 from __future__ import annotations
@@ -57,7 +50,7 @@ missing = [eid for eid in EFFECT_IDS if eid not in CATALOG]
 if missing:
     raise ValueError(f"catalog missing {len(missing)} effects: {missing[:10]}...")
 
-# Old engine: _COST_REDUCING_EFFECTS = {"02-006", "04-065"}
+# Cost reducers resolve first in their owner's batch (game._ph_process_effects).
 for effect_id in ("02-006", "04-065"):
     _cost_reducing.add(EFFECT_TO_INDEX[effect_id])
 

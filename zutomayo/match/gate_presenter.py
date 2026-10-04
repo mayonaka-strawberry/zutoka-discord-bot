@@ -1,22 +1,13 @@
 """
-Phase gates: the board/zone/embed bundle posted at every phase boundary.
+Phase gates: the board, zone and embed bundle posted at most phase boundaries.
 
-The engine runs a whole chain of phases inside one ``Game.apply`` (set cards ->
-reveal -> chronos -> swaps -> effects -> battle -> end turn), so a driver that
-only projects the board after ``apply`` returns can never show the intermediate
-states - by then the set cards have been revealed and moved out of their set
-slots. ``SnapshottingEventSink`` solves that without touching the engine: it is
-the plain list the engine already appends events to, and it materializes a
-BoardView at the instant each phase-change event is appended. Because the
-engine emits that event after the handler that set the new phase returns but
-before the next handler runs, the snapshot taken when PH_REVEAL is entered
-still shows both players' cards face-down in their set slots.
-
-GatePresenter turns those snapshots into the message bundle the pre-port flow
-posted at every gate: the abyss / power charger strips that changed, the phase
-header, the field embed, and one board image per perspective. Nothing here can
-fire between the two players' set-card answers, because committing a set card
-never changes the phase.
+One Game.apply runs many phases, so SnapshottingEventSink (the engine's event list)
+captures a BoardView whenever a phase-change event is appended. That happens before
+the next phase's handler runs, so the PH_REVEAL snapshot still shows both set cards
+face down. GatePresenter posts a bundle per gate: changed abyss and charger
+strips, the phase header, the field embed, and a board image per perspective.
+Nothing fires between the two players' set-card answers, because committing a set
+card never changes the phase.
 """
 
 from __future__ import annotations
@@ -83,12 +74,8 @@ def zone_instance_ids(board_view: BoardView) -> dict[str, frozenset]:
 
 
 class GatePresenter:
-    """Posts one phase-gate bundle per engine phase boundary.
-
-    ``board_image_provider`` and ``zone_messages_provider`` are injected by the
-    Discord flow; left None (headless tests, replay) the gate still posts its
-    header and embeds so message sequencing stays under test, it just renders
-    no images."""
+    """Posts one bundle per gate. Without the injected image providers (tests) it
+    still posts headers and embeds, just no images."""
 
     def __init__(
         self,
@@ -267,8 +254,8 @@ class GatePresenter:
     async def _send_zone_messages(
         self, snapshot: BoardView, changed_indices: Optional[set[int]], player_index: Optional[int],
     ) -> None:
-        """One message per zone that changed. Rendered once per destination
-        because a discord.File is consumed when it is sent."""
+        """One message per changed zone, or every zone when forced. Rendered once
+        per destination because a discord.File is consumed when it is sent."""
         if self.zone_messages_provider is None:
             return
         names = {0: self._player_name(0), 1: self._player_name(1)}

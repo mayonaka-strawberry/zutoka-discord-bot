@@ -1,18 +1,10 @@
 """
-TcgSeriesFlow: TCG best-of-N series on the engine_alpha state machine.
+TcgSeriesFlow: a TCG best-of-N series, with a side-deck switch between matches.
 
-Wraps SingleMatchFlow to run multiple matches with a side-deck switching
-phase between them. One persistence record covers the whole series: the
-initial decks and sides in the manifest, every engine action and switch
-decision in one globally sequenced log. Each game's engine seed is derived
-from the persisted series seed and a per-game counter (draws replay with a
-fresh seed but identical derivation, so restart replay walks the same
-sequence).
-
-Match 1 leaves the day/night sides to the engine's coin flip. After each
-decided match the loser picks the side they play next, so the choice is a
-logged broker decision and replays deterministically; a drawn match carries
-the current sides' chooser over untouched.
+One record covers the series: the initial decks and sides in the manifest, every
+decision in one sequenced log. Each game's seed derives from the series seed and a
+per-game counter. Match 1's sides come from the engine's coin flip; after that the
+previous loser picks (a logged decision), and a draw keeps the current chooser.
 """
 
 from __future__ import annotations
@@ -79,9 +71,8 @@ class TcgSeriesFlow:
             wins = {0: 0, 1: 0}
             match_number = 0
             game_counter = 0
-            # None = let the engine flip for sides (match 1, and any replay of
-            # a drawn match 1). From match 2 on this holds the side chosen by
-            # the previous match's loser; a draw carries it over untouched.
+            # None: the engine flips (match 1, or a drawn match 1 replayed). Later, the
+            # side the previous loser chose; a draw keeps it.
             night_player: int | None = None
             names = self._player_names(session)
 
@@ -183,7 +174,7 @@ class TcgSeriesFlow:
             session_manager.remove_game(session.game_id)
 
         except MatchResumeDivergenceError:
-            # Handled by the resume manager (apology message, no forfeit).
+            # Handled by resume._run_resumed_game (a notice, no forfeit).
             raise
         except Exception:
             log.exception('Error in TCG series flow')

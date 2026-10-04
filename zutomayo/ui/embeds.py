@@ -123,7 +123,7 @@ def _build_chronos_bar(position: int) -> str:
     chronos_emoji = _chronos_emoji
     # Top row: night (0-8), left to right
     top = ''.join(chronos_emoji(i, position) for i in range(NIGHT_END + 1))
-    # Bottom row: day (9-17), right to left (counter-clockwise)
+    # Bottom row: day (9-17), right to left (clockwise, like the board ring)
     bottom = ''.join(chronos_emoji(i, position) for i in range(CHRONOS_SIZE - 1, NIGHT_END, -1))
     return f'{top}\n{bottom}'
 
@@ -253,9 +253,7 @@ def build_effect_resolution_embed(
     return embed
 
 
-# ---------------------------------------------------------------------------
-# Deck card image helpers
-# ---------------------------------------------------------------------------
+# --- Deck card image helpers ---
 
 
 def create_deck_grid_image(
@@ -264,15 +262,8 @@ def create_deck_grid_image(
     padding: int = 10,
     filename: str = 'deck.jpg',
 ) -> discord.File | None:
-    """
-    Combine card images into a single grid image.
-
-    Arranges cards in rows of *columns* (default 5) with *padding* pixels
-    between them. For a 20-card deck this produces a 4x5 grid.
-
-    Returns a single ``discord.File`` ready to send, or ``None`` if no
-    valid card images were found. Each call creates a fresh File object.
-    """
+    """Combine card images into one grid, *columns* per row (a 20-card deck is 4x5).
+    Returns a new discord.File, or None if no art loaded."""
     card_images: list[Image.Image] = []
     for item in cards:
         card = getattr(item, 'card', item)
@@ -281,9 +272,8 @@ def create_deck_grid_image(
         try:
             card_images.append(load_card_image(card.image))
         except Exception:
-            # Missing or unreadable art is skipped, as it always has been. Note this
-            # shifts the grid rather than leaving a gap, so the data-layer test asserting
-            # every card's image exists is what keeps it from happening silently.
+            # Missing art is skipped, shifting the grid; a data-layer test checks every
+            # card has an image.
             continue
 
     if not card_images:
@@ -301,8 +291,6 @@ def create_deck_grid_image(
         row = idx // columns
         x = col * (card_w + padding)
         y = row * (card_h + padding)
-        # The mask argument is required: without it the paste overwrites the canvas alpha
-        # with the card's own, and the rounded corners come out opaque.
         resized = card_img.resize((card_w, card_h), Image.LANCZOS)
         grid.paste(resized, (x, y), resized)
 

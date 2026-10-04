@@ -21,9 +21,9 @@ class RandomAgent:
 
 
 class GreedyHeuristicAgent:
-    """1-ply heuristic: prefers playable characters with the highest current
-    attack for sets/picks; drafts characters with high stats; answers numbers
-    at the maximum; never passes when it can act."""
+    """One-ply heuristic: the highest affordable attack for card picks, high-stat
+    characters in drafts, the largest number or binary option. Passes only when
+    nothing else is legal."""
 
     def __init__(self, seed: int = 0) -> None:
         self.rng = random.Random(seed)
@@ -59,5 +59,4 @@ class GreedyHeuristicAgent:
                 return base * (1.0 if affordable else 0.3) + (20 if is_character else 0)
             return max(legal, key=card_score)
 
-        # numbers/binary: take the largest option (reveal max, advance max...)
         return legal[-1]

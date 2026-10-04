@@ -50,14 +50,7 @@ def parse_tcg_deck_input(
     side_input: str,
     card_index: dict[tuple[int, int], Card],
 ) -> tuple[tuple[list[Card], list[Card]] | None, list[str]]:
-    """
-    Parse and validate a TCG deck list (main + side deck).
-
-    Returns:
-        A tuple of ((main_cards, side_cards), errors):
-        - On success: ((list[Card] of 20, list[Card] of 8), [])
-        - On failure: (None, list of error strings)
-    """
+    """Parse a TCG deck: ((20 main, 8 side), []) if valid, else (None, error messages)."""
     main_cards, main_errors = _parse_tokens(main_input, TCG_DECK_SIZE, 'Main deck', card_index)
     side_cards, side_errors = _parse_tokens(side_input, TCG_SIDE_DECK_SIZE, 'Side deck', card_index)
 

@@ -1,8 +1,6 @@
 """
-Embed builders for player-management commands.
-
-Style constraint: no emojis, no decorative symbols. Plain text only.
-W-L only — draws are tracked in the data but never shown in any embed.
+Embeds for player commands. Plain text only: no emojis or decorative symbols.
+Shows W-L only; draws are tracked but never shown.
 """
 
 from __future__ import annotations
@@ -37,11 +35,8 @@ def _aggregate_pvp_record(stats: dict) -> tuple[int, int]:
 
 
 def _top_decks(deck_stats: dict, limit: int = 3) -> list[tuple[str, str, int, int, int]]:
-    """
-    Return up to `limit` decks, sorted by total games played desc.
-    Each tuple is (deck_name, format, total_games, total_wins, total_losses).
-    Combines pvp and solo games for the 'games played' sort, but reports W-L from pvp+solo combined.
-    """
+    """Up to `limit` decks by games played, PvP and solo combined:
+    (deck_name, format, games, wins, losses)."""
     flat: list[tuple[str, str, int, int, int]] = []
     for deck_format, name_to_entry in deck_stats.items():
         for deck_name, entry in name_to_entry.items():
@@ -59,10 +54,7 @@ def _top_decks(deck_stats: dict, limit: int = 3) -> list[tuple[str, str, int, in
 
 
 def _top_rivals(opponent_stats: dict, limit: int = 10) -> list[tuple[str, int, int, int]]:
-    """
-    Return up to `limit` rivals sorted by games desc, then last_played desc.
-    Each tuple is (opponent_id_str, games, wins, losses).
-    """
+    """Up to `limit` rivals by games, then last played: (opponent_id_str, games, wins, losses)."""
     flat: list[tuple[str, int, int, int, str]] = []
     for opponent_id_str, entry in opponent_stats.items():
         games = entry.get('games', 0)
@@ -225,16 +217,9 @@ def build_leaderboard_embed(
     record_stats_bucket: str = 'standard',
     empty_message: str = 'No ranked players yet. Play a standard PvP game to appear here.',
 ) -> discord.Embed:
-    """
-    ranked_rows: profiles already filtered/sorted by the caller. This builder only renders.
-    One page of `page_size` rows is rendered; if the caller is not on the current page,
-    an extra 'Your rank' line is appended. A 'Page X of Y' footer is shown when there
-    is more than one page.
-
-    The same renderer drives both /zutomayo leaderboard (standard Elo) and
-    /zutomayo leaderboardtcg (TCG Elo) — the caller picks the rating field, the
-    W-L bucket to show beside each entry, and the empty/title strings.
-    """
+    """Render one page of `ranked_rows` (already filtered and sorted), adding a 'Your rank'
+    line when the viewer is off-page and a page footer when there are several. Serves both
+    /zutomayo leaderboard formats; the caller picks the rating field, W-L bucket and text."""
     embed = discord.Embed(
         title=title,
         color=discord.Color.gold(),

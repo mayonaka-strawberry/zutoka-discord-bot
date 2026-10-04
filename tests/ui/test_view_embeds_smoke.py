@@ -69,12 +69,7 @@ def test_battle_and_game_over_embeds():
 
 
 def _assert_sendable_jpeg(discord_file, label: str):
-    """Every image the bot uploads must be a real JPEG named .jpg, and still sendable.
-
-    Asserting the decoded format rather than just non-None is what catches a filename that
-    was missed during a rename, and asserting mode RGB is what catches a paste that dropped
-    its mask and left the rounded corners opaque.
-    """
+    """Every upload must decode as an RGB JPEG named .jpg and stay sendable."""
     import io
 
     from PIL import Image

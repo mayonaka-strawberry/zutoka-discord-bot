@@ -1,12 +1,10 @@
 """
-One-time cutover wipe: remove all legacy (pre-engine_alpha) game records.
+One-time cutover wipe (already run) of the pre-engine_alpha game records.
 
 Truncates games, game_players, game_decisions, game_events, elo_history,
-daily_game_counters, and player_profiles (Elo and statistics reset).
-PRESERVED: decks, decks_tcg, display_names, schema_metadata.
-
-Reads DATABASE_URL from the environment or .env, prints per-table row counts,
-and executes only with --confirm.
+daily_game_counters and player_profiles (Elo and statistics reset); keeps decks,
+decks_tcg, display_names and schema_metadata. Prints row counts, and wipes only with
+--confirm.
 
 Usage:
     python scripts/wipe_legacy_game_records.py            # preview counts

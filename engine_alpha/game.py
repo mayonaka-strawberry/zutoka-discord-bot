@@ -1,21 +1,16 @@
-"""The Game facade and resumable phase driver.
+"""The Game facade and phase driver.
 
-The engine is an explicit state machine: _advance() executes deterministic
-work (phase transitions, chance events via the state RNG, effect frames)
-until it either needs a player decision — it then sets state.pending and
-returns — or the game ends. apply(action) answers the pending request and
-re-enters _advance(). No coroutines or generators anywhere, so a Game can
-be cloned at any decision point and every branch explored.
+`_advance()` runs deterministic work until a player must decide (it sets `state.pending`)
+or the game ends; `apply(action)` answers and re-enters it. No coroutines, so a Game can
+be cloned at any decision.
 
-Phase flow (mirrors the old engine's play_full_game/_do_headless_turn):
+Phase flow:
   DRAFT -> MULLIGAN -> INITIAL_SET -> INITIAL_REVEAL ->
   turn 1: ADVANCE_CHRONOS -> PROCESS_EFFECTS -> BATTLE -> END_TURN
   turn 2+: SET_CARDS -> REVEAL -> ADVANCE_CHRONOS -> CHARACTER_SWAP ->
            AREA_SWAP -> PROCESS_EFFECTS -> BATTLE -> TURN_END_EFFECTS -> END_TURN
 
-Set-card commitment is sequential (previous-battle loser first; tie or
-turn 1 -> NIGHT-side player first): sequentialization yields a plain
-alternating tree that PUCT can search.
+Players set cards one at a time (see _set_commit_order), which keeps the search tree alternating.
 """
 
 from __future__ import annotations
@@ -76,10 +71,8 @@ class Game:
         state = GameState(rng_key=seed)
         self.state = state
 
-        # Coin flip: which player index sits on the NIGHT side. The draw is
-        # consumed unconditionally so the RNG stream is identical whether or
-        # not the caller overrides the result (TCG series after game 1, where
-        # the previous game's loser picks their side).
+        # Coin flip for the night side. Always drawn, so overriding it (the TCG
+        # side choice) leaves the RNG stream unchanged.
         flipped_night_player = random_below(2, state.rng_key, state.rng_ctr)
         state.rng_ctr += 1
         if night_player is None:
@@ -107,9 +100,7 @@ class Game:
 
         self._advance()
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    # --- Public API ---
 
     def current_player(self) -> int:
         return self.state.acting
@@ -151,9 +142,7 @@ class Game:
             return (-1.0, 1.0)
         return (0.0, 0.0)
 
-    # ------------------------------------------------------------------
-    # Driver
-    # ------------------------------------------------------------------
+    # --- Driver ---
 
     def _advance(self) -> None:
         state = self.state
@@ -184,9 +173,7 @@ class Game:
         if state.event_sink is not None:
             state.event_sink.append((EVENT_GAME_OVER, state.winner))
 
-    # ------------------------------------------------------------------
-    # Setup
-    # ------------------------------------------------------------------
+    # --- Setup ---
 
     def _setup_match(self, state: GameState, deck_defs: tuple[list[int], list[int]]) -> None:
         for player_index in (0, 1):
@@ -199,11 +186,10 @@ class Game:
         state.phase = PH_MULLIGAN
         state.phase_ctx = [0, []]
 
-    # ------------------------------------------------------------------
-    # Phase handlers. Each returns a DecisionRequest to pause, or None
-    # after advancing state.phase. `request`/`answer` echo the decision
-    # this handler previously issued (None on fresh entry).
-    # ------------------------------------------------------------------
+    # --- Phase handlers ---
+    # Each returns a DecisionRequest to pause, or None after advancing state.phase,
+    # pushing effect frames or ending the game.
+    # `request` and `answer` are the handler's previous decision (None on entry).
 
     def _ph_draft(self, state: GameState, request, answer):
         draft = state.draft
@@ -228,8 +214,8 @@ class Game:
             if request.is_pass(answer):
                 marked = ctx[1]
                 if marked:
-                    # Old-engine order: remove marked, draw replacements,
-                    # return marked to the deck bottom, shuffle.
+                    # Remove marked cards, draw replacements, put the marked
+                    # cards on the bottom, then shuffle.
                     for instance_id in marked:
                         player.hand.remove(instance_id)
                     _draw(state, player.index, len(marked))
@@ -312,9 +298,8 @@ class Game:
                     ctx[1] += 1
                     continue
                 state.acting = player.index
-                # Ground Rules 5.2.1.5 / Q&A No.4: a player holding cards must
-                # set at least one, so slot A cannot be passed. Slot B stays
-                # optional -- a player allowed two cards may choose to set one.
+                # A player holding cards must set one, so slot A has no pass;
+                # slot B does (Ground Rules 5.2.1.5; Q&A No.4).
                 return select_card(P_SET_SLOT_A, list(player.hand))
             state.acting = player.index
             return select_card(P_SET_SLOT_B, list(player.hand), allow_pass=True)
@@ -407,8 +392,7 @@ class Game:
     def _ph_process_effects(self, state: GameState, request, answer):
         # ctx: [round (0/1), priority, stage, remaining, ordered, pos, multi]
         # stage 0 = collect, 1 = ordering picks, 2 = dispatch loop, 3 = post-batch.
-        # Effect-choice answers never reach here (frames intercept them in
-        # _advance); only ordering answers do.
+        # Only ordering answers arrive here; effect choices go to frames in _advance.
         ctx = state.phase_ctx
 
         if answer is not None and request is not None and request.purpose == P_EFFECT_ORDER:
@@ -448,18 +432,14 @@ class Game:
                 continue
 
             if stage == 2:
-                # Dispatch in chosen order. The multi-effect loop (old engine)
-                # stops when any HP hits 0; a single effect dispatches without
-                # that pre-check. After a dispatch pushes frames, yield to
-                # _advance so the frames (and their decisions) run first.
+                # Dispatch in order. With several effects queued, stop once the
+                # game is decided. Return after a dispatch pushes frames so
+                # _advance runs them first.
                 ordered = ctx[4]
                 position = ctx[5]
                 if position < len(ordered):
-                    # `state.winner` as well as HP: a deck shortfall ends the game
-                    # without touching HP, so an HP-only test is the one place the
-                    # two loss mechanisms would disagree. Unreachable today --
-                    # _advance's `while state.winner == -1` exits before this
-                    # handler is re-entered -- so this is defensive only.
+                    # Defensive (_advance stops once winner is set). Checks winner
+                    # too, since a deck shortfall ends the game without touching HP.
                     if ctx[6] and (state.winner != -1
                                    or any(p.hp <= 0 for p in state.players)):
                         ctx[2] = 3
@@ -486,9 +466,8 @@ class Game:
 
     def _ph_battle(self, state: GameState, request, answer):
         resolve_battle(state)
-        # resolve_battle writes the loser's HP directly rather than through
-        # deal_damage, and it returns early on a draw -- so the damage-triggered
-        # removal check belongs here, after it returns, not inside it.
+        # resolve_battle bypasses deal_damage and returns early on a draw, so the
+        # damage-triggered removal check runs here.
         check_damage_triggered_removal(state)
         check_win(state)
         if state.winner != -1:
@@ -498,19 +477,16 @@ class Game:
         return None
 
     def _ph_turn_end_effects(self, state: GameState, request, answer):
-        # stage 0 = collect, 1 = ordering pick, 2 = execute loop, 3 = post-batch.
-        # Ground Rules 5.2.10.2 / Q&A No.102: this is a separate timing window,
-        # so the priority player is read from the medal again here rather than
-        # inherited from the main effect window. Q&A No.96: a player with more
-        # than one turn-end effect picks the order among their own.
         # ctx: [round, priority, stage, remaining, ordered, pos]
+        # stage 0 = collect, 1 = ordering pick, 2 = execute loop, 3 = post-batch.
+        # A separate window: priority is re-read from the medal (Ground Rules
+        # 5.2.10.2; Q&A No.102), and each player orders their own effects (Q&A No.96).
         ctx = state.phase_ctx
         if not ctx:
             ctx = state.phase_ctx = [0, state.priority_player, 0, [], [], 0]
 
         if answer is not None and request is not None and request.purpose == P_EFFECT_ORDER:
-            # Index into the pending list rather than matching on instance id, so
-            # repeated ids could never resolve to the wrong item.
+            # By index, not instance id, so repeated ids cannot pick the wrong item.
             ctx[4].append(ctx[3].pop(answer))
 
         while True:
@@ -521,10 +497,8 @@ class Game:
 
             if stage == 0:
                 items = collect_turn_end_items(state, player)
-                # An item whose source card has left the set zone has no instance to
-                # show. It must never reach a prompt: -1 crashes the observation
-                # encoder and renders as an unrelated card in Discord. Such items keep
-                # their default position instead of being offered for ordering.
+                # Items with no source card in a set zone (instance -1) keep their default
+                # position: offering one would crash the observation encoder.
                 orderable = [item for item in items if item[1] != -1]
                 unorderable = [item for item in items if item[1] == -1]
                 if len(orderable) > 1:
@@ -575,8 +549,7 @@ class Game:
     def _ph_end_turn(self, state: GameState, request, answer):
         decked_out = [_end_turn_for(state, player) for player in state.players]
         if any(decked_out):
-            # Ground Rules 5.4.3 / 5.4.3.1: the player who cannot draw loses,
-            # and it is a draw when neither player can.
+            # Whoever cannot draw loses; a draw if neither can (Ground Rules 5.4.3, 5.4.3.1).
             if state.winner == -1:
                 state.winner = 2 if all(decked_out) else 1 - decked_out.index(True)
             return None
@@ -621,9 +594,7 @@ _PHASE_HANDLERS = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Rules helpers (module-level for speed; operate on state directly)
-# ---------------------------------------------------------------------------
+# --- Rules helpers (module-level for speed) ---
 
 def _draw(state: GameState, player_index: int, count: int) -> int:
     from .zones import draw_cards
@@ -680,7 +651,7 @@ def _cards_played_this_turn(state: GameState, player: PlayerState) -> list[int]:
 
 
 def _incoming_of_type(state: GameState, player: PlayerState, card_type: int) -> int:
-    """Set-zone A has priority over B for swaps (old engine rule)."""
+    """Set zone A has priority over B for swaps."""
     if player.set_a != -1 and CARD_TYPE_T[state.inst_def[player.set_a]] == card_type:
         return player.set_a
     if player.set_b != -1 and CARD_TYPE_T[state.inst_def[player.set_b]] == card_type:
@@ -720,9 +691,8 @@ def _perform_character_swap(state: GameState, player: PlayerState, new_character
 
 
 def _collect_eligible(state: GameState, player: PlayerState) -> list[int]:
-    """Old _collect_eligible_effects: area enchant (always), enchants set this
-    turn (A then B), then the battle character if played this turn. Power cost
-    is deferred to dispatch time."""
+    """Effects to resolve, in order: area enchant (always), enchants set this turn
+    (A then B), then the battle character if played this turn. Cost is checked at dispatch."""
     eligible = []
     inst_def = state.inst_def
     area = player.set_c
@@ -749,8 +719,7 @@ def _collect_eligible(state: GameState, player: PlayerState) -> list[int]:
 
 
 def _dispatch_with_cost_check(state: GameState, player: PlayerState, instance_id: int) -> bool:
-    """Power cost is checked at dispatch time. Area enchants use total_power
-    only; enchants/characters add the power bonus."""
+    """Dispatch if the power cost is met; False if skipped. Area enchants ignore the power bonus."""
     cost = effective_power_cost(state, instance_id)
     if CARD_TYPE_T[state.inst_def[instance_id]] == TYPE_AREA_ENCHANT:
         if total_power(state, player) < cost:
@@ -782,18 +751,15 @@ def _end_turn_for(state: GameState, player: PlayerState) -> bool:
     if len(player.deck) >= draw_count:
         _draw(state, player.index, draw_count)
         return False
-    # Ground Rules 5.4.3: a player who cannot make the mandatory end-of-turn
-    # draw loses. The caller decides the outcome, because 5.4.3.1 makes it a
-    # draw when BOTH players fail -- so this reports the failure instead of
-    # writing a winner that the other player's call would overwrite.
+    # Report the failed draw; the caller decides the outcome, since both
+    # players failing is a draw (Ground Rules 5.4.3.1).
     _draw(state, player.index, len(player.deck))
     return True
 
 
 def _reset_turn_flags(state: GameState) -> None:
-    """Old reset_turn_flags: per-instance transients in hand/battle/set/charger/
-    abyss (set-zone C keeps its cost reduction), player counters, per-turn
-    effect flags, and the shared flags."""
+    """Reset per-turn state: instance transients (set zone C keeps its cost
+    reduction), player counters, and turn flags."""
     played = state.inst_played
     cost_red = state.inst_cost_red
     for player in state.players:

@@ -1,9 +1,5 @@
-"""MatchNarrator reveal broadcasts.
-
-Revealing is only meaningful if the opponent actually sees what was revealed,
-so these pin the three legs of the broadcast (owner DM, opponent DM, channel)
-and the text of each. Image rendering is left unwired except where it is the
-subject, so headless runs never touch card art.
+"""MatchNarrator reveal broadcasts: the three legs (owner DM, opponent DM, channel) and
+their text. Image rendering is left unwired except where it is under test.
 """
 
 from __future__ import annotations
@@ -41,7 +37,7 @@ def revealed_names(definition_indices) -> str:
 def publish_reveal(narrator, owner_index, revealed_owner_index, effect_id, revealed):
     event = (EVENT_CARDS_REVEALED, owner_index, revealed_owner_index,
              carrier_definition_index(effect_id), *revealed)
-    # board_view is untouched by the reveal branch; only phase/redraw events read it.
+    # board_view is untouched by the reveal branch; only redraw events read it.
     asyncio.run(narrator.publish([event], None))
 
 
@@ -133,12 +129,8 @@ def test_muted_transport_reveals_nothing():
     assert transport.channel_messages == []
 
 
-# ---------------------------------------------------------------------------
-# End to end: a real engine event, through the real driver, out to Discord.
-# The regression this fixes lived in the seam between those layers, and the
-# standing match-regression corpus never draws a reveal card, so nothing else
-# covers the whole path.
-# ---------------------------------------------------------------------------
+# --- End to end: a real engine event through the real driver ---
+# The match-regression corpus never resolves a TAIDADA reveal, so only this covers that path.
 
 def taidada_reveal_deck() -> list[int]:
     """20 cards (10 distinct x 2) stacked so reveal effects actually resolve:

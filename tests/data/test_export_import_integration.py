@@ -3,7 +3,7 @@ Round-trip tests for the database export/import scripts.
 
 The JSON export/import tests need ZUTOKA_TEST_DATABASE_URL (integration
 tier); the binary-locator tests are pure units. The pg_dump round trip
-additionally self-skips when no pg_dump binary can be located.
+additionally self-skips when pg_dump or pg_restore cannot be located.
 """
 
 from __future__ import annotations
@@ -235,7 +235,7 @@ class TestBinaryLocator:
 
 
 def test_pg_dump_round_trip(integration_database_url, tmp_path, monkeypatch):
-    """Full pg_dump -> pg_restore cycle; skipped when no binaries are available."""
+    """Full pg_dump -> pg_restore cycle; skipped unless both binaries are available."""
     from postgresql_tools import locate_postgresql_binary
 
     try:

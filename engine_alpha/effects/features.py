@@ -1,32 +1,27 @@
-"""Auto-featurizer: EffectIR -> fixed 160-d float vector.
+"""Featurizer: EffectIR -> a fixed 160-dim vector, derived from the IR so it cannot
+drift from behavior. EFFECT_FEATURES has NUM_EFFECTS + 1 rows; the last (all
+zeros) means "no effect".
 
-The features are derived purely from the IR (the same artifact the
-interpreter executes), so the network's effect representation can never
-drift from behavior. Precomputed once into EFFECT_FEATURES[NUM_EFFECTS+1,
-160]; the last row is the "no effect" vector (all zeros).
+The verb and condition blocks must cover interpreter.OP_TABLE and
+catalog._COND_NAMES in full (test_rulings checks this): an unknown name is
+silently dropped.
 
-The verb and condition blocks are sized to cover interpreter.OP_TABLE and
-catalog._COND_NAMES *in full* — test_rulings asserts that, because a verb
-missing from the block is silently dropped by the `if verb in _OP_INDEX`
-guard rather than raising, which is how five verbs once rotted out of it.
-
-Layout (160 dims):
+Layout:
   [0:3]     entry flags: has_custom, inline, is_area_enchant_carrier
   [3:8]     condition class: unconditional, has_cond, and/or/not present
   [8:45]    condition-leaf multi-hot (37 kinds)
-  [45:50]   condition attribute one-hot (which attribute any condition tests)
-  [50:53]   condition side flags (self, opp) + numeric-threshold presence
+  [45:50]   condition attribute multi-hot
+  [50:53]   condition side flags (self, opp), numeric-threshold presence
   [53:57]   condition scalars: cost/24, hp/100, count/8, distinct/4
   [57:105]  op-verb multi-hot (48 verbs)
-  [105:110] op target-side flags: buffs-self, debuffs-opp, damages-opp,
-            heals-self, moves-opp-cards
-  [110:121] magnitude scalars: atk-delta/200 (signed), heal/50, damage/50,
-            draw/5, mill/6, chronos/18, cost-reduction/4, power-bonus/8,
+  [105:110] target sides: buffs-self, debuffs-opp, damages-opp, heals-self,
+            moves-opp-cards
+  [110:121] magnitudes: atk-delta/200 (signed), heal/50, damage/50, draw/5,
+            mill/6, chronos/18, cost-reduction/4, power-bonus/8,
             damage-reduction/200, per-card-multiplier/50, bank-count/8
-  [121:131] selector summary: zone multi-hot (6) + has-attr-filter,
-            has-song-filter, has-type-filter, has-stp-filter
-  [131:138] choice profile: has-pick-card, has-optional-pick, has-number,
-            has-multiselect, has-name-guess, has-chronos-pick, max-picks/8
+  [121:131] selectors: zone multi-hot (6), attribute/song/type/stp filter flags
+  [131:138] choices: pick-card, optional-pick, number, multiselect, name-guess,
+            chronos-pick, max-picks/8
   [138:160] reserved (zero)
 """
 
@@ -40,7 +35,7 @@ from .ir import EffectIR, Sel
 
 FEATURE_DIM = 160
 
-# --- block offsets (single source of truth for the layout above) -----------
+# --- Block offsets (the layout above) ---
 COND_LEAF = 8
 COND_ATTR = 45
 COND_SIDE_SELF, COND_SIDE_OPP, COND_NUMERIC = 50, 51, 52
@@ -56,10 +51,8 @@ SEL_ATTR, SEL_SONG, SEL_TYPE, SEL_STP = 127, 128, 129, 130
 CHOICE_PICK_CARD, CHOICE_OPTIONAL_PICK, CHOICE_NUMBER = 131, 132, 133
 CHOICE_MULTISELECT, CHOICE_NAME_GUESS, CHOICE_CHRONOS, CHOICE_MAX_PICKS = 134, 135, 136, 137
 
-# Positional: _COND_INDEX below maps each name to its feature slot, so entries
-# may be appended but never removed or reordered -- a shift would invalidate the
-# effect embeddings in every trained checkpoint. "enemy_atk_eq0_no_override" is
-# retired (04-084/04-101 now use "enemy_atk_eq0"); its slot stays reserved.
+# Append only: each position is a feature slot, and any shift invalidates every
+# trained checkpoint. Retired names keep their slots.
 _COND_KINDS = (
     "enemy_attr", "own_attr", "enemy_cost_ge", "enemy_cost_le",
     "enemy_cost_eq_own", "enemy_stp_eq", "enemy_atk_eq0",
@@ -75,7 +68,7 @@ _COND_KINDS = (
 )
 _COND_INDEX = {k: i for i, k in enumerate(_COND_KINDS)}
 
-# Slots kept only to hold their position; no live effect uses these.
+# Reserved slots; no effect uses them.
 _RETIRED_COND_KINDS = frozenset({"enemy_atk_eq0_no_override"})
 
 _OP_VERBS = (
@@ -114,7 +107,7 @@ def _walk_cond(cond, out: np.ndarray) -> None:
     out[4] = 1.0
     if kind in _COND_INDEX:
         out[COND_LEAF + _COND_INDEX[kind]] = 1.0
-    # attribute argument (position varies; scan small ints 0..4 after side args)
+    # attribute argument (its position varies by kind)
     if kind in ("enemy_attr", "own_attr"):
         out[COND_ATTR + cond[1]] = 1.0
         out[COND_SIDE_SELF if kind == "own_attr" else COND_SIDE_OPP] = 1.0
@@ -242,8 +235,7 @@ def _featurize(entry: EffectIR) -> np.ndarray:
             out[CHOICE_NUMBER] = 1.0
         elif verb in ("multiselect", "picks_exact"):
             out[CHOICE_MULTISELECT] = 1.0
-            # A literal count is the real bank size (04-105 banks 8, 04-028 6);
-            # a reg/expr-driven count is unknown at featurization time.
+            # A literal count is the bank size (04-105: 8); otherwise unknown.
             count = op[3] if verb == "picks_exact" and isinstance(op[3], int) else 4
             max_picks = max(max_picks, float(count))
             out[MAG_BANK_COUNT] = max(out[MAG_BANK_COUNT], count / 8.0)

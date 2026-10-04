@@ -1,8 +1,7 @@
 """
-Solo games: a human versus a trained model opponent, on the same match
-runtime as two-player games. The model answers through a decision adapter,
-so solo games persist, replay, and resume exactly like any other match (past
-model decisions replay from the log; the model is only consulted live).
+Solo games: a human against a trained model, on the normal match runtime. The
+model answers through a decision adapter, so solo games persist and resume like
+any match; logged model decisions replay without consulting the model.
 """
 
 from __future__ import annotations

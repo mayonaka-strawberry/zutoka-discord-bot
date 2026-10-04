@@ -1,8 +1,6 @@
 """
-EngineMatchDriver: the loop that runs one engine_alpha game over the decision
-broker. Replaces the old GameFlow turn machinery: the engine owns all rules
-and phase sequencing; the driver presents pending decisions, applies the
-answers, and narrates the emitted events.
+EngineMatchDriver: runs one game over the decision broker, presenting each pending
+decision, applying the answer, and narrating the events.
 """
 
 from __future__ import annotations

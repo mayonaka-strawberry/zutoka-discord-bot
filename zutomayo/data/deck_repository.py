@@ -1,19 +1,9 @@
 """
-Parametrized persistence for user-saved decks.
-
-One implementation serves both deck formats; the two formats differ only in
-table and the card-list fields each deck entry carries:
-
-- standard decks: decks table, entries {'name', 'cards'}
-- TCG decks: decks_tcg table, entries {'name', 'deck', 'side_deck'}
-
-Deck entries keep the historical dict shape ({'name', <card list fields>} with
-cards as {'pack', 'id'} references), so callers and the card resolution
-helpers are unchanged. Decks are listed alphabetically by name.
-
-deck_storage.py and deck_storage_tcg.py remain as thin delegating shims so the
-existing import sites keep working (now awaited). Tests swap the module-level
-repository singletons for in-memory fakes.
+Saved-deck persistence for both formats: standard decks (decks table, entries
+{'name', 'cards'}) and TCG decks (decks_tcg, entries {'name', 'deck', 'side_deck'}).
+Cards are {'pack', 'id'} references, and decks list alphabetically.
+deck_storage.py and deck_storage_tcg.py are thin facades; tests swap the
+repository singletons for fakes.
 """
 
 from __future__ import annotations

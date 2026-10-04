@@ -1,18 +1,8 @@
-"""PpoPolicyNetwork: transformer over card tokens with pointer / identity /
-number policy heads and an unbounded value head, for PPO training on
-engine_alpha observations.
-
-Structure mirrors the engine's observation design (summed categorical
-embeddings, IR-derived effect features fused with a learned effect
-embedding, CLS carrying the global features) with actor-critic heads:
-every decision becomes one masked categorical over the legal actions, and
-the value head estimates the acting player's terminal return without a
-tanh bound (value clipping happens in the loss).
-
-Identity- and effect-indexed tables are allocated at configured capacities
-above the current catalog size; the catalog's null indices are remapped to
-the last row so future catalog rows use the reserved space without shape
-changes.
+"""PpoPolicyNetwork: a transformer over card tokens with pointer, identity and
+number policy heads and an unbounded value head (clipped in the loss). Embeddings
+follow the observation design: concatenated categorical embeddings, IR effect features
+fused with a learned effect embedding, globals on the CLS token. Tables are
+allocated at configured capacities, with null indices mapped to the last row.
 """
 
 from __future__ import annotations

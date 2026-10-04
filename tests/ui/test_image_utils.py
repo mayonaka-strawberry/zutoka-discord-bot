@@ -51,7 +51,7 @@ def test_jpeg_extensions_produce_jpeg(filename):
 
 @pytest.mark.parametrize('filename', ['deck.webp', 'board.png', 'deck', 'deck.gif'])
 def test_non_jpeg_extension_raises(filename):
-    """A filename missed during the webp rename must fail loudly, not ship wrong bytes."""
+    """A non-JPEG filename fails loudly instead of shipping mislabeled bytes."""
     with pytest.raises(ValueError):
         save_image_for_discord(Image.new('RGB', (8, 8)), filename)
 
@@ -76,18 +76,14 @@ def test_background_fills_transparent_pixels(background, expected):
 
 
 def test_palette_image_is_flattened():
-    """board.png loads as mode P, so the P branch is a real production path."""
+    """Palette (mode P) images, like the raw board.png, flatten to RGB."""
     palette_image = Image.new('RGBA', (16, 16), (7, 8, 9, 255)).convert('P')
     assert _reopen(save_image_for_discord(palette_image, 'grid.jpg')).mode == 'RGB'
 
 
 def test_chroma_subsampling_is_disabled():
-    """The load-bearing assertion of the quality story.
-
-    Pillow silently defaults JPEG to 4:2:0 at every quality, which halves colour
-    resolution and smears the small text and thin coloured outlines on card art. If the
-    subsampling argument is ever dropped, nothing else in the suite would notice.
-    """
+    """Chroma subsampling stays off: Pillow's default 4:2:0 smears card text, and no
+    other test would notice."""
     result = save_image_for_discord(_noisy_image(64, 64), 'board.jpg')
     assert JpegImagePlugin.get_sampling(_reopen(result)) == 0
 
@@ -117,7 +113,7 @@ def test_quality_search_never_changes_dimensions():
 
 
 def test_unsatisfiable_limit_still_returns_a_file():
-    """Even a limit nothing can meet returns the smallest attempt rather than raising."""
+    """Even a limit nothing can meet returns the initial JPEG_QUALITY save rather than raising."""
     result = save_image_for_discord(_noisy_image(), 'board.jpg', byte_limit=1)
     assert len(result.fp.getvalue()) > 0
 
