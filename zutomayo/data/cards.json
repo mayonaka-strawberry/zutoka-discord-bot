@@ -402,7 +402,7 @@
     {
       "pack": 1,
       "id": 22,
-      "name": "NIRA_CHAN (Humanoid)",
+      "name": "NIRA-CHAN (Humanoid)",
       "name_jp": "にらちゃん（ヒューマノイド）",
       "image": "zutomayo/images/1/zutomayocard_1st_22.jpg",
       "clock": 3,
@@ -877,7 +877,7 @@
     {
       "pack": 1,
       "id": 47,
-      "name": "NIRA-CHAN (STUDY ME)",
+      "name": "NIRA-CHINA (STUDY ME)",
       "name_jp": "にらチャイナ（お勉強しといてよ）",
       "image": "zutomayo/images/1/zutomayocard_1st_47.jpg",
       "clock": 3,
@@ -3157,7 +3157,7 @@
     {
       "pack": 2,
       "id": 61,
-      "name": "Umberlla of Seigi",
+      "name": "Umbrella of Seigi",
       "name_jp": "正義の傘",
       "image": "zutomayo/images/2/zutomayocard_2nd_61.jpg",
       "clock": 4,
@@ -4772,7 +4772,7 @@
     {
       "pack": 3,
       "id": 40,
-      "name": "RANI_CHAN (Intrusion)",
+      "name": "RANI-CHAN (Intrusion)",
       "name_jp": "らにちゃん（不法侵入）",
       "image": "zutomayo/images/3/zutomayocard_3rd_40.jpg",
       "clock": 2,
@@ -4848,7 +4848,7 @@
     {
       "pack": 3,
       "id": 44,
-      "name": "NIRA_BAND",
+      "name": "NIRA-BAND",
       "name_jp": "にらバンド",
       "image": "zutomayo/images/3/zutomayocard_3rd_44.jpg",
       "clock": 3,
@@ -5247,7 +5247,7 @@
     {
       "pack": 3,
       "id": 65,
-      "name": "HAKASE (Intrution)",
+      "name": "HAKASE (Intrusion)",
       "name_jp": "ハカセ（不法侵入）",
       "image": "zutomayo/images/3/zutomayocard_3rd_65.jpg",
       "clock": 0,
@@ -6311,7 +6311,7 @@
     {
       "pack": 4,
       "id": 15,
-      "name": "Konnakoto Soudou",
+      "name": "NIRA-CHAN (Konnakoto Soudou)",
       "name_jp": "にらちゃん（こんなこと騒動）",
       "image": "zutomayo/images/4/zutomayocard_4th_015.jpg",
       "clock": 1,
