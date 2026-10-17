@@ -1,6 +1,7 @@
 """Card database integrity, plus RNG determinism."""
 
-from collections import Counter
+import unicodedata
+from collections import Counter, defaultdict
 
 from engine_alpha import cards
 from engine_alpha.rng import shuffled, random_below
@@ -53,6 +54,59 @@ def test_flat_arrays_match_definitions():
         assert cards.POWER_COST_T[d.index] == d.power_cost
         assert cards.SEND_TO_POWER_T[d.index] == d.send_to_power
         assert cards.EFFECT_T[d.index] == d.effect_index
+
+
+def partition_by(name_key) -> set[frozenset[int]]:
+    """The definitions grouped by name_key(definition)."""
+    groups = defaultdict(set)
+    for definition in cards.CARD_DB:
+        groups[name_key(definition)].add(definition.index)
+    return {frozenset(group) for group in groups.values()}
+
+
+def collapsed_nfkc(text: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", text).split())
+
+
+def test_card_names_are_full_printed_names():
+    """Q&A No.50: a card name includes the part in parentheses, so printings share a
+    name only when name_jp is identical. Each name maps to its lowest definition index."""
+    assert cards.NUM_CARD_NAMES == 337
+    by_name_jp = partition_by(lambda definition: definition.name_jp)
+    assert partition_by(lambda definition: cards.NAME_REPRESENTATIVE_T[definition.index]) == by_name_jp
+    assert len(by_name_jp) == cards.NUM_CARD_NAMES
+    for group in by_name_jp:
+        for index in group:
+            assert cards.NAME_REPRESENTATIVE_T[index] == min(group)
+        assert len({cards.CARD_TYPE_T[index] for index in group}) == 1, "one card type per name"
+
+
+def test_english_names_group_like_japanese_names():
+    assert partition_by(lambda definition: definition.name) == \
+        partition_by(lambda definition: definition.name_jp)
+
+
+def test_name_data_has_no_width_or_spacing_variants():
+    """Data lint: names that differ only in character width or spacing would split one
+    name in two, so NFKC with collapsed whitespace must not merge any groups."""
+    by_name_jp = partition_by(lambda definition: definition.name_jp)
+    assert partition_by(lambda definition: collapsed_nfkc(definition.name_jp)) == by_name_jp
+    assert partition_by(lambda definition: collapsed_nfkc(definition.name).casefold()) == by_name_jp
+
+
+def test_pinned_card_name_groups():
+    for keys in (("01-022", "02-079", "03-047"),
+                 ("01-047", "02-016", "04-087"),
+                 ("01-071", "03-016", "04-015")):
+        representative = cards.KEY_TO_INDEX[keys[0]]
+        group = {definition.key for definition in cards.CARD_DB
+                 if cards.NAME_REPRESENTATIVE_T[definition.index] == representative}
+        assert group == set(keys)
+        assert cards.same_card_name(cards.KEY_TO_INDEX[keys[1]], cards.KEY_TO_INDEX[keys[2]])
+    assert cards.CARD_DB[cards.KEY_TO_INDEX["03-047"]].name_jp == "にらちゃん（ヒューマノイド）"
+    assert not cards.same_card_name(cards.KEY_TO_INDEX["04-078"], cards.KEY_TO_INDEX["04-088"])
+    assert not cards.same_card_name(cards.KEY_TO_INDEX["01-001"], cards.KEY_TO_INDEX["04-001"])
+    assert not cards.same_card_name(cards.KEY_TO_INDEX["01-001"], cards.KEY_TO_INDEX["01-047"])
 
 
 def test_rng_determinism_and_permutation():

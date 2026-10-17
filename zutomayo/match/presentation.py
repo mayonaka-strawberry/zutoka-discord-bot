@@ -60,11 +60,55 @@ def effect_source_card(state) -> Optional[Any]:
     return None
 
 
+def name_guess_attack_bonus(effect_id: str) -> Optional[int]:
+    """The 03-047 family's attack bonus on a match, from the effect's IR; None for
+    other effects."""
+    from engine_alpha.effects.catalog import CATALOG
+
+    entry = CATALOG.get(effect_id)
+    if entry is None:
+        return None
+    for op in entry.ops:
+        if op[0] == 'name_guess_bonus':
+            return op[3]
+    return None
+
+
+def _source_name_guess_bonus(state) -> Optional[int]:
+    """The asking effect's name-guess bonus. Read from the top frame's source, so a
+    03-059 used via 01-006 counts: its frame source is the abyss card."""
+    card = effect_source_card(state)
+    return None if card is None else name_guess_attack_bonus(card.effect)
+
+
+def _is_hidden_hand_pick(state, engine_request) -> bool:
+    """The name-guess family's pick of a card from the opponent's hidden hand."""
+    return (engine_request.purpose == P_EFFECT_NUMBER
+            and _source_name_guess_bonus(state) is not None)
+
+
 def _effect_prefix(state) -> str:
     card = effect_source_card(state)
     if card is None:
         return ''
     return f'**{card.name}** [{card.name_jp}] effect: '
+
+
+def _name_guess_prompt(state) -> str:
+    prompt = (f'{_effect_prefix(state)}name a card [カード名を1つ指定]. The full name must '
+              'match, including the part in parentheses; any printing counts.')
+    bonus = _source_name_guess_bonus(state)
+    if bonus is not None:
+        prompt += f' Attack +{bonus} on a match.'
+    return prompt
+
+
+def _hidden_hand_pick_prompt(state, engine_request, opponent_name: str) -> str:
+    count = engine_request.hi - engine_request.lo + 1
+    if count == 1:
+        return f"{_effect_prefix(state)}choose {opponent_name}'s only face-down card to reveal."
+    return (f"{_effect_prefix(state)}choose one of {opponent_name}'s {count} "
+            'face-down cards to reveal.')
 
 
 def _effect_order_prompt(state, engine_request) -> str:
@@ -107,39 +151,10 @@ def _prompt_for(state, engine_request) -> str:
     if purpose == P_CHRONOS_VALUE:
         return f'{_effect_prefix(state)}select the chronos position.'
     if purpose == P_NAME_GUESS:
-        return f'{_effect_prefix(state)}name a card.'
+        return _name_guess_prompt(state)
     if purpose == P_SKIP_SWAP:
         return 'A character is waiting to swap in. Keep your current battle character or swap?'
     return 'Make your choice.'
-
-
-def _identity_validator(engine_request):
-    """Maps typed text to an engine action (a card definition index) or None.
-    Accepts the card key (for example 03-045) or an exact card name."""
-    from engine_alpha.cards import KEY_TO_INDEX
-
-    legal = set(engine_request.legal)
-
-    def validate(text: str) -> Optional[int]:
-        cleaned = text.strip()
-        definition_index = KEY_TO_INDEX.get(cleaned)
-        if definition_index is None and '-' in cleaned:
-            pack_text, _, number_text = cleaned.partition('-')
-            if pack_text.strip().isdigit() and number_text.strip().isdigit():
-                key = f'{int(pack_text):02d}-{int(number_text):03d}'
-                definition_index = KEY_TO_INDEX.get(key)
-        if definition_index is None:
-            lowered = cleaned.lower()
-            for candidate in legal:
-                card = definition_index_to_card(candidate)
-                if lowered in (card.name.lower(), card.name_jp.lower()):
-                    definition_index = candidate
-                    break
-        if definition_index is not None and definition_index in legal:
-            return definition_index
-        return None
-
-    return validate
 
 
 def build_match_request(game, engine_request, opponent_name: str = 'opponent') -> MatchDecisionRequest:
@@ -175,20 +190,25 @@ def build_match_request(game, engine_request, opponent_name: str = 'opponent') -
             prompt_text=_prompt_for(state, engine_request),
             engine_request=engine_request,
             purpose=purpose,
-            validator=_identity_validator(engine_request),
             timeout_seconds=EFFECT_PROMPT_TIMEOUT_SECONDS,
             opponent_name=opponent_name,
         )
 
     if engine_request.kind == SELECT_NUMBER:
+        hidden_hand_pick = _is_hidden_hand_pick(state, engine_request)
+        if hidden_hand_pick:
+            prompt_text = _hidden_hand_pick_prompt(state, engine_request, opponent_name)
+        else:
+            prompt_text = _prompt_for(state, engine_request)
         return MatchDecisionRequest(
             kind=KIND_NUMBER_CHOICE,
             player_index=player_index,
-            prompt_text=_prompt_for(state, engine_request),
+            prompt_text=prompt_text,
             engine_request=engine_request,
             purpose=purpose,
             minimum_value=engine_request.lo,
             maximum_value=engine_request.hi,
+            hidden_hand_pick=hidden_hand_pick,
             timeout_seconds=EFFECT_PROMPT_TIMEOUT_SECONDS,
             opponent_name=opponent_name,
         )

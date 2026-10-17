@@ -20,11 +20,16 @@ Tuple layouts:
   (EVENT_GAME_OVER, winner_index_or_2_for_draw)
   (EVENT_CARDS_REVEALED, owner_index, revealed_owner_index,
    source_definition_index, *revealed_definition_indices)
+  (EVENT_NAME_GUESS_RESOLVED, owner_index, source_definition_index,
+   named_definition_index, attack_bonus)
 
 EVENT_CARDS_REVEALED is the only variable-length layout. Its tail lists the revealed cards
 in zone order (pick order for chosen cards) and is empty when a player reveals nothing.
 `revealed_owner_index` differs from `owner_index` when the opponent's cards are revealed
 (03-045, 03-097, 03-103 and the 03-047 name-guess family).
+
+EVENT_NAME_GUESS_RESOLVED comes right before the 03-047 family's EVENT_CARDS_REVEALED.
+`attack_bonus` is 0 on a miss.
 """
 
 (
@@ -44,7 +49,8 @@ in zone order (pick order for chosen cards) and is empty when a player reveals n
     EVENT_GAME_OVER,
     # Append new types last. The ints are never persisted (game_events.py stores names).
     EVENT_CARDS_REVEALED,
-) = range(15)
+    EVENT_NAME_GUESS_RESOLVED,
+) = range(16)
 
 EVENT_NAMES = {
     EVENT_PHASE_CHANGED: "phase_changed",
@@ -62,4 +68,5 @@ EVENT_NAMES = {
     EVENT_MULLIGAN_DONE: "mulligan_done",
     EVENT_GAME_OVER: "game_over",
     EVENT_CARDS_REVEALED: "cards_revealed",
+    EVENT_NAME_GUESS_RESOLVED: "name_guess_resolved",
 }

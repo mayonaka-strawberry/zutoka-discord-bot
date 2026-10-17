@@ -23,9 +23,11 @@ from engine_alpha.events import (
     EVENT_GAME_OVER,
     EVENT_HP_CHANGED,
     EVENT_MULLIGAN_DONE,
+    EVENT_NAME_GUESS_RESOLVED,
     EVENT_PHASE_CHANGED,
 )
 from engine_alpha.state import PH_MULLIGAN, PH_PROCESS_EFFECTS, PH_TURN_END_EFFECTS
+from zutomayo.match.card_names import card_name_label
 from zutomayo.match.gate_presenter import GatePresenter
 from zutomayo.match.state_view import BoardView, definition_index_to_card
 
@@ -105,6 +107,8 @@ class MatchNarrator:
         self.resolved_effects: dict[int, list[Any]] = {0: [], 1: []}
         self.skipped_effects: dict[int, list[Any]] = {0: [], 1: []}
         self.current_phase: Optional[int] = None
+        # (owner, source, named, attack bonus) from EVENT_NAME_GUESS_RESOLVED, for the next reveal.
+        self.pending_name_guess: Optional[tuple[int, int, int, int]] = None
 
     def _emit(self, event_type: str, payload: dict[str, Any], **context: Any) -> None:
         if self.session.persistence is not None:
@@ -180,6 +184,10 @@ class MatchNarrator:
                 self._emit(stream.EVENT_EFFECT_SKIPPED_COST,
                            {'player_index': owner_index, **describe_card(card)})
 
+            elif event_type == EVENT_NAME_GUESS_RESOLVED:
+                # Narrated with the reveal the engine emits right after it.
+                self.pending_name_guess = event[1:5]
+
             elif event_type == EVENT_CARDS_REVEALED:
                 # The reveal is the point of these effects, so it goes out on
                 # its own rather than waiting for the batched effect embed.
@@ -225,11 +233,16 @@ class MatchNarrator:
     async def _broadcast_reveal(self, event: tuple) -> None:
         """Show revealed cards: owner DM, then opponent DM, then the channel.
         `revealed_owner_index` tells own cards (TAIDADA picks, own-hand reveals) from
-        the opponent's (03-045's hand, a deck top, a name-guess pick)."""
+        the opponent's (03-045's hand, a deck top, a name-guess pick). A name-guess pick
+        also states the declared name and its outcome."""
         owner_index, revealed_owner_index = event[1], event[2]
         source_card = definition_index_to_card(event[3])
         effect_id = f'{source_card.pack:02d}-{source_card.id:03d}'
         revealed = [definition_index_to_card(index) for index in event[4:]]
+        # Taken before any branch, so a declaration can never reach a later reveal.
+        name_guess, self.pending_name_guess = self.pending_name_guess, None
+        if name_guess is not None and name_guess[:2] != (owner_index, event[3]):
+            name_guess = None
 
         if not revealed:
             # Nothing revealed: tell the owner only.
@@ -265,9 +278,13 @@ class MatchNarrator:
                 f'**Effect ({effect_id}):** '
                 f"{self._player_name(revealed_owner_index)}'s top deck card "
                 f'revealed: {names}.')
-        elif len(revealed) == 1:
+        elif len(revealed) == 1 and name_guess is not None:
             # The name-guess family picks ONE card out of the opponent's hand and
             # shows it; the rest of the hand stays hidden.
+            owner_message, other_message, channel_message = self._name_guess_messages(
+                effect_id, revealed_owner_index, name_guess, event[4])
+        elif len(revealed) == 1:
+            # One opponent hand card without a declaration (03-045 on a one-card hand).
             owner_message = (
                 f'**Effect ({effect_id}):** Revealed from opponent\'s hand: {names}.')
             other_message = (
@@ -297,6 +314,33 @@ class MatchNarrator:
         await self._send_reveal(owner_index, owner_message, revealed, embed=owner_embed)
         await self._send_reveal(1 - owner_index, other_message, revealed)
         await self._send_reveal(None, channel_message, revealed)
+
+    def _name_guess_messages(
+        self,
+        effect_id: str,
+        revealed_owner_index: int,
+        name_guess: tuple[int, int, int, int],
+        revealed_definition: int,
+    ) -> tuple[str, str, str]:
+        """Owner, opponent and channel lines for a declared name and the card it revealed."""
+        owner_index, _, named_definition, attack_bonus = name_guess
+        named_label = card_name_label(named_definition)
+        revealed_label = card_name_label(revealed_definition)
+        player_name = self._player_name(owner_index)
+        if attack_bonus:
+            outcome = f'Same name: Attack +{attack_bonus}.'
+            opponent_outcome = f'Same name: Attack +{attack_bonus} for {player_name}.'
+        else:
+            outcome = opponent_outcome = 'Different name: no bonus.'
+        return (
+            f'**Effect ({effect_id}):** You named {named_label}. '
+            f"Revealed from opponent's hand: {revealed_label}. {outcome}",
+            f'**Effect ({effect_id}):** {player_name} named {named_label}. '
+            f'A card was revealed from your hand: {revealed_label}. {opponent_outcome}',
+            f'**Effect ({effect_id}):** {player_name} named {named_label}. '
+            f"Revealed from {self._player_name(revealed_owner_index)}'s hand: "
+            f'{revealed_label}. {outcome}',
+        )
 
     async def _send_reveal(
         self,

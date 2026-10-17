@@ -7,7 +7,7 @@ from __future__ import annotations
 import random
 
 from engine_alpha import cards
-from engine_alpha.actions import P_EFFECT_ORDER
+from engine_alpha.actions import P_EFFECT_NUMBER, P_EFFECT_ORDER, P_EFFECT_TARGET, P_NAME_GUESS
 from engine_alpha.battle import (
     MIDNIGHT, base_attack, deal_damage, get_effective_attack,
     is_effectively_midnight, resolve_battle, total_power,
@@ -2352,3 +2352,102 @@ def test_qa_17_a_rewind_does_not_manufacture_a_day_night_crossing():
 
     assert state.gflags[GF_NIGHT_TO_DAY] == 0, "rewinding must not invent a crossing"
     assert state.gflags[GF_DAY_TO_NIGHT] == 1, "the crossing that did happen stands"
+
+
+# --- Name guess (03-047 family): a card name includes the part in parentheses ---
+
+NAME_GUESS_BONUSES = (("03-047", 50), ("03-059", 100), ("03-094", 40), ("03-105", 100))
+
+
+def key_index(key: str) -> int:
+    return cards.KEY_TO_INDEX[key]
+
+
+def resolve_name_guess(game: Game, source: int, answers) -> list[int]:
+    """Resolve player 0's effect with scripted answers; returns the prompt purposes."""
+    state = game.state
+    interpreter.start_effect(state, 0, source, cards.EFFECT_T[state.inst_def[source]])
+    purposes = []
+    answer_queue = list(answers)
+    request = interpreter.resume(state, None, None)
+    while request is not None:
+        purposes.append(request.purpose)
+        request = interpreter.resume(state, request, answer_queue.pop(0))
+    assert not answer_queue and not state.frame_stack
+    return purposes
+
+
+def name_guess_bonus(named_key: str, hand_keys, position: int = 1,
+                     effect_id: str = "03-047") -> int:
+    """Player 0 names `named_key`, then reveals `position` (1-based) of the opponent's
+    hand. Returns the attack bonus gained."""
+    game = make_game()
+    state = game.state
+    state.players[1].hand[:] = [spawn(game, key_index(key)) for key in hand_keys]
+    before = state.players[0].flags[PF_ATTACK_BONUS]
+    purposes = resolve_name_guess(game, spawn(game, card_with_effect(effect_id)),
+                                  (key_index(named_key), position))
+    assert purposes == [P_NAME_GUESS, P_EFFECT_NUMBER]
+    return state.players[0].flags[PF_ATTACK_BONUS] - before
+
+
+def test_qa_50_any_printing_with_the_same_full_name_matches():
+    """Q&A No.50: 01-022, 02-079 and 03-047 are all NIRA-CHAN (Humanoid), so naming
+    one matches a reveal of any other."""
+    assert name_guess_bonus("01-022", ["03-047"]) == 50
+    assert name_guess_bonus("03-047", ["03-047"]) == 50
+    for effect_id, amount in NAME_GUESS_BONUSES:
+        assert name_guess_bonus("02-079", ["01-022"], effect_id=effect_id) == amount, effect_id
+
+
+def test_qa_50_the_part_in_parentheses_is_part_of_the_name():
+    """Q&A No.50: naming NIRA-CHAN (STUDY ME) does not match NIRA-CHAN (TAIDADA) or
+    NIRA-CHINA (STUDY ME), and にらちゃん（微熱魔） is not にらちゃん…？（微熱魔）."""
+    assert name_guess_bonus("01-001", ["04-001"]) == 0
+    assert name_guess_bonus("01-001", ["01-047"]) == 0
+    assert name_guess_bonus("04-078", ["04-088"]) == 0
+    for effect_id, _ in NAME_GUESS_BONUSES:
+        assert name_guess_bonus("04-088", ["04-078"], effect_id=effect_id) == 0, effect_id
+
+
+def test_name_guess_reveals_the_chosen_hand_position():
+    assert name_guess_bonus("01-001", ["01-001", "04-001"], position=2) == 0
+    assert name_guess_bonus("01-001", ["04-001", "01-001"], position=2) == 50
+
+
+def test_qa_50_the_name_guess_still_offers_every_definition():
+    """Only the comparison changed: the legal set stays all definitions, so decision
+    fingerprints and the models' identity head are unaffected."""
+    game = make_game()
+    state = game.state
+    state.players[1].hand[:] = [spawn(game, key_index("03-047"))]
+    source = spawn(game, card_with_effect("03-047"))
+    interpreter.start_effect(state, 0, source, fx("03-047"))
+    request = interpreter.resume(state, None, None)
+    assert request.purpose == P_NAME_GUESS
+    assert request.legal_actions() == list(range(cards.NUM_CARDS))
+
+
+def test_qa_50_a_03_059_borrowed_by_01_006_matches_by_name():
+    """01-006 replays 03-059 from the abyss as a nested frame whose source is the
+    borrowed card (Q&A No.50 applies unchanged)."""
+    from engine_alpha.events import EVENT_NAME_GUESS_RESOLVED
+
+    for named_key, attack_bonus in (("01-022", 100), ("01-001", 0)):
+        game = make_game()
+        state = game.state
+        state.event_sink = []
+        state.players[1].hand[:] = [spawn(game, key_index("03-047"))]
+        stock_abyss(game, 0, 3)  # characters only, so 03-059 is the sole pick
+        state.players[0].abyss.append(spawn(game, card_with_effect("03-059")))
+        before = state.players[0].flags[PF_ATTACK_BONUS]
+
+        purposes = resolve_name_guess(game, spawn(game, card_with_effect("01-006")),
+                                      (0, key_index(named_key), 1))
+
+        assert purposes == [P_EFFECT_TARGET, P_NAME_GUESS, P_EFFECT_NUMBER]
+        assert state.players[0].flags[PF_ATTACK_BONUS] - before == attack_bonus, named_key
+        assert [event for event in state.event_sink
+                if event[0] == EVENT_NAME_GUESS_RESOLVED] == [
+            (EVENT_NAME_GUESS_RESOLVED, 0, card_with_effect("03-059"),
+             key_index(named_key), attack_bonus)]

@@ -55,6 +55,7 @@ class CardDef(NamedTuple):
     send_to_power: int
     effect_index: int  # dense index into EFFECT_IDS, or NO_EFFECT
     rarity: int
+    name_jp: str
 
     @property
     def key(self) -> str:
@@ -98,6 +99,7 @@ def _load() -> tuple:
             send_to_power=c["send_to_power"],
             effect_index=effect_to_index.get(c["effect"], NO_EFFECT),
             rarity=RARITY_TO_INDEX[c["rarity"]],
+            name_jp=c["name_jp"],
         ))
     return tuple(definitions), tuple(songs), tuple(effect_ids)
 
@@ -135,3 +137,21 @@ CARD_TYPE_T = tuple(int(x) for x in CARD_TYPE)
 ATTRIBUTE_T = tuple(int(x) for x in ATTRIBUTE)
 SONG_T = tuple(int(x) for x in SONG)
 EFFECT_T = tuple(int(x) for x in EFFECT)
+
+
+def _name_representatives() -> tuple[int, ...]:
+    lowest_index_by_name: dict[str, int] = {}
+    for definition in CARD_DB:
+        lowest_index_by_name.setdefault(definition.name_jp, definition.index)
+    return tuple(lowest_index_by_name[definition.name_jp] for definition in CARD_DB)
+
+
+# A card name is the full printed name, parenthesized part included (Q&A No.50).
+# Per definition: the lowest definition index with the identical name_jp.
+NAME_REPRESENTATIVE_T = _name_representatives()
+NUM_CARD_NAMES = len(set(NAME_REPRESENTATIVE_T))
+
+
+def same_card_name(first_definition: int, second_definition: int) -> bool:
+    """Whether two printings share a card name (Q&A No.50)."""
+    return NAME_REPRESENTATIVE_T[first_definition] == NAME_REPRESENTATIVE_T[second_definition]

@@ -1,20 +1,33 @@
 from __future__ import annotations
+import re
 from typing import TYPE_CHECKING, Callable
 import discord
 from zutomayo.enums.card_type import CardType
+from zutomayo.match.card_names import (
+    OPTION_TEXT_LIMIT,
+    card_name_description,
+    card_name_label,
+    search_card_names,
+)
 from zutomayo.ui.embeds import ATTRIBUTE_EN, ATTRIBUTE_JP, CARD_TYPE_LABEL
 
 if TYPE_CHECKING:
     from zutomayo.engine.game_session import GameSession
+    from zutomayo.match.card_names import CardNameEntry, CardNameSearchResult
 
 # Views answer through submit_callback (broker decisions, JSON-serializable payloads) or,
 # without one, session.submit_action with live objects (deck building and TCG deck
-# selection, which happen before the game record exists).
-SubmitCallback = Callable[[str, object], None]
+# selection, which happen before the game record exists). Broker callbacks return
+# whether the answer was accepted.
+SubmitCallback = Callable[[str, object], bool | None]
 
 PAYLOAD_INDICES = 'indices'
 PAYLOAD_NUMBER = 'number'
-PAYLOAD_TEXT = 'text'
+
+PROMPT_EXPIRED_TEXT = 'This prompt has expired.'
+SEARCH_QUERY_LIMIT = 100
+# Escaped in echoed text; discord.utils.escape_markdown warns on Python 3.14.
+_MARKDOWN_CHARACTERS = re.compile(r'([\\*_~|`>\[\]])')
 
 
 def _build_select_option(card_holder) -> tuple[str, str]:
@@ -482,7 +495,9 @@ class EffectCardSelectView(discord.ui.View):
 
 
 class EffectNumberSelectView(discord.ui.View):
-    """Dropdown to select a number during effect resolution (e.g. clock advancement 0-5)."""
+    """Dropdown to select a number during effect resolution (e.g. clock advancement 0-5).
+    With `slot_positions` it picks a hidden hand card: the options are Card 1..N and
+    the view submits the position behind the chosen slot."""
 
     def __init__(
         self,
@@ -493,19 +508,30 @@ class EffectNumberSelectView(discord.ui.View):
         placeholder: str = 'Select a number...',
         label_prefix: str | None = None,
         submit_callback: SubmitCallback | None = None,
+        slot_positions: list[int] | None = None,
+        timeout: float = 750,
     ):
-        super().__init__(timeout=750)
+        super().__init__(timeout=timeout)
         self.session = session
         self.player_index = player_index
         self.submit_callback = submit_callback
+        # Display slot N (from 1) picks slot_positions[N - 1]; only slots reach Discord.
+        self.slot_positions = slot_positions
+        self.answered = False
 
-        options = [
-            discord.SelectOption(
-                label=f'{label_prefix} {n}' if label_prefix else str(n),
-                value=str(n),
-            )
-            for n in range(min_value, max_value + 1)
-        ]
+        if slot_positions is None:
+            options = [
+                discord.SelectOption(
+                    label=f'{label_prefix} {n}' if label_prefix else str(n),
+                    value=str(n),
+                )
+                for n in range(min_value, max_value + 1)
+            ]
+        else:
+            options = [
+                discord.SelectOption(label=f'Card {slot}', value=str(slot))
+                for slot in range(1, len(slot_positions) + 1)
+            ]
 
         select = discord.ui.Select(
             placeholder=placeholder,
@@ -517,117 +543,215 @@ class EffectNumberSelectView(discord.ui.View):
         self.add_item(select)
 
     async def select_callback(self, interaction: discord.Interaction):
-        selected_value = int(interaction.data['values'][0])
-        if self.submit_callback is not None:
-            self.submit_callback(PAYLOAD_NUMBER, selected_value)
-        else:
-            self.session.submit_action(self.player_index, selected_value)
-        await interaction.response.edit_message(
-            content=f'You selected: **{selected_value}**',
-            view=None,
-        )
-        self.stop()
+        if self.answered:
+            await interaction.response.defer()
+            return
+        # Set before any await, so a later pick is deferred and cannot replace the shown
+        # answer. Stopping comes after the edit: a stopped view drops clicks unanswered.
+        self.answered = True
+        try:
+            selected_value = int(interaction.data['values'][0])
+            content = f'You selected: **{selected_value}**'
+            if self.slot_positions is not None:
+                accepted = self.submit_callback(
+                    PAYLOAD_NUMBER, self.slot_positions[selected_value - 1])
+                content = f'You chose Card {selected_value}.' if accepted else PROMPT_EXPIRED_TEXT
+            elif self.submit_callback is not None:
+                self.submit_callback(PAYLOAD_NUMBER, selected_value)
+            else:
+                self.session.submit_action(self.player_index, selected_value)
+            await interaction.response.edit_message(content=content, view=None)
+        finally:
+            self.stop()
 
 
-class EffectTextInputModal(discord.ui.Modal):
-    """Modal with a text input field for effects that require the player to type a value."""
+def _search_result_text(query: str, result: CardNameSearchResult) -> str:
+    """The results line; the echoed query is capped and escaped."""
+    echoed = _MARKDOWN_CHARACTERS.sub(r'\\\1', query[:SEARCH_QUERY_LIMIT])
+    if not result.entries:
+        return (f'No card name matches "{echoed}". Try part of the English or Japanese name, '
+                'the song, or a number like 03-047.')
+    shown = len(result.entries)
+    if result.is_fuzzy:
+        if result.total > shown:
+            return (f'Closest names to "{echoed}": showing {shown} of {result.total}. '
+                    'Add more of the name, such as the song.')
+        return f'Closest names to "{echoed}":'
+    if result.total > shown:
+        return (f'Showing {shown} of {result.total} names for "{echoed}". '
+                'Add more of the name, such as the song.')
+    if result.total == 1:
+        return f'1 name matches "{echoed}".'
+    return f'{result.total} names match "{echoed}".'
 
-    name_input = discord.ui.TextInput(
-        label='Card ID',
-        placeholder='Enter a card ID (XX-XXX)...',
+
+class CardNameSearchModal(discord.ui.Modal):
+    """The search box of a CardNameDeclarationView; results replace the view's message."""
+
+    query_input = discord.ui.TextInput(
+        label='Card name or number',
+        placeholder='nira humanoid / にらちゃん / 03-047',
         required=True,
-        max_length=100,
+        max_length=SEARCH_QUERY_LIMIT,
     )
 
-    def __init__(
-        self,
-        session: GameSession,
-        player_index: int,
-        title: str = 'Specify a card',
-        label: str | None = None,
-        placeholder: str | None = None,
-        validator: Callable[[str], str | None] | None = None,
-        prompt_text: str | None = None,
-        submit_callback: SubmitCallback | None = None,
-    ):
-        super().__init__(title=title, timeout=750)
-        self.session = session
-        self.player_index = player_index
-        self.validator = validator
-        self.prompt_text = prompt_text
-        self.submit_callback = submit_callback
-        if label is not None:
-            self.name_input.label = label
-        if placeholder is not None:
-            self.name_input.placeholder = placeholder
+    def __init__(self, declaration_view: CardNameDeclarationView):
+        super().__init__(title='Name a card', timeout=declaration_view.timeout)
+        self.declaration_view = declaration_view
+        if declaration_view.last_query:
+            self.query_input.default = declaration_view.last_query
 
     async def on_submit(self, interaction: discord.Interaction):
-        value = self.name_input.value.strip()
-        if self.validator is not None:
-            error = self.validator(value)
-            if error is not None:
-                view = EffectTextInputView(
-                    self.session,
-                    self.player_index,
-                    modal_title=self.title,
-                    label=self.name_input.label,
-                    placeholder=self.name_input.placeholder,
-                    validator=self.validator,
-                    prompt_text=self.prompt_text,
-                    submit_callback=self.submit_callback,
-                )
-                await interaction.response.send_message(content=error, view=view, ephemeral=True)
-                return
-        if self.submit_callback is not None:
-            self.submit_callback(PAYLOAD_TEXT, value)
-        else:
-            self.session.submit_action(self.player_index, value)
-        await interaction.response.send_message(
-            content=f'You specified: **{value}**',
-            ephemeral=True,
-        )
+        await self.declaration_view.show_search_results(interaction, self.query_input.value)
 
 
-class EffectTextInputView(discord.ui.View):
-    """View with a button that opens a text input modal for specifying a value."""
+class CardNameDeclarationView(discord.ui.View):
+    """Names a card for a name-guess effect in one message: search in a modal, pick a
+    name from the results, then Declare. Submits the name's representative definition,
+    which stands for every printing. `submit_callback` returns whether it was accepted;
+    `is_pending` turns False once the broker's timeout fallback has answered."""
 
     def __init__(
         self,
         session: GameSession,
         player_index: int,
-        modal_title: str = 'Specify a card',
-        button_label: str = 'Enter Card ID',
-        label: str | None = None,
-        placeholder: str | None = None,
-        validator: Callable[[str], str | None] | None = None,
-        prompt_text: str | None = None,
-        submit_callback: SubmitCallback | None = None,
+        prompt_text: str,
+        submit_callback: SubmitCallback,
+        timeout: float,
+        is_pending: Callable[[], bool],
     ):
-        super().__init__(timeout=750)
+        super().__init__(timeout=timeout)
         self.session = session
         self.player_index = player_index
-        self.modal_title = modal_title
-        self.input_label = label
-        self.input_placeholder = placeholder
-        self.validator = validator
         self.prompt_text = prompt_text
         self.submit_callback = submit_callback
-        self.open_modal.label = button_label
+        self.is_pending = is_pending
+        self.last_query = ''
+        self.result_text = ''
+        self.result_entries: tuple[CardNameEntry, ...] = ()
+        self.selected_entry: CardNameEntry | None = None
+        self.name_select: discord.ui.Select | None = None
+        self.declare_button: discord.ui.Button | None = None
+        self.declared = False
+        self.closing_text: str | None = None
+        self._build_components()
 
-    @discord.ui.button(label='Enter Card ID', style=discord.ButtonStyle.primary)
-    async def open_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
-        modal = EffectTextInputModal(
-            self.session,
-            self.player_index,
-            title=self.modal_title,
-            label=self.input_label,
-            placeholder=self.input_placeholder,
-            validator=self.validator,
-            prompt_text=self.prompt_text,
-            submit_callback=self.submit_callback,
+    def _build_components(self) -> None:
+        self.clear_items()
+        self.name_select = None
+        self.declare_button = None
+        if self.result_entries:
+            self.name_select = discord.ui.Select(
+                placeholder='Choose a card name...',
+                min_values=1,
+                max_values=1,
+                options=[
+                    discord.SelectOption(
+                        label=card_name_label(entry.representative)[:OPTION_TEXT_LIMIT],
+                        description=card_name_description(entry),
+                        value=str(entry.representative),
+                        default=entry == self.selected_entry,
+                    )
+                    for entry in self.result_entries
+                ],
+            )
+            self.name_select.callback = self._select_callback
+            self.add_item(self.name_select)
+            self.declare_button = discord.ui.Button(
+                label='Declare',
+                style=discord.ButtonStyle.success,
+                disabled=self.selected_entry is None,
+            )
+            self.declare_button.callback = self._declare_callback
+            self.add_item(self.declare_button)
+        searched = bool(self.result_text)
+        search_button = discord.ui.Button(
+            label='Search again' if searched else 'Search card names',
+            style=discord.ButtonStyle.secondary if searched else discord.ButtonStyle.primary,
         )
-        await interaction.response.send_modal(modal)
-        self.stop()
+        search_button.callback = self._search_callback
+        self.add_item(search_button)
+
+    def _message_content(self) -> str:
+        content = self.prompt_text
+        if self.result_text:
+            content += f'\n\n{self.result_text}'
+        if self.selected_entry is not None:
+            content += f'\nDeclare **{card_name_label(self.selected_entry.representative)}**?'
+        return content
+
+    async def _close_as_expired(self, interaction: discord.Interaction) -> None:
+        """The broker no longer waits: close the view, which every click would keep alive."""
+        try:
+            await interaction.response.edit_message(content=PROMPT_EXPIRED_TEXT, view=None)
+        finally:
+            self.stop()
+
+    async def _search_callback(self, interaction: discord.Interaction):
+        if self.declared:
+            await interaction.response.defer()
+            return
+        if not self.is_pending():
+            await self._close_as_expired(interaction)
+            return
+        # The view keeps running while the modal is open.
+        await interaction.response.send_modal(CardNameSearchModal(self))
+
+    async def show_search_results(self, interaction: discord.Interaction, query: str) -> None:
+        """Modal submit: show the results for `query` in this message."""
+        if self.declared or self.is_finished():
+            await interaction.response.edit_message(
+                content=self.closing_text or PROMPT_EXPIRED_TEXT,
+                view=None,
+            )
+            return
+        if not self.is_pending():
+            await self._close_as_expired(interaction)
+            return
+        query = query.strip()
+        result = search_card_names(query)
+        self.last_query = query
+        self.result_text = _search_result_text(query, result)
+        self.result_entries = result.entries
+        # A card number or a verbatim full name is preselected.
+        self.selected_entry = result.exact_entry
+        self._build_components()
+        await interaction.response.edit_message(content=self._message_content(), view=self)
+
+    async def _select_callback(self, interaction: discord.Interaction):
+        value = interaction.data['values'][0]
+        entry = next(
+            (entry for entry in self.result_entries if str(entry.representative) == value),
+            None,
+        )
+        if self.declared or entry is None:
+            await interaction.response.defer()
+            return
+        if not self.is_pending():
+            await self._close_as_expired(interaction)
+            return
+        self.selected_entry = entry
+        for option in self.name_select.options:
+            option.default = option.value == value
+        self.declare_button.disabled = False
+        await interaction.response.edit_message(content=self._message_content(), view=self)
+
+    async def _declare_callback(self, interaction: discord.Interaction):
+        entry = self.selected_entry
+        if self.declared or entry is None:
+            await interaction.response.defer()
+            return
+        # Set before any await, so later clicks are deferred and change nothing. Stopping
+        # comes after the edit: a stopped view drops clicks unanswered.
+        self.declared = True
+        try:
+            if self.submit_callback('action', entry.representative):
+                self.closing_text = f'You named **{card_name_label(entry.representative)}**.'
+            else:
+                self.closing_text = PROMPT_EXPIRED_TEXT
+            await interaction.response.edit_message(content=self.closing_text, view=None)
+        finally:
+            self.stop()
 
 
 class GameLobbyView(discord.ui.View):

@@ -43,6 +43,7 @@ The sources are the official Q&A (<https://zutomayocard.net/qa/>), Ground Rules 
 | 03-027's turn-end damage belongs to its caster. | Q&A No.25 | `effects/turn_end.py` |
 | 03-097 returns the revealed card to the top of the deck; if that card costs 6 or more, 03-097 moves itself to the charger. | Q&A No.45 | `custom.reveal_top_03_097` |
 | All three 03-055 block terminations hold. | Q&A No.28 | `effects/removal.py` |
+| A declared card name matches any printing with the same full printed name, including the part in parentheses. | Q&A No.50 | `cards.same_card_name`, `effects/interpreter._op_name_guess_bonus` |
 
 Citation trap: the 04-099 ruling rests on Ground Rules 2.3.6 and 5.1.3.2. It does not rest on Ground Rules 7.1.2, which covers added attack only, or on Q&A No.82, which covers resolution order only.
 
@@ -54,7 +55,7 @@ Citation trap: the 04-099 ruling rests on Ground Rules 2.3.6 and 5.1.3.2. It doe
 ## Layout
 
 ```
-cards.py        card database (425 cards), vocabularies, lookup arrays
+cards.py        card database (425 cards, 337 names), vocabularies, lookup arrays
 rng.py          counter-based RNG (splitmix64 + Fisher-Yates)
 state.py        GameState, PlayerState, Frame; fast_clone
 actions.py      DecisionRequest kinds and purposes

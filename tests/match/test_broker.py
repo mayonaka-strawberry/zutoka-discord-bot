@@ -1,5 +1,7 @@
 """MatchDecisionBroker: sequencing, timeout fallback, forfeit counting,
-replay, divergence detection, and illegal-submission rejection."""
+replay, divergence detection, illegal-submission rejection, the accepted flag
+submit returns, and is_pending. Also the decision descriptions persisted for the
+summary view."""
 
 from __future__ import annotations
 
@@ -7,7 +9,12 @@ import asyncio
 
 import pytest
 
-from engine_alpha.actions import binary, select_card, select_number, P_EFFECT_TARGET, P_SKIP_SWAP, P_EFFECT_NUMBER
+from engine_alpha.actions import (
+    binary, select_card, select_identity, select_number,
+    P_EFFECT_NUMBER, P_EFFECT_TARGET, P_NAME_GUESS, P_SKIP_SWAP,
+)
+from engine_alpha.cards import KEY_TO_INDEX, NUM_CARDS
+from zutomayo.match import broker as broker_module
 from zutomayo.match.broker import (
     CONSECUTIVE_TIMEOUT_FORFEIT_LIMIT,
     MatchDecisionBroker,
@@ -16,6 +23,7 @@ from zutomayo.match.broker import (
 )
 from zutomayo.match.decisions import (
     KIND_CARD_CHOICE,
+    KIND_IDENTITY_INPUT,
     KIND_NUMBER_CHOICE,
     KIND_SIDE_CHOICE,
     PAYLOAD_ACTION,
@@ -25,8 +33,10 @@ from zutomayo.match.decisions import (
     SIDE_LABEL_NIGHT,
     MatchDecisionOption,
     MatchDecisionRequest,
+    MatchDecisionResponse,
     request_fingerprint,
 )
+from zutomayo.match.persistence import describe_match_decision
 from tests.match.support import FakeSession, MemoryRecordStore
 
 
@@ -268,3 +278,168 @@ def test_fingerprint_shape():
         'player_index': 0,
         'action_count': 3,
     }
+
+
+class SubmissionProbeAdapter:
+    """Submits an unknown, an illegal, a legal and a repeated answer, and keeps what
+    the broker reported for each."""
+
+    def __init__(self) -> None:
+        self.broker = None
+        self.results: list[bool] = []
+
+    async def present_decision(self, session, request) -> None:
+        sequence_number = request.sequence_number
+        self.results = [
+            self.broker.submit(sequence_number + 1, PAYLOAD_ACTION, 0),
+            self.broker.submit(sequence_number, PAYLOAD_ACTION, 99),
+            self.broker.submit(sequence_number, PAYLOAD_ACTION, 1),
+            self.broker.submit(sequence_number, PAYLOAD_ACTION, 0),
+        ]
+
+
+def test_submit_reports_whether_the_answer_was_accepted():
+    adapter = SubmissionProbeAdapter()
+    broker = build_broker(adapter)
+
+    async def run():
+        response = await broker.request(
+            make_request(select_card(P_EFFECT_TARGET, [10, 11, 12]), timeout_seconds=5.0))
+        assert response.payload == 1
+        assert broker.submit(response.sequence_number, PAYLOAD_ACTION, 2) is False
+
+    asyncio.run(run())
+    assert adapter.results == [False, False, True, False]
+
+
+def test_submit_after_a_timeout_is_refused():
+    broker = build_broker(SilentAdapter())
+
+    async def run():
+        response = await broker.request(make_request(select_card(P_EFFECT_TARGET, [10, 11])))
+        assert response.timed_out is True
+        assert broker.submit(response.sequence_number, PAYLOAD_ACTION, 1) is False
+
+    asyncio.run(run())
+
+
+class PendingProbeAdapter:
+    """Records is_pending while presenting; answers with `action`, or never if None."""
+
+    def __init__(self, action: int | None = None) -> None:
+        self.action = action
+        self.broker = None
+        self.while_presenting: list[bool] = []
+
+    async def present_decision(self, session, request) -> None:
+        sequence_number = request.sequence_number
+        self.while_presenting.append(self.broker.is_pending(sequence_number))
+        if self.action is not None:
+            self.broker.submit(sequence_number, PAYLOAD_ACTION, self.action)
+            self.while_presenting.append(self.broker.is_pending(sequence_number))
+
+
+def test_is_pending_until_the_request_is_answered_or_times_out():
+    answering, silent = PendingProbeAdapter(action=1), PendingProbeAdapter()
+    broker = build_broker(answering)
+    silent.broker = broker
+
+    async def run():
+        answered = await broker.request(
+            make_request(select_card(P_EFFECT_TARGET, [10, 11]), timeout_seconds=5.0))
+        broker.adapters[0] = silent
+        timed_out = await broker.request(make_request(select_card(P_EFFECT_TARGET, [10, 11])))
+        assert timed_out.timed_out is True
+        assert broker.is_pending(answered.sequence_number) is False
+        assert broker.is_pending(timed_out.sequence_number) is False
+        assert broker.is_pending(timed_out.sequence_number + 1) is False, 'unknown request'
+
+    asyncio.run(run())
+    assert answering.while_presenting == [True, False], 'answered: no longer pending'
+    assert silent.while_presenting == [True]
+
+
+def make_hidden_hand_pick(hand_size: int = 4, timeout_seconds: float = 0.02) -> MatchDecisionRequest:
+    request = make_request(select_number(P_EFFECT_NUMBER, 1, hand_size),
+                           kind=KIND_NUMBER_CHOICE, timeout_seconds=timeout_seconds)
+    request.hidden_hand_pick = True
+    return request
+
+
+def patch_system_random(monkeypatch) -> list:
+    """Swap random.SystemRandom for a stand-in that picks the last option; returns
+    what it is offered."""
+    offered: list = []
+
+    class LastChoiceRandom:
+        def choice(self, sequence):
+            offered.append(list(sequence))
+            return sequence[-1]
+
+    monkeypatch.setattr(broker_module.random, 'SystemRandom', LastChoiceRandom)
+    return offered
+
+
+def test_hidden_hand_pick_fallback_is_a_random_legal_position(monkeypatch):
+    offered = patch_system_random(monkeypatch)
+    assert fallback_response_payload(make_hidden_hand_pick()) == (PAYLOAD_ACTION, 4)
+    assert offered == [[1, 2, 3, 4]], 'drawn from every legal position'
+
+
+def test_hidden_hand_pick_fallback_is_legal_with_the_real_source():
+    request = make_hidden_hand_pick()
+    for _ in range(50):
+        payload_type, position = fallback_response_payload(request)
+        assert payload_type == PAYLOAD_ACTION
+        assert request.engine_request.is_legal(position)
+
+
+def test_hidden_hand_pick_timeout_logs_the_drawn_position(monkeypatch):
+    patch_system_random(monkeypatch)
+    store = MemoryRecordStore()
+    broker = build_broker(SilentAdapter(), store)
+
+    async def run():
+        response = await broker.request(make_hidden_hand_pick(hand_size=3))
+        assert response.timed_out is True
+        assert response.payload == 3
+
+    asyncio.run(run())
+    assert store.decisions[0]['payload'] == 3, 'replay reads the logged position'
+
+
+def test_other_fallbacks_never_draw_at_random(monkeypatch):
+    class RefusingRandom:
+        def __init__(self) -> None:
+            raise AssertionError('only a hidden hand pick draws at random')
+
+    monkeypatch.setattr(broker_module.random, 'SystemRandom', RefusingRandom)
+    number = select_number(P_EFFECT_NUMBER, 1, 4)
+    assert fallback_response_payload(make_request(number, kind=KIND_NUMBER_CHOICE)) == (PAYLOAD_ACTION, 1)
+    identity = select_identity(P_NAME_GUESS, [5, 6, 7])
+    assert fallback_response_payload(make_request(identity, kind=KIND_IDENTITY_INPUT)) == (PAYLOAD_ACTION, 5)
+    passable = select_card(P_EFFECT_TARGET, [10, 11], allow_pass=True)
+    assert fallback_response_payload(make_request(passable)) == (PAYLOAD_ACTION, 2)
+
+
+# -- persisted decision descriptions -------------------------------------------
+
+
+def test_name_guess_is_described_by_the_card_name():
+    request = make_request(select_identity(P_NAME_GUESS, list(range(NUM_CARDS))),
+                           kind=KIND_IDENTITY_INPUT)
+    named = KEY_TO_INDEX['02-079']
+    described = describe_match_decision(request, MatchDecisionResponse(0, PAYLOAD_ACTION, named))
+    assert described['action'] == named
+    assert described['chosen_label'] == 'NIRA-CHAN (Humanoid) [にらちゃん（ヒューマノイド）]'
+
+
+def test_hidden_hand_pick_is_described_without_its_position():
+    described = describe_match_decision(
+        make_hidden_hand_pick(), MatchDecisionResponse(0, PAYLOAD_ACTION, 3))
+    assert described['chosen_label'] == 'Face-down card'
+    assert 'chosen_description' not in described
+
+    plain = make_request(select_number(P_EFFECT_NUMBER, 0, 5), kind=KIND_NUMBER_CHOICE)
+    described = describe_match_decision(plain, MatchDecisionResponse(0, PAYLOAD_ACTION, 3))
+    assert 'chosen_label' not in described, 'other number picks show the bare number'

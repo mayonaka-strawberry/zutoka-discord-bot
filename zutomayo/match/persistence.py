@@ -16,6 +16,7 @@ from typing import Any, Optional
 from zutomayo.engine import game_persistence
 from zutomayo.engine.game_persistence import GameRecordStore
 from zutomayo.match.decisions import (
+    KIND_IDENTITY_INPUT,
     PAYLOAD_ACTION,
     MatchDecisionRequest,
     MatchDecisionResponse,
@@ -28,6 +29,8 @@ log = logging.getLogger(__name__)
 SCHEMA_VERSION_ENGINE_ALPHA = 2
 ENGINE_NAME = 'engine_alpha'
 ENGINE_FORMAT_VERSION = 1
+
+HIDDEN_HAND_PICK_LABEL = 'Face-down card'
 
 
 def card_keys_for_definition_indices(definition_indices: list[int]) -> list[list[int]]:
@@ -95,15 +98,23 @@ def describe_match_decision(
     if response.payload_type == PAYLOAD_ACTION:
         action = response.payload
         described['action'] = action
-        for option in request.options:
-            if option.action == action:
-                described['chosen_label'] = option.label
-                described['chosen_description'] = option.description
-                break
+        if request.hidden_hand_pick:
+            # The player picked a shuffled slot, not this position.
+            described['chosen_label'] = HIDDEN_HAND_PICK_LABEL
+        elif request.kind == KIND_IDENTITY_INPUT:
+            from zutomayo.match.card_names import card_name_label
+
+            described['chosen_label'] = card_name_label(action)
         else:
-            engine_request = request.engine_request
-            if engine_request is not None and engine_request.is_pass(action):
-                described['chosen_label'] = 'PASS'
+            for option in request.options:
+                if option.action == action:
+                    described['chosen_label'] = option.label
+                    described['chosen_description'] = option.description
+                    break
+            else:
+                engine_request = request.engine_request
+                if engine_request is not None and engine_request.is_pass(action):
+                    described['chosen_label'] = 'PASS'
     else:
         described['card_keys'] = response.payload
     return described

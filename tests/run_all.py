@@ -32,6 +32,7 @@ COVERAGE_GATES = [
     ]),
     ('match layer (broker, driver, presentation, state view, narrator, persistence)', 90.0, [
         'zutomayo/match/broker.py',
+        'zutomayo/match/card_names.py',
         'zutomayo/match/decisions.py',
         'zutomayo/match/gate_presenter.py',
         'zutomayo/match/match_driver.py',

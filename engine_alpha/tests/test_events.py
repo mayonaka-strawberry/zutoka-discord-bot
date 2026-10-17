@@ -9,8 +9,8 @@ from engine_alpha import cards
 from engine_alpha.effects import interpreter
 from engine_alpha.events import (
     EVENT_BATTLE_RESULT, EVENT_CARDS_REVEALED, EVENT_CHRONOS_ADVANCED,
-    EVENT_DRAW, EVENT_GAME_OVER, EVENT_MULLIGAN_DONE, EVENT_NAMES,
-    EVENT_PHASE_CHANGED,
+    EVENT_DRAW, EVENT_EFFECT_STARTED, EVENT_GAME_OVER, EVENT_MULLIGAN_DONE,
+    EVENT_NAME_GUESS_RESOLVED, EVENT_NAMES, EVENT_PHASE_CHANGED,
 )
 from engine_alpha.game import Game
 from engine_alpha.state import PF_ATTACK_BONUS
@@ -206,3 +206,36 @@ def test_reveal_events_are_silent_without_a_sink():
 
     assert state.event_sink is None
     assert owner.flags[PF_ATTACK_BONUS] == 2 * 30
+
+
+# --- Name guess (03-047 family): the result comes right before its reveal ---
+
+def test_name_guess_event_is_registered():
+    assert EVENT_NAMES[EVENT_NAME_GUESS_RESOLVED] == "name_guess_resolved"
+    assert set(EVENT_NAMES) == set(range(len(EVENT_NAMES))), "event ids stay contiguous"
+
+
+def name_guess_events(named_key: str, revealed_key: str) -> list[tuple]:
+    """Player 0's 03-047 names `named_key`, then reveals a one-card opponent hand."""
+    game = make_game()
+    state = game.state
+    state.event_sink = []
+    state.players[1].hand[:] = [state.new_instance(cards.KEY_TO_INDEX[revealed_key])]
+    start_effect_on_battle_card(state, 0, "03-047")
+    request = interpreter.resume(state, None, None)
+    request = interpreter.resume(state, request, cards.KEY_TO_INDEX[named_key])
+    assert interpreter.resume(state, request, 1) is None
+    return state.event_sink
+
+
+def test_name_guess_resolved_precedes_the_reveal_with_the_bonus_or_0():
+    source = card_with_effect("03-047")
+    revealed = cards.KEY_TO_INDEX["02-079"]
+    for named_key, attack_bonus in (("01-022", 50), ("01-001", 0)):
+        events = name_guess_events(named_key, "02-079")
+        assert events == [
+            (EVENT_EFFECT_STARTED, 0, source, fx("03-047")),
+            (EVENT_NAME_GUESS_RESOLVED, 0, source, cards.KEY_TO_INDEX[named_key], attack_bonus),
+            (EVENT_CARDS_REVEALED, 0, 1, source, revealed),
+        ], named_key
+        assert all(type(value) is int for event in events for value in event)

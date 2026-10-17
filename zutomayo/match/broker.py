@@ -7,8 +7,9 @@ MatchDecisionBroker: the single choke point for every decision in a match.
 - during replay, answers from the decision log, checking each request's fingerprint;
 - live, presents through the player's adapter (Discord view, model, or test script)
   and waits up to the request's timeout;
-- on timeout applies the fallback (PASS if allowed, else the lowest legal action),
-  logged as `timed_out`, and counts consecutive timeouts for the forfeit rule;
+- on timeout applies the fallback (PASS if allowed, else the lowest legal action;
+  a random one for a hidden hand pick), logged as `timed_out`, and counts
+  consecutive timeouts for the forfeit rule;
 - appends every live response to the persistence log, if one is attached.
 
 Keep this module import-light: no discord, views, or engine imports.
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from typing import Any, Optional, Protocol
 
 from zutomayo.match.decisions import (
@@ -54,8 +56,9 @@ class MatchResumeDivergenceError(Exception):
 
 
 def fallback_response_payload(request: MatchDecisionRequest) -> tuple[str, Any]:
-    """The timeout answer: PASS if allowed, else the lowest legal action. Bot-layer
-    kinds: an empty side-deck switch, or the first option (Day for the side choice)."""
+    """The timeout answer: PASS if allowed, else the lowest legal action, or a random
+    legal position for a hidden hand pick. Bot-layer kinds: an empty side-deck switch,
+    or the first option (Day for the side choice)."""
     engine_request = request.engine_request
     if engine_request is None:
         if request.kind == KIND_SIDE_DECK_SWITCH:
@@ -65,6 +68,10 @@ def fallback_response_payload(request: MatchDecisionRequest) -> tuple[str, Any]:
         raise ValueError(f'no fallback for bot-layer kind {request.kind!r}')
     if engine_request.allow_pass:
         return PAYLOAD_ACTION, len(engine_request.candidates)
+    if request.hidden_hand_pick:
+        # The lowest position is always the opponent's oldest card. The OS source
+        # leaves the engine RNG alone; replay reads the logged answer.
+        return PAYLOAD_ACTION, random.SystemRandom().choice(engine_request.legal_actions())
     return PAYLOAD_ACTION, engine_request.legal_actions()[0]
 
 
@@ -128,23 +135,30 @@ class MatchDecisionBroker:
             await self.persistence.append_decision(request, response)
         return response
 
-    def submit(self, sequence_number: int, payload_type: str, payload: Any) -> None:
-        """Deliver an answer. Ignored if the request is unknown or already resolved, or
-        the action is illegal: the log must never hold an unappliable action."""
+    def submit(self, sequence_number: int, payload_type: str, payload: Any) -> bool:
+        """Deliver an answer; True when it is accepted. Ignored if the request is unknown
+        or already resolved, or the action is illegal: the log must never hold an
+        unappliable action."""
         pending = self.pending_futures.get(sequence_number)
         if pending is None:
-            return
+            return False
         request, future = pending
         if future.done():
-            return
+            return False
         if payload_type == PAYLOAD_ACTION and request.engine_request is not None:
             if not request.engine_request.is_legal(payload):
                 log.warning(
                     'Ignoring illegal action %r for sequence %d (%s)',
                     payload, sequence_number, request.kind,
                 )
-                return
+                return False
         future.set_result((payload_type, payload))
+        return True
+
+    def is_pending(self, sequence_number: int) -> bool:
+        """Whether the request still waits for an answer; False once answered or timed out."""
+        pending = self.pending_futures.get(sequence_number)
+        return pending is not None and not pending[1].done()
 
     def timeout_forfeit_player(self) -> Optional[int]:
         """The player index that hit the consecutive-timeout limit, if any."""

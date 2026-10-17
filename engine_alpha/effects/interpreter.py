@@ -16,8 +16,10 @@ from ..actions import (
     P_EFFECT_TARGET, P_EFFECT_NUMBER, P_NAME_GUESS, P_CHRONOS_VALUE,
     select_card, select_identity, select_number,
 )
-from ..cards import CARD_TYPE_T, NUM_CARDS, SONG_T, TYPE_CHARACTER
-from ..events import EVENT_CARDS_REVEALED, EVENT_EFFECT_STARTED, EVENT_HP_CHANGED
+from ..cards import CARD_TYPE_T, NUM_CARDS, SONG_T, TYPE_CHARACTER, same_card_name
+from ..events import (
+    EVENT_CARDS_REVEALED, EVENT_EFFECT_STARTED, EVENT_HP_CHANGED, EVENT_NAME_GUESS_RESOLVED,
+)
 from ..state import (
     Frame, GameState,
     PF_DAMAGE_REDUCTION, PF_DAY_NIGHT_REVERSED,
@@ -542,14 +544,17 @@ def _op_charger_to_abyss(state, frame, op, request, answer):
 
 
 def _op_name_guess_bonus(state, frame, op, request, answer):
-    """03-047 family: +N attack if the guess names the chosen opponent hand card
-    (1-based index). The card is revealed to both players either way (Ground Rules
-    10.2.1)."""
+    """03-047 family: +N attack if the chosen opponent hand card (1-based index) has
+    the named card's full printed name, any printing (Q&A No.50). The card is revealed
+    to both players either way (Ground Rules 10.2.1)."""
     _, guess_reg, index_reg, amount = op
     opponent = state.players[1 - frame.owner]
     revealed = opponent.hand[frame.regs[index_reg] - 1]
+    named_definition = frame.regs[guess_reg]
+    matched = same_card_name(state.inst_def[revealed], named_definition)
+    _emit_name_guess_resolved(state, frame, named_definition, amount if matched else 0)
     _emit_reveal(state, frame, opponent.index, (revealed,))
-    if state.inst_def[revealed] == frame.regs[guess_reg]:
+    if matched:
         add_attack_modifier(state.players[frame.owner], amount)
     frame.pc += 1
     return None
@@ -635,6 +640,15 @@ def _emit_reveal(state, frame, revealed_owner_index: int, instance_ids) -> None:
         (EVENT_CARDS_REVEALED, frame.owner, revealed_owner_index,
          state.inst_def[frame.source],
          *(state.inst_def[instance_id] for instance_id in instance_ids)))
+
+
+def _emit_name_guess_resolved(state, frame, named_definition: int, attack_bonus: int) -> None:
+    """Emit EVENT_NAME_GUESS_RESOLVED; a no-op without a sink."""
+    if state.event_sink is None:
+        return
+    state.event_sink.append(
+        (EVENT_NAME_GUESS_RESOLVED, frame.owner, state.inst_def[frame.source],
+         named_definition, attack_bonus))
 
 
 def _op_reveal_reg(state, frame, op, request, answer):

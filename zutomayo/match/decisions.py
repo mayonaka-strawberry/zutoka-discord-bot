@@ -23,7 +23,7 @@ from engine_alpha.actions import (
 # Presentation kinds: how a request is shown, distinct from engine int kinds.
 KIND_CARD_CHOICE = 'card_choice'
 KIND_CARD_MULTI_CHOICE = 'card_multi_choice'      # compound: mulligan, set slots
-KIND_IDENTITY_INPUT = 'identity_input'            # name guess text modal
+KIND_IDENTITY_INPUT = 'identity_input'            # name guess: card-name search, then Declare
 KIND_NUMBER_CHOICE = 'number_choice'
 KIND_BINARY_CHOICE = 'binary_choice'
 KIND_SIDE_DECK_SWITCH = 'side_deck_switch'        # bot-layer, TCG between matches
@@ -60,10 +60,10 @@ class MatchDecisionRequest:
     options: list[MatchDecisionOption] = field(default_factory=list)
     minimum_value: int = 0                     # number selection bounds (inclusive)
     maximum_value: int = 0
+    hidden_hand_pick: bool = False             # opponent hand positions, shown shuffled
     allow_pass: bool = False
     pass_label: str = ''
     binary_labels: tuple[str, str] = ('No', 'Yes')
-    validator: Any = None                      # identity input: text -> action int or None
     timeout_seconds: float = 300.0
     opponent_name: str = 'opponent'
     display_embed: Any = None                  # never serialized

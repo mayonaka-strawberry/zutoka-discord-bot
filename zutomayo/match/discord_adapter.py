@@ -12,6 +12,7 @@ longer fits the live candidates is dropped and the prompt is shown again.
 from __future__ import annotations
 
 import logging
+import random
 from typing import Any, Callable, Optional
 
 from engine_alpha.actions import P_INITIAL_CARD, P_MULLIGAN, P_SET_SLOT_A, P_SET_SLOT_B
@@ -362,15 +363,15 @@ class DiscordMatchDecisionAdapter:
         from zutomayo.ui.views import (
             ActionSelectView,
             BinaryChoiceView,
+            CardNameDeclarationView,
             ConfirmableChoiceView,
             EffectNumberSelectView,
-            EffectTextInputView,
         )
 
         sequence_number = request.sequence_number
 
-        def submit_action(payload_type: str, payload: Any) -> None:
-            session.broker.submit(sequence_number, PAYLOAD_ACTION, payload)
+        def submit_action(payload_type: str, payload: Any) -> bool:
+            return session.broker.submit(sequence_number, PAYLOAD_ACTION, payload)
 
         if request.kind == KIND_CARD_CHOICE:
             from engine_alpha.actions import P_INITIAL_CARD
@@ -384,30 +385,31 @@ class DiscordMatchDecisionAdapter:
                 submit_callback=submit_action,
             )
         if request.kind == KIND_NUMBER_CHOICE:
-            def submit_number(payload_type: str, payload: Any) -> None:
-                session.broker.submit(sequence_number, PAYLOAD_ACTION, int(payload))
+            def submit_number(payload_type: str, payload: Any) -> bool:
+                return session.broker.submit(sequence_number, PAYLOAD_ACTION, int(payload))
 
+            placeholder = 'Select a number...'
+            slot_positions = None
+            if request.hidden_hand_pick:
+                # A fresh order each time, so no slot points at a card seen before.
+                positions = range(request.minimum_value, request.maximum_value + 1)
+                slot_positions = random.SystemRandom().sample(positions, len(positions))
+                placeholder = 'Select a card...'
             return EffectNumberSelectView(
                 session, request.player_index,
                 request.minimum_value, request.maximum_value,
+                placeholder=placeholder,
                 submit_callback=submit_number,
+                slot_positions=slot_positions,
+                timeout=request.timeout_seconds,
             )
         if request.kind == KIND_IDENTITY_INPUT:
-            def modal_validator(text: str) -> Optional[str]:
-                if request.validator(text) is None:
-                    return 'Unknown or invalid card. Enter a card ID like 03-045.'
-                return None
-
-            def submit_text(payload_type: str, payload: Any) -> None:
-                action = request.validator(payload)
-                if action is not None:
-                    session.broker.submit(sequence_number, PAYLOAD_ACTION, action)
-
-            return EffectTextInputView(
+            return CardNameDeclarationView(
                 session, request.player_index,
-                validator=modal_validator,
                 prompt_text=request.prompt_text,
-                submit_callback=submit_text,
+                submit_callback=submit_action,
+                timeout=request.timeout_seconds,
+                is_pending=lambda: session.broker.is_pending(sequence_number),
             )
         if request.kind == KIND_BINARY_CHOICE:
             return BinaryChoiceView(
