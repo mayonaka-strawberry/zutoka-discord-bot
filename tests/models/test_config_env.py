@@ -226,11 +226,30 @@ def test_default_config_is_valid(stack):
     stack.Config().validate()
 
 
-def test_alpha_rejects_opponent_probabilities_that_do_not_sum(isolated_env,
-                                                              monkeypatch):
-    monkeypatch.setenv('ALPHA_LEAGUE_P_POOL_DECKS', '0.9')
-    with pytest.raises(ValueError, match='must sum to 1.0'):
+ALPHA_LEAGUE_FRACTION_KEYS = pytest.mark.parametrize(
+    'key', ['ALPHA_LEAGUE_P_VS_SNAPSHOT', 'ALPHA_LEAGUE_DRAFTED_GAME_FRACTION',
+            'ALPHA_LEAGUE_PROBABILITY_USER_DECK',
+            'ALPHA_LEAGUE_PROBABILITY_USER_DECK_FINAL',
+            'ALPHA_LEAGUE_PROBABILITY_USER_DECK_RAMP_FRACTION'])
+
+
+@ALPHA_LEAGUE_FRACTION_KEYS
+@pytest.mark.parametrize('value', ['-0.1', '1.5'])
+def test_alpha_rejects_league_fractions_outside_zero_to_one(isolated_env, monkeypatch,
+                                                            key, value):
+    monkeypatch.setenv(key, value)
+    with pytest.raises(ValueError, match=rf'{key} must be within \[0, 1\]'):
         alpha_config.load_config()
+
+
+@ALPHA_LEAGUE_FRACTION_KEYS
+@pytest.mark.parametrize('value', ['0', '1'])
+def test_alpha_accepts_league_fractions_at_the_bounds(isolated_env, monkeypatch,
+                                                      key, value):
+    """No probability-sum rule binds them any more: each stands alone."""
+    monkeypatch.setenv(key, value)
+    league = alpha_config.load_config().league
+    assert getattr(league, key.removeprefix('ALPHA_LEAGUE_').lower()) == float(value)
 
 
 def test_ppo_rejects_opponent_probabilities_that_do_not_sum(isolated_env,
@@ -274,8 +293,12 @@ def test_probability_group_helper_reports_the_breakdown():
 # --- Fields removed on purpose ---
 
 def test_unimplemented_and_dead_fields_are_gone():
-    """`gumbel_root_top_k` was never implemented and the baseline-eval fields
-    had no reader; keeping them would advertise knobs that do nothing."""
+    """`gumbel_root_top_k` was never implemented, the baseline-eval fields had no
+    reader, and p_vs_snapshot plus drafted_game_fraction replaced the four-way opponent
+    mix; keeping them would advertise knobs that do nothing."""
     assert not hasattr(alpha_config.MCTSConfig(), 'gumbel_root_top_k')
     assert not hasattr(alpha_config.TrainConfig(), 'baseline_eval_interval_steps')
     assert not hasattr(alpha_config.TrainConfig(), 'baseline_eval_games')
+    for removed in ('p_latest_vs_latest', 'p_vs_snapshot_stored_deck',
+                    'p_vs_snapshot_drafting', 'p_pool_decks'):
+        assert not hasattr(alpha_config.LeagueConfig(), removed), removed

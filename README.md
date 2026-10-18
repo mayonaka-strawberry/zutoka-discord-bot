@@ -89,7 +89,7 @@ Copy-Item ppo_transformer\runs\checkpoints\iteration_00800.pt model\ppo_transfor
 - An entry may be a file (extension optional) or a directory of `*.pt` files, where the last by name wins.
 - Prefer a file from `runs/checkpoints/`: it carries its config. Bare weights (`latest_weights.pt`) load with the `NetConfig` defaults in the stack's `config.py`.
 - The model plays a random deck from `zutomayo/bot_decks.json` (gitignored, written by `python -m alpha_zero.scripts.export_best_decks`), or from `zutomayo/default_decks.json` when that file is absent.
-- Model A searches with `ALPHA_LIVE_SIMULATIONS` (default 64) simulations per decision; `ALPHA_LIVE_MODE=policy` plays the raw policy instead.
+- Model A searches with `ALPHA_LIVE_SIMULATIONS` (default 384) simulations per decision; `ALPHA_LIVE_MODE=policy` plays the raw policy instead.
 - Inference runs off the event loop behind a 45-second watchdog. Any failure submits a legal fallback action.
 - Models see the full game state, including the opponent's hand and deck order. This is deliberate.
 
@@ -113,10 +113,11 @@ python -m ppo_transformer.train.run_train --smoke  # same flags for ppo_transfor
 
 | | `data/training_decks_ppo.json` | `data/training_decks_alpha_zero.json` |
 | --- | --- | --- |
-| Decks holding a CHAOS card | dropped | kept |
-| `probability_user_deck` | 1.0 | 0.75 (the rest are generated) |
+| Decks holding a CHAOS card | dropped | kept in the file, skipped unless `ALPHA_LEAGUE_INCLUDE_CHAOS_DECKS=true` |
+| `probability_user_deck` | 1.0 | 0.65 rising to 0.90 by half the learning-rate horizon; the rest are generated |
+| Drafting | never | `ALPHA_LEAGUE_DRAFTED_GAME_FRACTION` (default 0) |
 
-Without a pool, alpha_zero falls back to generated decks and ppo_transformer refuses to start.
+Without a pool, both stacks refuse to start while `probability_user_deck` is above 0 (for alpha_zero, its start or final value; it also starts if every game drafts).
 
 ## Scripts
 

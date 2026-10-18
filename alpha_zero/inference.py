@@ -36,7 +36,7 @@ CHECKPOINT_DIRECTORY = PACKAGE_ROOT / 'runs' / 'checkpoints'
 
 MODE_POLICY = 'policy'
 MODE_SEARCH = 'search'
-LIVE_SIMULATIONS = 64
+LIVE_SIMULATIONS = 384
 
 # Deployed model name -> (checkpoint fingerprint, evaluator); a changed checkpoint
 # replaces its entry, so the cache cannot grow without bound.

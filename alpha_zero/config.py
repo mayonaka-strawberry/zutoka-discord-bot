@@ -22,11 +22,11 @@ SECTIONS = ("engine", "net", "mcts", "train", "league")
 
 @dataclass
 class NetConfig:
-    # Sized for fast self-play forwards: 8 x 384 is about 15M parameters.
-    embed_dim: int = 384
-    num_layers: int = 8
+    # Sized for live CPU search: 6 x 320 is about 7.9M parameters.
+    embed_dim: int = 320
+    num_layers: int = 6
     num_heads: int = 8
-    feedforward_dim: int = 1536
+    feedforward_dim: int = 1280
     dropout: float = 0.0
     pointer_dim: int = 64
     value_hidden_dim: int = 256
@@ -35,9 +35,9 @@ class NetConfig:
     identity_embedding_dim: int = 96
     # Rows beyond the card count, so new cards keep checkpoints loadable
     # (model_common/migrate_checkpoint.py grows past it).
-    identity_capacity: int = 512
+    identity_capacity: int = 640
     # Same headroom, for the effect table.
-    effect_capacity: int = 320
+    effect_capacity: int = 448
     # Same headroom, for the song table.
     song_capacity: int = 64
 
@@ -54,14 +54,14 @@ class MCTSConfig:
     dirichlet_alpha_scale: float = 10.0  # alpha = scale / |legal|, clipped below
     dirichlet_alpha_min: float = 0.03
     dirichlet_alpha_max: float = 1.0
-    virtual_loss: int = 3
+    virtual_loss: int = 1
     max_leaves_per_step: int = 12
     # Counts decisions, not turns (a turn is several decisions).
     temperature_moves: int = 30
     playout_cap_fraction: float = 0.25  # fraction of games played at reduced budget
     playout_cap_divisor: int = 4
     # Break near-ties in root visits by prior plus Gumbel noise, not index order.
-    use_gumbel_root: bool = False
+    use_gumbel_root: bool = True
 
 
 @dataclass
@@ -81,7 +81,8 @@ class TrainConfig:
     # Value cross-entropy weight relative to the policy loss.
     value_loss_weight: float = 1.0
     # CHAOS self-defeat value-loss weights: the self-defeater's decisions train
-    # harder, the gifted winner's softer (model_common.termination).
+    # harder, the gifted winner's softer (model_common.termination). Inert while
+    # CHAOS decks are excluded and no game drafts.
     self_defeat_loss_sample_weight: float = 4.0
     self_defeat_win_sample_weight: float = 0.25
     checkpoint_interval_steps: int = 2000
@@ -110,17 +111,23 @@ class LeagueConfig:
     elo_k_factor: float = 24.0
     # Beta prior pulling deck win rates toward 0.5: (wins + p) / (games + 2p).
     deck_shrinkage_prior: float = 5.0
-    # Per-game opponent sampling distribution (must sum to 1.0).
-    p_latest_vs_latest: float = 0.55
-    p_vs_snapshot_stored_deck: float = 0.20
-    p_vs_snapshot_drafting: float = 0.10
-    # The remainder in sample_matchup; validated with the others.
-    p_pool_decks: float = 0.15
-    # Real player decks for fixed-deck matchups (scripts/export_training_decks.py);
-    # the rest are generated, and a missing file means all are. Keeps CHAOS decks:
-    # only p_pool_decks, the stored-deck learner seat and fixed-deck gating read it.
+    # Share of self-play games against a league snapshot, once one exists.
+    p_vs_snapshot: float = 0.30
+    # Share of self-play and gating games that draft; the rest play fixed decks.
+    drafted_game_fraction: float = 0.0
+    # Real player decks for fixed-deck games (scripts/export_training_decks.py); the
+    # rest are generated. A missing file is fatal unless every game drafts or the
+    # start and final probability_user_deck are both 0.
     deck_pool_path: str = 'data/training_decks_alpha_zero.json'
-    probability_user_deck: float = 0.75
+    # Share of fixed decks drawn from the pool at step 0, moving linearly to the final.
+    probability_user_deck: float = 0.65
+    # Share from the ramp's end on; gating always uses it.
+    probability_user_deck_final: float = 0.90
+    # Ramp length as a fraction of ALPHA_TRAIN_LEARNING_RATE_DECAY_STEPS; 0 plays the
+    # final share from step 0.
+    probability_user_deck_ramp_fraction: float = 0.5
+    # Keep pool decks holding a CHAOS card, and CHAOS cards in generated decks.
+    include_chaos_decks: bool = False
 
 
 @dataclass
@@ -136,17 +143,26 @@ class Config:
 
     def validate(self) -> "Config":
         """Fail at load on inconsistent settings, not with a shape error mid-run."""
-        env_config.check_probabilities_sum(
-            {"p_latest_vs_latest": self.league.p_latest_vs_latest,
-             "p_vs_snapshot_stored_deck": self.league.p_vs_snapshot_stored_deck,
-             "p_vs_snapshot_drafting": self.league.p_vs_snapshot_drafting,
-             "p_pool_decks": self.league.p_pool_decks},
-            "ALPHA_LEAGUE opponent sampling")
-
+        if not 0.0 <= self.league.p_vs_snapshot <= 1.0:
+            raise ValueError(
+                "ALPHA_LEAGUE_P_VS_SNAPSHOT must be within [0, 1], got "
+                f"{self.league.p_vs_snapshot}")
+        if not 0.0 <= self.league.drafted_game_fraction <= 1.0:
+            raise ValueError(
+                "ALPHA_LEAGUE_DRAFTED_GAME_FRACTION must be within [0, 1], got "
+                f"{self.league.drafted_game_fraction}")
         if not 0.0 <= self.league.probability_user_deck <= 1.0:
             raise ValueError(
                 "ALPHA_LEAGUE_PROBABILITY_USER_DECK must be within [0, 1], got "
                 f"{self.league.probability_user_deck}")
+        if not 0.0 <= self.league.probability_user_deck_final <= 1.0:
+            raise ValueError(
+                "ALPHA_LEAGUE_PROBABILITY_USER_DECK_FINAL must be within [0, 1], got "
+                f"{self.league.probability_user_deck_final}")
+        if not 0.0 <= self.league.probability_user_deck_ramp_fraction <= 1.0:
+            raise ValueError(
+                "ALPHA_LEAGUE_PROBABILITY_USER_DECK_RAMP_FRACTION must be within "
+                f"[0, 1], got {self.league.probability_user_deck_ramp_fraction}")
         if not self.league.deck_pool_path:
             # An empty path is the working directory, which fails deep in the loader.
             raise ValueError(
@@ -213,7 +229,7 @@ RUN_SETTINGS: tuple[tuple[str, object, str], ...] = (
     ("gating_games", None, "blank = use ALPHA_LEAGUE_GATING_GAMES"),
     ("device", None, "blank = cuda when available, else cpu"),
     ("live_mode", "search", "deployed agent: search or policy"),
-    ("live_simulations", 64, "deployed search budget per decision"),
+    ("live_simulations", 384, "deployed search budget per decision"),
 )
 
 _SECTION_NOTES = {
