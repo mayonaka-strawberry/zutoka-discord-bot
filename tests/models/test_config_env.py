@@ -252,6 +252,23 @@ def test_alpha_accepts_league_fractions_at_the_bounds(isolated_env, monkeypatch,
     assert getattr(league, key.removeprefix('ALPHA_LEAGUE_').lower()) == float(value)
 
 
+@pytest.mark.parametrize('value', ['-0.1', '1.5'])
+def test_alpha_rejects_a_value_target_outcome_weight_outside_zero_to_one(
+        isolated_env, monkeypatch, value):
+    monkeypatch.setenv('ALPHA_TRAIN_VALUE_TARGET_OUTCOME_WEIGHT', value)
+    with pytest.raises(ValueError, match=r'ALPHA_TRAIN_VALUE_TARGET_OUTCOME_WEIGHT '
+                                         r'must be within \[0, 1\]'):
+        alpha_config.load_config()
+
+
+@pytest.mark.parametrize('value', ['0', '1'])
+def test_alpha_accepts_a_value_target_outcome_weight_at_the_bounds(
+        isolated_env, monkeypatch, value):
+    monkeypatch.setenv('ALPHA_TRAIN_VALUE_TARGET_OUTCOME_WEIGHT', value)
+    train = alpha_config.load_config().train
+    assert train.value_target_outcome_weight == float(value)
+
+
 def test_ppo_rejects_opponent_probabilities_that_do_not_sum(isolated_env,
                                                             monkeypatch):
     monkeypatch.setenv('PPO_TRAIN_P_VS_RANDOM', '0.4')
