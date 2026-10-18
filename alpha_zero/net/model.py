@@ -1,5 +1,5 @@
 """UniguriNet: a transformer over card tokens with pointer, identity and number
-policy heads and a win/draw/loss value head.
+policy heads, a win/draw/loss value head and an auxiliary final-HP-margin head.
 
 - Token embedding: categorical embeddings, the float features and an effect block
   (the 160-dim IR features projected to 64, plus a learned 32-dim embedding),
@@ -7,11 +7,13 @@ policy heads and a win/draw/loss value head.
 - The global-feature MLP output is added to the CLS token.
 - Pre-LN encoder, then a final LayerNorm before the heads.
 - The identity head is tied to the identity embedding, so draft picks and name
-  guesses share card knowledge.
+  guesses share card knowledge. Its logits are scaled by 1/sqrt(embedding dim);
+  unscaled, untrained priors are near one-hot on a random card.
 - Identity, effect and song tables are allocated at configured capacities, with null
   indices mapped to the last row, so new catalog rows fit without shape changes.
 - Value is for the acting player: the expectation of [win, draw, loss] as
-  [+1, 0, -1].
+  [+1, 0, -1]. The HP-margin head reads the value MLP's hidden layer and is a
+  training-only target, returned on request.
 """
 
 from __future__ import annotations
@@ -85,11 +87,14 @@ class UniguriNet(nn.Module):
         self.value_head = nn.Sequential(
             nn.Linear(d, cfg.value_hidden_dim), nn.GELU(),
             nn.Linear(cfg.value_hidden_dim, 3))
+        self.hp_margin_head = nn.Linear(cfg.value_hidden_dim, 1)
         self.register_buffer(
             "wdl_values", torch.tensor(WDL_OUTCOME_VALUES), persistent=False)
         self.pointer_query = nn.Linear(d, cfg.pointer_dim)
         self.pointer_key = nn.Linear(d, cfg.pointer_dim)
         self.identity_projection = nn.Linear(d, cfg.identity_embedding_dim)
+        # A plain float, so the state dict carries no new entry.
+        self.identity_logit_scale = cfg.identity_embedding_dim ** -0.5
         self.identity_bias = nn.Parameter(torch.zeros(cfg.identity_capacity))
         self.number_head = nn.Linear(d, N_NUMBER_ACTIONS)
 
@@ -108,7 +113,7 @@ class UniguriNet(nn.Module):
 
     def forward(self, tok_int: torch.Tensor, tok_float: torch.Tensor,
                 token_mask: torch.Tensor, global_features: torch.Tensor,
-                return_value_logits: bool = False):
+                return_value_logits: bool = False, return_hp_margin: bool = False):
         """
         tok_int   [B, T, 7] long   tok_float [B, T, F] float
         token_mask[B, T] bool (True = real token)
@@ -116,7 +121,8 @@ class UniguriNet(nn.Module):
         Returns: value [B] (win/draw/loss expectation; the [B, 3] logits when
                  return_value_logits), pointer_scores [B, T],
                  identity_logits [B, identity_capacity],
-                 number_logits [B, N_NUMBER_ACTIONS]
+                 number_logits [B, N_NUMBER_ACTIONS],
+                 then hp_margin [B] when return_hp_margin
         """
         identity_index = tok_int[..., 0]
         identity_index = torch.where(
@@ -151,7 +157,8 @@ class UniguriNet(nn.Module):
         encoded = self._encode(tokens, token_mask)
         cls = encoded[:, 0]
 
-        value_logits = self.value_head(cls)                            # [B,3]
+        value_hidden = self.value_head[1](self.value_head[0](cls))     # [B,H]
+        value_logits = self.value_head[2](value_hidden)                # [B,3]
         if return_value_logits:
             value = value_logits
         else:
@@ -160,10 +167,13 @@ class UniguriNet(nn.Module):
         keys = self.pointer_key(encoded)                               # [B,T,P]
         pointer_scores = (keys @ query.transpose(1, 2)).squeeze(-1)    # [B,T]
         pointer_scores = pointer_scores / (self.cfg.pointer_dim ** 0.5)
-        identity_logits = (self.identity_projection(cls)
-                           @ self.identity_embedding.weight[:self.cfg.identity_capacity].T
-                           + self.identity_bias)
+        identity_logits = ((self.identity_projection(cls)
+                            @ self.identity_embedding.weight[:self.cfg.identity_capacity].T)
+                           * self.identity_logit_scale + self.identity_bias)
         number_logits = self.number_head(cls)
+        if return_hp_margin:
+            hp_margin = self.hp_margin_head(value_hidden).squeeze(-1)  # [B]
+            return value, pointer_scores, identity_logits, number_logits, hp_margin
         return value, pointer_scores, identity_logits, number_logits
 
     def parameter_count(self) -> int:

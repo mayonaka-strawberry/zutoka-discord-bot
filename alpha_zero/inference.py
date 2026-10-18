@@ -70,6 +70,7 @@ class _Evaluator:
         import torch
 
         from engine_alpha.encoding.observation import encode
+        from model_common.device import serialized_on_mps
         from .net.model import priors_for_request
 
         encoded = [encode(game) for game in games]
@@ -85,16 +86,17 @@ class _Evaluator:
             tok_float[row, :token_count] = torch.from_numpy(tokens_float)
             token_mask[row, :token_count] = True
             global_features[row] = torch.from_numpy(globals_row)
-        with torch.no_grad():
-            value, pointer, identity, number = self.net(
+        # One transfer per output, then priors on CPU outside the lock.
+        with serialized_on_mps(self.device), torch.no_grad():
+            outputs = self.net(
                 tok_int.to(self.device), tok_float.to(self.device),
                 token_mask.to(self.device), global_features.to(self.device))
+            value, pointer, identity, number = (output.float().cpu() for output in outputs)
         results = []
         for row, game in enumerate(games):
             priors = priors_for_request(
                 game.decision_context(), encoded[row][3],
-                pointer[row].float().cpu(), identity[row].float().cpu(),
-                number[row].float().cpu())
+                pointer[row], identity[row], number[row])
             results.append((float(value[row]), priors.numpy()))
         return results
 
@@ -110,7 +112,7 @@ def _checkpoint_fingerprint(checkpoint_path: Path) -> tuple:
 def _build_evaluator(checkpoint_path: Path) -> _Evaluator:
     import torch
 
-    from model_common.device import bound_inference_threads, select_device
+    from model_common.device import bound_inference_threads, select_device, serialized_on_mps
     from .config import NetConfig
     from .net.model import UniguriNet, playing_state_dict
 
@@ -130,7 +132,9 @@ def _build_evaluator(checkpoint_path: Path) -> _Evaluator:
     device = select_device()
     if device.type == 'cpu':
         bound_inference_threads()
-    net = net.to(device).eval()
+    # The caller holds _LOADED_MODELS_LOCK: always take it before the MPS lock.
+    with serialized_on_mps(device):
+        net = net.to(device).eval()
     for parameter in net.parameters():
         parameter.requires_grad_(False)
     return _Evaluator(net, device)
@@ -139,8 +143,14 @@ def _build_evaluator(checkpoint_path: Path) -> _Evaluator:
 def _load_evaluator(checkpoint_path: Path) -> _Evaluator:
     """The shared evaluator for `checkpoint_path`: loaded on first use, and
     again only when the file on disk has changed since it was cached."""
+    from model_common.device import MPS_LOCK_TIMEOUT_SECONDS
+
     fingerprint = _checkpoint_fingerprint(checkpoint_path)
-    with _LOADED_MODELS_LOCK:
+    # Bounded: the holder may itself be waiting out the MPS lock, so waits must not stack.
+    if not _LOADED_MODELS_LOCK.acquire(timeout=MPS_LOCK_TIMEOUT_SECONDS):
+        raise TimeoutError(
+            f'AlphaZero model cache lock not acquired within {MPS_LOCK_TIMEOUT_SECONDS} s')
+    try:
         cached = _LOADED_MODELS.get(DEPLOYED_MODEL_NAME)
         if cached is not None and cached[0] == fingerprint:
             return cached[1]
@@ -148,6 +158,8 @@ def _load_evaluator(checkpoint_path: Path) -> _Evaluator:
         _LOADED_MODELS[DEPLOYED_MODEL_NAME] = (fingerprint, evaluator)
         log.info('AlphaZero network loaded from %s on %s', checkpoint_path, evaluator.device)
         return evaluator
+    finally:
+        _LOADED_MODELS_LOCK.release()
 
 
 def _live_search_config():

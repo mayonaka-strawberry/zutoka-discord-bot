@@ -253,6 +253,8 @@ model_common/deck_pool.py
 model_common/graceful_stop.py
 model_common/metrics_log.py
 model_common/termination.py
+tests/models/test_alpha_zero_losses.py
+tests/models/test_alpha_zero_replay_buffer.py
 tests/models/test_alpha_zero_selfplay.py
 tests/models/test_deck_pool.py
 tests/models/test_metrics_log.py

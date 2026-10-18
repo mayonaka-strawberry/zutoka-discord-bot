@@ -51,7 +51,7 @@ class PpoAgent:
             return
         import torch
 
-        from model_common.device import bound_inference_threads, select_device
+        from model_common.device import bound_inference_threads, select_device, serialized_on_mps
         from .config import NetConfig
         from .net.model import PpoPolicyNetwork
 
@@ -74,7 +74,8 @@ class PpoAgent:
         device = select_device()
         if device.type == 'cpu':
             bound_inference_threads()
-        net = net.to(device).eval()
+        with serialized_on_mps(device):
+            net = net.to(device).eval()
         for parameter in net.parameters():
             parameter.requires_grad_(False)
         self._net = net
@@ -85,27 +86,31 @@ class PpoAgent:
         return None
 
     def act(self, game) -> int:
+        # Outside the guard: the device is unknown until loaded.
         self._ensure_loaded()
         import numpy as np
         import torch
 
         from engine_alpha.encoding.observation import encode
+        from model_common.device import serialized_on_mps
         from .net.model import head_for_request, legal_action_slots, logits_for_slots
 
         tokens_int, tokens_float, globals_row, candidate_positions = encode(game)
-        tok_int = torch.from_numpy(tokens_int.astype(np.int64)).unsqueeze(0).to(self._device)
-        tok_float = torch.from_numpy(tokens_float).unsqueeze(0).to(self._device)
-        token_mask = torch.ones(1, tokens_int.shape[0], dtype=torch.bool, device=self._device)
-        global_features = torch.from_numpy(globals_row).unsqueeze(0).to(self._device)
-        with torch.no_grad():
-            _, pointer_scores, identity_logits, number_logits = self._net(
-                tok_int, tok_float, token_mask, global_features)
-
         request = game.decision_context()
         slots = legal_action_slots(request, candidate_positions)
-        slots_tensor = torch.tensor([slots], dtype=torch.long, device=self._device)
-        head_tensor = torch.tensor([head_for_request(request)], dtype=torch.long,
-                                   device=self._device)
-        legal_logits = logits_for_slots(
-            head_tensor, slots_tensor, pointer_scores, identity_logits, number_logits)
-        return game.legal_actions()[int(legal_logits[0].argmax())]
+        head = head_for_request(request)
+        with serialized_on_mps(self._device):
+            tok_int = torch.from_numpy(tokens_int.astype(np.int64)).unsqueeze(0).to(self._device)
+            tok_float = torch.from_numpy(tokens_float).unsqueeze(0).to(self._device)
+            token_mask = torch.ones(1, tokens_int.shape[0], dtype=torch.bool, device=self._device)
+            global_features = torch.from_numpy(globals_row).unsqueeze(0).to(self._device)
+            with torch.no_grad():
+                _, pointer_scores, identity_logits, number_logits = self._net(
+                    tok_int, tok_float, token_mask, global_features)
+
+            slots_tensor = torch.tensor([slots], dtype=torch.long, device=self._device)
+            head_tensor = torch.tensor([head], dtype=torch.long, device=self._device)
+            legal_logits = logits_for_slots(
+                head_tensor, slots_tensor, pointer_scores, identity_logits, number_logits)
+            chosen_slot = int(legal_logits[0].argmax())
+        return game.legal_actions()[chosen_slot]

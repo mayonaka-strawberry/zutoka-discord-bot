@@ -1,10 +1,20 @@
 """Device selection for every model stack and the bot: CUDA, then Apple Silicon MPS,
-then CPU.
+then CPU. MPS work is serialized across threads.
 """
 
 from __future__ import annotations
 
+import contextlib
+import threading
+
 import torch
+
+# Below the 45 s solo-game watchdog (zutomayo/match/agents/agent_adapter.py), so a
+# waiting thread gives up and the adapter plays its fallback move.
+MPS_LOCK_TIMEOUT_SECONDS = 40.0
+
+# Two threads issuing MPS ops at once crash the process (PyTorch issue #197805).
+_MPS_LOCK = threading.RLock()
 
 
 def select_device() -> torch.device:
@@ -14,6 +24,22 @@ def select_device() -> torch.device:
     if mps_backend is not None and mps_backend.is_available():
         return torch.device("mps")
     return torch.device("cpu")
+
+
+@contextlib.contextmanager
+def serialized_on_mps(device: torch.device | str):
+    """Hold the process-wide MPS lock while `device` is MPS; elsewhere a no-op.
+    Raises TimeoutError when the lock is not free within MPS_LOCK_TIMEOUT_SECONDS."""
+    if torch.device(device).type != "mps":
+        yield
+        return
+    if not _MPS_LOCK.acquire(timeout=MPS_LOCK_TIMEOUT_SECONDS):
+        raise TimeoutError(
+            f"MPS lock not acquired within {MPS_LOCK_TIMEOUT_SECONDS} s")
+    try:
+        yield
+    finally:
+        _MPS_LOCK.release()
 
 
 def bound_inference_threads(maximum_threads: int = 4) -> None:

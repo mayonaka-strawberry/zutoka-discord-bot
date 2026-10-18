@@ -1,5 +1,6 @@
 """Model-stack correctness: forward shapes, legal-action masking, capacity
-padding, checkpoint save/load and migration, and solo-opponent discovery.
+padding, checkpoint save/load and migration, solo-opponent discovery, and MPS
+serialization.
 
 Tests over tracked files (model definitions, configs, inference discovery)
 run unconditionally; tests touching gitignored training modules use
@@ -8,6 +9,7 @@ importorskip so a fresh clone still passes.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import random
 import sys
@@ -81,6 +83,11 @@ def _mid_game(seed: int = 3):
     raise AssertionError('no non-terminal mid-game position found')
 
 
+def _opening(seed: int = 5):
+    """A fresh game's first decision: fewer tokens than _mid_game, so batches pad."""
+    return Game(seed=seed, mode='fixed_decks', decks=random_full_pool_decks(seed))
+
+
 def test_alpha_zero_forward_shapes_and_priors():
     from alpha_zero.config import NetConfig
     from alpha_zero.net.model import UniguriNet, priors_for_request
@@ -108,22 +115,60 @@ def test_alpha_zero_forward_shapes_and_priors():
     assert abs(float(priors.sum()) - 1.0) < 1e-4
 
 
+def test_alpha_zero_hp_margin_is_a_fifth_output_on_request():
+    """Callers unpacking four outputs keep working; the margin changes no other output."""
+    from alpha_zero.config import NetConfig
+    from alpha_zero.net.model import UniguriNet
+
+    net = UniguriNet(NetConfig(**TINY_ALPHA_ZERO_NET)).eval()
+    batch = _encoded_padded_batch([_mid_game(3), _opening()])
+    with torch.no_grad():
+        default = net(*batch)
+        with_margin = net(*batch, return_hp_margin=True)
+        with_both = net(*batch, return_value_logits=True, return_hp_margin=True)
+
+    assert len(default) == 4
+    assert len(with_margin) == len(with_both) == 5
+    assert with_margin[4].shape == (2,)
+    assert with_both[0].shape == (2, 3) and with_both[4].shape == (2,)
+    assert all(torch.equal(plain, margin) for plain, margin in zip(default, with_margin))
+    assert torch.equal(with_margin[4], with_both[4])
+
+
 def test_alpha_zero_gradient_checkpointing_matches_the_plain_forward():
     """Both encoder paths end in the final LayerNorm, so at dropout 0 the
-    recomputing path must reproduce the plain one to within 1e-5 (padding included)."""
+    recomputing path must reproduce every plain output, the HP margin included,
+    to within 1e-5 (padding included)."""
     from alpha_zero.config import NetConfig
     from alpha_zero.net.model import UniguriNet
 
     net = UniguriNet(NetConfig(**TINY_ALPHA_ZERO_NET)).train()
-    batch = _encoded_padded_batch([_mid_game(3), _mid_game(9)])
+    batch = _encoded_padded_batch([_mid_game(3), _opening()])
+    assert not batch[2].all(), 'one row is padded'
 
     net.gradient_checkpointing = False
-    plain = net(*batch, return_value_logits=True)
+    plain = net(*batch, return_value_logits=True, return_hp_margin=True)
     net.gradient_checkpointing = True
-    checkpointed = net(*batch, return_value_logits=True)
+    checkpointed = net(*batch, return_value_logits=True, return_hp_margin=True)
 
+    assert len(plain) == len(checkpointed) == 5
     for plain_output, checkpointed_output in zip(plain, checkpointed):
         assert torch.allclose(plain_output, checkpointed_output, atol=1e-5)
+
+
+def test_alpha_zero_untrained_identity_prior_is_not_near_one_hot():
+    """The tied identity logits are scaled by 1/sqrt(identity_embedding_dim);
+    unscaled, their init std is about 5.7 and the prior piles onto one random card."""
+    from alpha_zero.config import NetConfig
+    from alpha_zero.net.model import UniguriNet
+
+    torch.manual_seed(0)
+    net = UniguriNet(NetConfig(**TINY_ALPHA_ZERO_NET)).eval()
+    tok_int, tok_float, token_mask, global_features, _ = _encoded_batch(_mid_game())
+    with torch.no_grad():
+        _, _, identity, _ = net(tok_int, tok_float, token_mask, global_features)
+
+    assert float(identity[0, :NUM_CARDS].softmax(dim=-1).max()) < 0.2
 
 
 def test_playing_state_dict_prefers_the_ema_weights():
@@ -424,3 +469,230 @@ def test_live_search_settings_survive_an_invalid_training_config(
     agent._ensure_loaded()
     assert agent._mcts_config == alpha_config.MCTSConfig()
     assert 'did not validate' in caplog.text
+
+
+def test_live_evaluator_batch_rows_match_single_positions(live_alpha_zero):
+    """A padded batch leaves the device as whole tensors; each row must still
+    get its own value and priors."""
+    import numpy as np
+
+    inference, checkpoint_path = live_alpha_zero
+    evaluator = inference._load_evaluator(checkpoint_path)
+    games = [_mid_game(3), _opening(), _mid_game(9)]
+    assert not _encoded_padded_batch(games)[2].all(), 'one row is padded'
+    for game, (value, priors) in zip(games, evaluator.batch(games)):
+        single_value, single_priors = evaluator(game)
+        assert abs(value - single_value) < 1e-5
+        assert priors.shape == single_priors.shape == (len(game.legal_actions()),)
+        assert np.allclose(priors, single_priors, atol=1e-5)
+
+
+def test_live_load_times_out_behind_a_held_cache_lock(live_alpha_zero, monkeypatch):
+    """The cache lock's holder may be waiting out the MPS lock, so a queued
+    loader gives up on its own instead of stacking its wait behind it."""
+    import threading
+
+    import model_common.device as device_module
+
+    inference, checkpoint_path = live_alpha_zero
+    monkeypatch.setattr(device_module, 'MPS_LOCK_TIMEOUT_SECONDS', 0.05)
+    holding, release = threading.Event(), threading.Event()
+
+    def hold_the_cache_lock():
+        with inference._LOADED_MODELS_LOCK:
+            holding.set()
+            release.wait(timeout=10)
+
+    holder = threading.Thread(target=hold_the_cache_lock)
+    holder.start()
+    try:
+        assert holding.wait(timeout=10)
+        with pytest.raises(TimeoutError):
+            inference._load_evaluator(checkpoint_path)
+        assert inference._LOADED_MODELS_LOCK.locked(), "the holder's lock is left alone"
+    finally:
+        release.set()
+        holder.join(timeout=10)
+
+
+# --- Live PPO agent (ppo_transformer/inference.py) ---
+
+@pytest.fixture
+def live_ppo(monkeypatch, tmp_path):
+    """ppo_transformer.inference with CPU inference and a tiny deployed
+    checkpoint that carries its config."""
+    from dataclasses import asdict
+
+    import model_common.device as device_module
+    import ppo_transformer.inference as inference
+    from ppo_transformer.config import NetConfig
+    from ppo_transformer.net.model import PpoPolicyNetwork
+
+    monkeypatch.setattr(device_module, 'select_device', lambda: torch.device('cpu'))
+    monkeypatch.setattr(device_module, 'bound_inference_threads',
+                        lambda maximum_threads=4: None)
+
+    net_config = NetConfig(**TINY_PPO_NET)
+    checkpoint_path = tmp_path / 'ppo.pt'
+    torch.save({'model_state_dict': PpoPolicyNetwork(net_config).state_dict(),
+                'config': {'net': asdict(net_config)}}, checkpoint_path)
+    monkeypatch.setattr(inference, 'find_checkpoint', lambda: checkpoint_path)
+    return inference, checkpoint_path
+
+
+def test_live_ppo_agent_plays_legal_actions_with_the_deployed_weights(live_ppo):
+    """Asked at every seat-1 decision of two seeded random games, which reach all
+    three heads. The tiny checkpoint does not fit the default NetConfig, so loading
+    must use the checkpoint's config."""
+    from ppo_transformer.net.model import (
+        HEAD_IDENTITY, HEAD_NUMBER, HEAD_POINTER, head_for_request,
+    )
+
+    inference, checkpoint_path = live_ppo
+    agent = inference.PpoAgent()
+    heads = set()
+    for seed in (0, 21):
+        game = Game(seed=seed, mode='fixed_decks', decks=random_full_pool_decks(seed))
+        rng = random.Random(seed)
+        while not game.is_terminal():
+            legal = game.legal_actions()
+            if game.current_player() == 1:
+                heads.add(head_for_request(game.decision_context()))
+                assert agent.act(game) in legal
+            game.apply(rng.choice(legal))
+
+    assert heads == {HEAD_POINTER, HEAD_IDENTITY, HEAD_NUMBER}
+    deployed = torch.load(checkpoint_path, weights_only=True)['model_state_dict']
+    assert all(torch.equal(tensor, deployed[name])
+               for name, tensor in agent._net.state_dict().items())
+
+
+# --- MPS serialization (model_common/device.py) ---
+
+def _another_thread_enters(device) -> bool:
+    """Whether another thread gets through serialized_on_mps(device) right now."""
+    import threading
+
+    from model_common.device import serialized_on_mps
+
+    entered = []
+
+    def enter():
+        try:
+            with serialized_on_mps(device):
+                entered.append(True)
+        except TimeoutError:
+            entered.append(False)
+
+    thread = threading.Thread(target=enter)
+    thread.start()
+    thread.join(timeout=10)
+    return entered == [True]
+
+
+def test_serialized_on_mps_locks_out_other_threads_on_mps_only(monkeypatch):
+    """Two threads issuing MPS ops at once crash the process (PyTorch issue
+    #197805). torch.device('mps') needs no MPS hardware to construct."""
+    import model_common.device as device_module
+
+    monkeypatch.setattr(device_module, 'MPS_LOCK_TIMEOUT_SECONDS', 0.05)
+    with device_module.serialized_on_mps(torch.device('mps')):
+        assert not _another_thread_enters(torch.device('mps'))
+        assert _another_thread_enters('cpu'), 'CPU work never waits on the lock'
+    with device_module.serialized_on_mps(torch.device('cpu')):
+        assert _another_thread_enters('mps'), 'CPU work takes no lock'
+    assert _another_thread_enters('mps'), 'the lock is released on exit'
+
+
+def test_serialized_on_mps_times_out_below_the_solo_watchdog(monkeypatch):
+    """A thread queued behind a stuck one gives up first, so the adapter plays its
+    fallback move instead of threads piling up."""
+    import threading
+
+    import model_common.device as device_module
+    from zutomayo.match.agents.agent_adapter import AGENT_TIMEOUT_SECONDS
+
+    assert device_module.MPS_LOCK_TIMEOUT_SECONDS < AGENT_TIMEOUT_SECONDS
+    monkeypatch.setattr(device_module, 'MPS_LOCK_TIMEOUT_SECONDS', 0.05)
+    holding, release = threading.Event(), threading.Event()
+
+    def hold_the_lock():
+        with device_module.serialized_on_mps('mps'):
+            holding.set()
+            release.wait(timeout=10)
+
+    holder = threading.Thread(target=hold_the_lock)
+    holder.start()
+    try:
+        assert holding.wait(timeout=10)
+        with pytest.raises(TimeoutError):
+            with device_module.serialized_on_mps(torch.device('mps')):
+                pass
+    finally:
+        release.set()
+        holder.join(timeout=10)
+
+
+def test_serialized_on_mps_releases_the_lock_when_the_work_raises(monkeypatch):
+    """A failed decision must not keep the lock, or every later MPS decision
+    would time out."""
+    import model_common.device as device_module
+
+    monkeypatch.setattr(device_module, 'MPS_LOCK_TIMEOUT_SECONDS', 0.05)
+    with pytest.raises(RuntimeError, match='forward failed'):
+        with device_module.serialized_on_mps(torch.device('mps')):
+            raise RuntimeError('forward failed')
+    assert _another_thread_enters(torch.device('mps'))
+
+
+class _RecordingGuard:
+    """Stands in for serialized_on_mps; records each wrapped call with whether a
+    guard was open."""
+
+    def __init__(self) -> None:
+        self.open_guards = 0
+        self.calls = []
+
+    @contextlib.contextmanager
+    def guard(self, device):
+        self.open_guards += 1
+        try:
+            yield
+        finally:
+            self.open_guards -= 1
+
+    def record(self, monkeypatch, owner, name: str) -> None:
+        original = getattr(owner, name)
+
+        def recording(*arguments, **keyword_arguments):
+            self.calls.append((name, self.open_guards > 0))
+            return original(*arguments, **keyword_arguments)
+
+        monkeypatch.setattr(owner, name, recording)
+
+
+@pytest.mark.parametrize('stack', ['alpha_zero', 'ppo'])
+def test_live_agents_do_their_device_work_inside_the_mps_guard(stack, request, monkeypatch):
+    """Loading moves the network, and every forward runs, inside serialized_on_mps."""
+    import model_common.device as device_module
+
+    if stack == 'alpha_zero':
+        from alpha_zero.net.model import UniguriNet as network_class
+        inference, _ = request.getfixturevalue('live_alpha_zero')
+        agents = [inference.AlphaZeroAgent(mode='search', simulations_live=6),
+                  inference.AlphaZeroAgent(mode='policy')]
+    else:
+        from ppo_transformer.net.model import PpoPolicyNetwork as network_class
+        inference, _ = request.getfixturevalue('live_ppo')
+        agents = [inference.PpoAgent()]
+    recorder = _RecordingGuard()
+    monkeypatch.setattr(device_module, 'serialized_on_mps', recorder.guard)
+    for name in ('to', 'forward'):
+        recorder.record(monkeypatch, network_class, name)
+
+    for agent in agents:
+        for game in (_mid_game(3), _opening()):
+            assert agent.act(game) in game.legal_actions()
+
+    assert {name for name, _ in recorder.calls} == {'to', 'forward'}
+    assert [name for name, guarded in recorder.calls if not guarded] == []

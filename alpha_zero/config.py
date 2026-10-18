@@ -80,6 +80,8 @@ class TrainConfig:
     max_sample_reuse: float = 8.0
     # Value cross-entropy weight relative to the policy loss.
     value_loss_weight: float = 1.0
+    # Huber weight of the auxiliary final-HP-margin target; training only.
+    hp_margin_loss_weight: float = 0.25
     # CHAOS self-defeat value-loss weights: the self-defeater's decisions train
     # harder, the gifted winner's softer (model_common.termination). Inert while
     # CHAOS decks are excluded and no game drafts.
@@ -175,6 +177,10 @@ class Config:
         if not 0.0 <= self.train.ema_decay < 1.0:
             raise ValueError(
                 f"ALPHA_TRAIN_EMA_DECAY must be within [0, 1), got {self.train.ema_decay}")
+        if self.train.hp_margin_loss_weight < 0.0:
+            raise ValueError(
+                "ALPHA_TRAIN_HP_MARGIN_LOSS_WEIGHT must be at least 0, got "
+                f"{self.train.hp_margin_loss_weight}")
         if self.train.self_defeat_loss_sample_weight < 1.0:
             raise ValueError(
                 "ALPHA_TRAIN_SELF_DEFEAT_LOSS_SAMPLE_WEIGHT must be at least 1.0 "
