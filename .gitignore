@@ -217,12 +217,14 @@ zutomayo/bot_decks.json
 # old single training_decks.json.
 data/training_decks*.json
 
+# Deck rankings (each stack's scripts/best_deck_*.py); the bot reads none of them.
+data/best_decks_*.json
+
 zutomayo/progress/*
 !zutomayo/progress/.gitkeep
 
 
-# Training code and artifacts. Git tracks only what the bot needs to play from a checkpoint,
-# plus ppo_transformer/best_deck_ppo.py.
+# Training code and artifacts. Git tracks only what the bot needs to play from a checkpoint.
 engine_alpha/runs/
 engine_alpha/.env
 alpha_zero/train/
@@ -250,6 +252,7 @@ model/
 # device.py, env_config.py and deployed_model.py.
 model_common/checkpoint_retention.py
 model_common/deck_pool.py
+model_common/deck_round_robin.py
 model_common/graceful_stop.py
 model_common/metrics_log.py
 model_common/termination.py
@@ -257,7 +260,9 @@ tests/models/test_alpha_zero_losses.py
 tests/models/test_alpha_zero_replay_buffer.py
 tests/models/test_alpha_zero_selfplay.py
 tests/models/test_alpha_zero_training_monitor.py
+tests/models/test_best_deck_alpha_zero.py
 tests/models/test_deck_pool.py
+tests/models/test_deck_round_robin.py
 tests/models/test_metrics_log.py
 tests/models/test_self_defeat_shaping.py
 scripts/export_training_decks.py

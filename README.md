@@ -66,7 +66,7 @@ Playing a CHAOS bank-or-lose card (04-006, 04-027, 04-028, 04-088, 04-105) witho
 | `zutomayo/engine/` | Session bookkeeping, the game-record store, and the event taxonomy. |
 | `zutomayo/data/` | asyncpg storage (schema, decks, profiles and Elo, display names, game ids), gacha, and card loading. |
 | `zutomayo/ui/` | Embeds, the board renderer, card grids, and Discord views. |
-| `alpha_zero/`, `ppo_transformer/`, `model_common/` | Model stacks. Only the code needed to play from a checkpoint is tracked, plus `ppo_transformer/best_deck_ppo.py`. |
+| `alpha_zero/`, `ppo_transformer/`, `model_common/` | Model stacks. Only the code needed to play from a checkpoint is tracked. |
 
 - Every player choice after deck building is a `MatchDecisionRequest` answered through `MatchDecisionBroker` (`zutomayo/match/broker.py`). The broker rejects illegal answers and appends each answer to the game's decision log.
 - Games are deterministic: the seed drives every shuffle, and each decision is a logged int (card keys for a TCG side-deck switch). On restart or `/zutomayo resume`, a game is rebuilt from its manifest and the log is replayed with output muted, checking each request's fingerprint. Draft boxes are opened before the game record exists, so only the resulting decks are saved.
@@ -88,7 +88,7 @@ Copy-Item ppo_transformer\runs\checkpoints\iteration_00800.pt model\ppo_transfor
 
 - An entry may be a file (extension optional) or a directory of `*.pt` files, where the last by name wins.
 - Prefer a file from `runs/checkpoints/`: it carries its config. Bare weights (`latest_weights.pt`) load with the `NetConfig` defaults in the stack's `config.py`.
-- The model plays a random deck from `zutomayo/bot_decks.json` (gitignored, written by `python -m alpha_zero.scripts.export_best_decks`), or from `zutomayo/default_decks.json` when that file is absent.
+- The model plays a random deck from `zutomayo/bot_decks.json` (gitignored) when it lists any decks, else from `zutomayo/default_decks.json`. Only `python -m alpha_zero.scripts.export_best_decks` writes that file, from drafted league games, so with drafting off (the default) it writes nothing.
 - Model A searches with `ALPHA_LIVE_SIMULATIONS` (default 384) simulations per decision; `ALPHA_LIVE_MODE=policy` plays the raw policy instead.
 - Inference runs off the event loop behind a 45-second watchdog. Any failure submits a legal fallback action.
 - Models see the full game state, including the opponent's hand and deck order. This is deliberate.
