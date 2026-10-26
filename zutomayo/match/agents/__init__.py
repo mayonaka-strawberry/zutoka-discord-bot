@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import importlib
+import json
 import random
+from pathlib import Path
 from typing import Any
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 BOT_NAME = 'メカうにぐり'
 
@@ -20,6 +24,12 @@ SOLO_OPPONENT_MODULES = {
 SOLO_OPPONENT_LABELS = {
     SOLO_OPPONENT_ALPHA_ZERO: 'A',
     SOLO_OPPONENT_PPO: 'B',
+}
+
+# Each model plays only the decks its ranker wrote.
+SOLO_OPPONENT_DECK_FILES = {
+    SOLO_OPPONENT_ALPHA_ZERO: REPOSITORY_ROOT / 'data' / 'best_decks_alpha_zero.json',
+    SOLO_OPPONENT_PPO: REPOSITORY_ROOT / 'data' / 'best_decks_ppo.json',
 }
 
 
@@ -43,12 +53,24 @@ def available_solo_opponents() -> list[str]:
     return available
 
 
-def load_random_fallback_deck(card_index: dict[tuple[int, int], Any]) -> list[Any]:
-    """A random pre-built deck as Cards: the solo model's deck, and the fallback when
-    deck building times out. Drawn from zutomayo/bot_decks.json when it exists, else
-    default_decks.json."""
-    import json
+def load_solo_opponent_deck(opponent: str, card_index: dict[tuple[int, int], Any]) -> list[Any]:
+    """A random deck from the opponent's ranker file, as Cards. Raises ValueError when the
+    file is missing or lists no decks."""
+    from zutomayo.data.deck_storage import resolve_deck_cards
 
+    deck_file = SOLO_OPPONENT_DECK_FILES[opponent]
+    if not deck_file.exists():
+        raise ValueError(f'Solo opponent deck file {deck_file} is missing.')
+    with open(deck_file, 'r', encoding='utf-8') as file_handle:
+        deck_entries = json.load(file_handle).get('decks', [])
+    if not deck_entries:
+        raise ValueError(f'Solo opponent deck file {deck_file} lists no decks.')
+    return resolve_deck_cards(random.choice(deck_entries), card_index)
+
+
+def load_random_fallback_deck(card_index: dict[tuple[int, int], Any]) -> list[Any]:
+    """A random pre-built deck as Cards, the fallback when deck building times out. Drawn
+    from zutomayo/bot_decks.json when it lists decks, else default_decks.json."""
     from zutomayo.data.deck_storage import (
         DEFAULT_DECKS_FILE,
         load_default_decks,

@@ -37,8 +37,8 @@ def create_model_adapter(session: 'GameSession', opponent: str):
 
 
 async def _do_solo_deck_building(flow: SingleMatchFlow, session: 'GameSession'):
-    """Deck building for the human seat only; the model gets a random deck.
-    Returns the chosen Card list, or None on timeout (random deck)."""
+    """Deck building for the human seat only. Returns the chosen Card list, or None on
+    timeout (random deck)."""
     from zutomayo.data.deck_validator import get_card_index
     from zutomayo.ui.deck_management_views import DeckSourceView
     from zutomayo.match.agents import BOT_NAME
@@ -70,7 +70,7 @@ async def _do_solo_deck_building(flow: SingleMatchFlow, session: 'GameSession'):
 async def run_solo_game(bot: discord.Client, session: 'GameSession', opponent: str) -> None:
     from zutomayo.data.deck_validator import get_card_index
     from zutomayo.engine.game_session import session_manager
-    from zutomayo.match.agents import load_random_fallback_deck
+    from zutomayo.match.agents import load_solo_opponent_deck
 
     flow = SingleMatchFlow(bot)
     try:
@@ -82,9 +82,10 @@ async def run_solo_game(bot: discord.Client, session: 'GameSession', opponent: s
                 MODEL_PLAYER_INDEX: create_model_adapter(session, opponent),
             })
 
-        deck_cards = await _do_solo_deck_building(flow, session)
+        # Before deck building, so a broken deck file does not waste the player's time.
         _, card_index = get_card_index()
-        model_deck_cards = load_random_fallback_deck(card_index)
+        model_deck_cards = load_solo_opponent_deck(opponent, card_index)
+        deck_cards = await _do_solo_deck_building(flow, session)
 
         await flow.run_single_match(session, deck_cards, model_deck_cards)
         await flow.finalize_completed_game(session)

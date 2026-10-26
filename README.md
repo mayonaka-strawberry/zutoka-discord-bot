@@ -88,7 +88,8 @@ Copy-Item ppo_transformer\runs\checkpoints\iteration_00800.pt model\ppo_transfor
 
 - An entry may be a file (extension optional) or a directory of `*.pt` files, where the last by name wins.
 - Prefer a file from `runs/checkpoints/`: it carries its config. Bare weights (`latest_weights.pt`) load with the `NetConfig` defaults in the stack's `config.py`.
-- The model plays a random deck from `zutomayo/bot_decks.json` (gitignored) when it lists any decks, else from `zutomayo/default_decks.json`. Only `python -m alpha_zero.scripts.export_best_decks` writes that file, from drafted league games, so with drafting off (the default) it writes nothing.
+- Model A plays a random deck from `data/best_decks_alpha_zero.json`, and model B from `data/best_decks_ppo.json`.
+- A player whose deck building times out gets a random deck from `zutomayo/bot_decks.json` (gitignored) when it lists any decks, else from `zutomayo/default_decks.json`. Only `python -m alpha_zero.scripts.export_best_decks` writes `bot_decks.json`, from drafted league games, so with drafting off (the default) it writes nothing.
 - Model A searches with `ALPHA_LIVE_SIMULATIONS` (default 384) simulations per decision; `ALPHA_LIVE_MODE=policy` plays the raw policy instead.
 - Inference runs off the event loop behind a 45-second watchdog. Any failure submits a legal fallback action.
 - Models see the full game state, including the opponent's hand and deck order. This is deliberate.
@@ -119,7 +120,7 @@ python -m ppo_transformer.train.run_train --smoke  # same flags for ppo_transfor
 
 Without a pool, both stacks refuse to start while `probability_user_deck` is above 0 (for alpha_zero, its start or final value; it also starts if every game drafts).
 
-Each stack's deck ranker (gitignored) writes its strongest decks to `data/best_decks_ppo.json` or `data/best_decks_alpha_zero.json`. Git tracks both; the bot reads neither.
+Each stack's deck ranker (gitignored) writes its strongest decks to `data/best_decks_ppo.json` or `data/best_decks_alpha_zero.json`. Git tracks both, and each model plays only its own file, so committing a re-rank changes the bot's decks.
 
 ## Scripts
 
