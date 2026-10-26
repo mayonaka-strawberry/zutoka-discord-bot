@@ -119,6 +119,8 @@ python -m ppo_transformer.train.run_train --smoke  # same flags for ppo_transfor
 
 Without a pool, both stacks refuse to start while `probability_user_deck` is above 0 (for alpha_zero, its start or final value; it also starts if every game drafts).
 
+Each stack's deck ranker (gitignored) writes its strongest decks to `data/best_decks_ppo.json` or `data/best_decks_alpha_zero.json`. Git tracks both; the bot reads neither.
+
 ## Scripts
 
 Run from the repository root. Database scripts read `DATABASE_URL` from `.env`.
